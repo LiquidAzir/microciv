@@ -434,6 +434,201 @@
     ctx.closePath();
   }
 
+  // Tile detail rendering — pixel decals per terrain type.
+  // Uses seeded variation so each tile looks distinct but stable across redraws.
+  function tileHash(c, r) {
+    var h = ((c * 73856093) ^ (r * 19349663) ^ (state.seed * 83492791)) >>> 0;
+    return h;
+  }
+  function tileRng(c, r) {
+    var h = tileHash(c, r);
+    return function () {
+      h ^= h << 13; h >>>= 0;
+      h ^= h >>> 17; h >>>= 0;
+      h ^= h << 5; h >>>= 0;
+      return (h % 100000) / 100000;
+    };
+  }
+
+  function drawTerrainDetail(cx, cy, size, t, c, r) {
+    var rng = tileRng(c, r);
+    var px = Math.max(1, Math.round(size / 12));
+    function dot(x, y, w, h, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(cx + x - w/2, cy + y - h/2, w, h);
+    }
+    function tree(x, y, dark, mid, light) {
+      var s = px;
+      // trunk
+      ctx.fillStyle = '#3a2410';
+      ctx.fillRect(cx + x - s/2, cy + y + s, s, s);
+      // canopy as small pyramid
+      ctx.fillStyle = dark;
+      ctx.fillRect(cx + x - 2*s, cy + y - s, 4*s, s);
+      ctx.fillStyle = mid;
+      ctx.fillRect(cx + x - 1.5*s, cy + y - 2*s, 3*s, s);
+      ctx.fillRect(cx + x - 2*s, cy + y, 4*s, s);
+      ctx.fillStyle = light;
+      ctx.fillRect(cx + x - s/2, cy + y - 2*s, s, s);
+      ctx.fillRect(cx + x - 1.5*s, cy + y - s, s, s);
+    }
+    var terrain = t.terrain;
+
+    if (terrain === 'grass') {
+      // Subtle tufts
+      for (var i = 0; i < 3; i++) {
+        var x = (rng() - 0.5) * size * 1.1;
+        var y = (rng() - 0.5) * size * 0.9;
+        dot(x, y, px, px, '#1c5530');
+        dot(x + px, y, px*0.6, px*0.6, '#2a7044');
+      }
+    } else if (terrain === 'plains') {
+      for (var i = 0; i < 4; i++) {
+        var x = (rng() - 0.5) * size * 1.1;
+        var y = (rng() - 0.5) * size * 0.9;
+        dot(x, y, px*0.8, px*0.4, '#a08648');
+      }
+    } else if (terrain === 'forest') {
+      var nTrees = 3 + Math.floor(rng() * 2);
+      var positions = [];
+      for (var i = 0; i < nTrees; i++) {
+        positions.push([(rng() - 0.5) * size * 0.9, (rng() - 0.4) * size * 0.7]);
+      }
+      positions.sort(function (a, b) { return a[1] - b[1]; });
+      for (var i = 0; i < positions.length; i++) {
+        tree(positions[i][0], positions[i][1], '#0e3018', '#1f5a2a', '#2f8a3a');
+      }
+    } else if (terrain === 'hills') {
+      // rounded bumps
+      var bumps = [
+        [-size*0.35, size*0.05],
+        [size*0.1, -size*0.1],
+        [size*0.3, size*0.15]
+      ];
+      for (var i = 0; i < bumps.length; i++) {
+        var bx = bumps[i][0], by = bumps[i][1];
+        var bw = size * 0.36, bh = size * 0.22;
+        ctx.fillStyle = '#4a3a18';
+        ctx.beginPath();
+        ctx.ellipse(cx + bx, cy + by, bw, bh, 0, 0, Math.PI);
+        ctx.fill();
+        ctx.fillStyle = '#5a4a22';
+        ctx.beginPath();
+        ctx.ellipse(cx + bx - bw*0.15, cy + by, bw*0.7, bh*0.9, 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (terrain === 'mountain') {
+      // overlapping triangular peaks
+      function peak(px0, py0, w, h, dark, mid, light) {
+        ctx.fillStyle = dark;
+        ctx.beginPath();
+        ctx.moveTo(cx + px0, cy + py0 - h);
+        ctx.lineTo(cx + px0 - w, cy + py0);
+        ctx.lineTo(cx + px0 + w, cy + py0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = mid;
+        ctx.beginPath();
+        ctx.moveTo(cx + px0, cy + py0 - h);
+        ctx.lineTo(cx + px0 - w*0.2, cy + py0 - h*0.4);
+        ctx.lineTo(cx + px0 + w, cy + py0);
+        ctx.lineTo(cx + px0, cy + py0);
+        ctx.closePath();
+        ctx.fill();
+        // snow cap
+        ctx.fillStyle = light;
+        ctx.beginPath();
+        ctx.moveTo(cx + px0, cy + py0 - h);
+        ctx.lineTo(cx + px0 - w*0.3, cy + py0 - h*0.55);
+        ctx.lineTo(cx + px0 + w*0.3, cy + py0 - h*0.55);
+        ctx.closePath();
+        ctx.fill();
+      }
+      peak(-size*0.25, size*0.30, size*0.30, size*0.55, '#251820', '#4a2e3e', '#e0d0e0');
+      peak(size*0.18, size*0.35, size*0.35, size*0.42, '#1a1014', '#3a242e', '#c0b0c0');
+    } else if (terrain === 'desert') {
+      // dunes
+      ctx.fillStyle = '#5c451a';
+      for (var i = 0; i < 4; i++) {
+        var dx = -size * 0.5 + i * size * 0.3;
+        var dy = (i % 2 ? 0.15 : -0.05) * size;
+        ctx.beginPath();
+        ctx.ellipse(cx + dx, cy + dy, size * 0.22, size * 0.08, 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+      }
+      // sparse dots
+      for (var i = 0; i < 5; i++) {
+        var x = (rng() - 0.5) * size * 1.1;
+        var y = (rng() - 0.5) * size * 0.9;
+        dot(x, y, px*0.6, px*0.6, '#7a5d1c');
+      }
+    } else if (terrain === 'water') {
+      // wave lines
+      ctx.strokeStyle = '#1c4a7a';
+      ctx.lineWidth = Math.max(1, px * 0.5);
+      for (var i = 0; i < 3; i++) {
+        var y = -size*0.3 + i * size * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(cx - size*0.4, cy + y);
+        ctx.quadraticCurveTo(cx - size*0.1, cy + y - 3, cx, cy + y);
+        ctx.quadraticCurveTo(cx + size*0.2, cy + y + 3, cx + size*0.4, cy + y);
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1;
+    }
+  }
+
+  function drawResourceMarker(cx, cy, size, kind) {
+    var x = cx + size * 0.45;
+    var y = cy - size * 0.50;
+    var s = size * 0.16;
+    // pill background
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(x, y, s + 2, 0, Math.PI * 2);
+    ctx.fill();
+    if (kind === 'wheat') {
+      ctx.fillStyle = '#ffd34d';
+      ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#7a4f10';
+      for (var i = 0; i < 4; i++) {
+        ctx.fillRect(x - 1 + (i - 1.5) * 1.5, y - s + 2, 1, s + 2);
+      }
+    } else if (kind === 'iron') {
+      ctx.fillStyle = '#b8b8c2';
+      ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#5a5a66';
+      ctx.fillRect(x - s*0.5, y - s*0.2, s, s*0.4);
+    } else if (kind === 'horses') {
+      ctx.fillStyle = '#c08858';
+      ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3a2410';
+      ctx.fillRect(x - s*0.6, y - s*0.1, s*1.2, s*0.25);
+    }
+  }
+
+  function drawImprovement(cx, cy, size, kind) {
+    var x = cx - size * 0.55;
+    var y = cy + size * 0.45;
+    var s = size * 0.14;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.beginPath();
+    ctx.arc(x, y, s + 2, 0, Math.PI * 2);
+    ctx.fill();
+    if (kind === 'farm') {
+      ctx.fillStyle = '#5a8a3a';
+      ctx.fillRect(x - s, y - s, s*2, s*2);
+      ctx.fillStyle = '#7aaa4a';
+      ctx.fillRect(x - s, y - s/3, s*2, 1);
+      ctx.fillRect(x - s, y + s/3, s*2, 1);
+    } else if (kind === 'mine') {
+      ctx.fillStyle = '#c8c8d0';
+      ctx.fillRect(x - s, y - s*0.5, s*2, s*0.4);
+      ctx.fillStyle = '#7a4a1c';
+      ctx.fillRect(x - s*0.2, y - s*0.6, s*0.4, s*1.5);
+    }
+  }
+
   function drawMap() {
     clearCanvas();
     var size = ZOOM_LEVELS[state.zoom];
@@ -461,39 +656,29 @@
         hexPath(cx, cy, inset);
         ctx.fillStyle = terrain.color;
         ctx.fill();
-        ctx.lineWidth = 1.5;
+        ctx.save();
+        ctx.clip();                      // clip decals to hex
+        drawTerrainDetail(cx, cy, size, t, c, r);
+        ctx.restore();
+        ctx.lineWidth = 1.2;
         ctx.strokeStyle = terrain.edge;
         ctx.stroke();
+
+        // Resource marker
+        if (t.resource && visible) {
+          drawResourceMarker(cx, cy, size, t.resource);
+        }
+
+        // Improvement
+        if (t.improvement && visible) {
+          drawImprovement(cx, cy, size, t.improvement);
+        }
 
         // Dim if not currently visible (fogged)
         if (!visible) {
           hexPath(cx, cy, inset);
           ctx.fillStyle = 'rgba(0,0,0,0.55)';
           ctx.fill();
-        }
-
-        // Terrain glyph
-        if (terrain.glyph) {
-          ctx.fillStyle = visible ? terrain.fg : 'rgba(120,120,140,0.5)';
-          ctx.font = (size * 0.7) + 'px serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(terrain.glyph, cx, cy + size * 0.05);
-        }
-
-        // Resource marker
-        if (t.resource && visible) {
-          ctx.fillStyle = '#ffd34d';
-          ctx.beginPath();
-          ctx.arc(cx + size * 0.5, cy - size * 0.5, size * 0.13, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Improvement
-        if (t.improvement && visible) {
-          ctx.fillStyle = '#b388ff';
-          ctx.font = (size * 0.35) + 'px sans-serif';
-          ctx.fillText(t.improvement === 'farm' ? '✿' : '⛏', cx - size * 0.5, cy + size * 0.55);
         }
 
         // City
@@ -543,54 +728,352 @@
     }
   }
 
-  function drawCity(cx, cy, size, city) {
+  // ----------- Sprite drawing primitives -----------
+  function hexToRgb(h) {
+    var m = h.replace('#', '');
+    if (m.length === 3) m = m[0]+m[0]+m[1]+m[1]+m[2]+m[2];
+    return [parseInt(m.slice(0,2),16), parseInt(m.slice(2,4),16), parseInt(m.slice(4,6),16)];
+  }
+  function rgbStr(r, g, b) { return 'rgb(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ')'; }
+  function shade(hex, f) {
+    var rgb = hexToRgb(hex);
+    if (f < 1) return rgbStr(rgb[0]*f, rgb[1]*f, rgb[2]*f);
+    return rgbStr(Math.min(255, rgb[0]+(255-rgb[0])*(f-1)),
+                  Math.min(255, rgb[1]+(255-rgb[1])*(f-1)),
+                  Math.min(255, rgb[2]+(255-rgb[2])*(f-1)));
+  }
+  function makeSpriteCtx(cx, cy, size, w, h) {
+    var pxSize = Math.max(1.6, size * 1.4 / Math.max(w, h));
+    var x0 = cx - (w / 2) * pxSize;
+    var y0 = cy - (h / 2) * pxSize + size * 0.05;
+    return function (x, y, dx, dy, c) {
+      ctx.fillStyle = c;
+      ctx.fillRect(x0 + x * pxSize, y0 + y * pxSize, dx * pxSize, dy * pxSize);
+    };
+  }
+  function shadowBlob(cx, cy, size) {
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + size * 0.42, size * 0.40, size * 0.10, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function spriteColors(civ) {
+    return {
+      K: '#000',
+      D: shade(civ.color, 0.55),
+      C: civ.color,
+      L: shade(civ.color, 1.35),
+      W: '#ffffff',
+      S: '#d4a07a',
+      B: '#3a2410',
+      O: '#7a4a1c',
+      M: '#b8b8c2',
+      m: '#5a5a66',
+      Y: '#ffd34d',
+      R: '#ff4a4a',
+      H: '#aaffaa'
+    };
+  }
+
+  // ----------- Pixel sprites (14×14 grid) -----------
+  function drawWarrior(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Helmet
+    p(5,1,4,1, c.K);
+    p(4,2,1,3, c.K); p(9,2,1,3, c.K);
+    p(5,2,4,1, c.C); p(5,3,4,1, c.D);
+    p(5,2,1,1, c.L); p(8,2,1,1, c.L);
+    // Crest stripe (top)
+    p(6,0,2,1, c.K); p(6,1,2,1, c.L);
+    // Face
+    p(5,4,4,2, c.S);
+    p(5,4,4,1, c.D);                  // brow shadow
+    p(6,5,1,1, c.K); p(8,5,1,1, c.K); // eyes
+    // Neck/jaw
+    p(5,6,4,1, c.K);
+    // Shoulders + arms
+    p(3,6,1,1, c.K); p(10,6,1,1, c.K);
+    p(3,7,1,3, c.D); p(10,7,1,3, c.D);
+    p(2,6,1,1, c.K);                  // shield outline top
+    // Shield (left)
+    p(1,7,1,4, c.K);
+    p(2,7,2,4, c.L);
+    p(3,7,1,4, c.M);
+    p(2,7,2,1, c.D); p(2,10,2,1, c.D);
+    p(2,9,1,1, c.Y);                  // boss
+    // Body armor
+    p(4,6,6,1, c.K);
+    p(4,7,6,3, c.C);
+    p(4,7,6,1, c.D);
+    p(5,8,4,1, c.L);
+    p(4,10,6,1, c.K);
+    // Sword (right hand)
+    p(11,3,1,1, c.K);
+    p(11,4,1,5, c.M);
+    p(11,4,1,1, c.W);
+    p(10,8,3,1, c.O);                 // hilt guard
+    p(11,9,1,1, c.B);                 // grip
+    // Belt
+    p(4,10,6,1, c.K);
+    p(4,11,6,1, c.B);
+    // Legs
+    p(5,12,1,2, c.K); p(8,12,1,2, c.K);
+    p(6,12,2,2, c.D);
+    p(5,13,1,1, c.K); p(8,13,1,1, c.K);
+  }
+
+  function drawArcher(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Hooded head
+    p(5,1,4,1, c.K);
+    p(4,2,6,1, c.K);
+    p(4,3,1,2, c.K); p(9,3,1,2, c.K);
+    p(5,2,4,1, c.D);
+    p(5,3,4,2, c.C);
+    p(6,3,1,1, c.L);
+    // Face
+    p(5,5,4,2, c.S);
+    p(5,5,4,1, c.D);
+    p(6,6,1,1, c.K); p(8,6,1,1, c.K);
+    // Body / cloak
+    p(4,7,6,1, c.K);
+    p(4,8,6,3, c.C);
+    p(4,8,6,1, c.D);
+    p(5,9,1,2, c.L); p(8,9,1,2, c.D);
+    p(4,11,6,1, c.K);
+    // Bow (left, drawn)
+    p(0,4,1,7, c.O);
+    p(1,3,1,1, c.O); p(1,11,1,1, c.O);
+    p(2,4,1,1, c.B); p(2,10,1,1, c.B);
+    // Bowstring
+    p(2,5,1,5, c.W);
+    // Arrow
+    p(3,7,5,1, c.B);
+    p(2,7,1,1, c.W);                  // arrow nock
+    p(8,6,1,1, c.M); p(8,8,1,1, c.M); // arrowhead
+    // Quiver strap
+    p(9,7,1,3, c.B);
+    p(10,5,1,4, c.B);                 // quiver back
+    p(10,5,1,1, c.O); p(10,8,1,1, c.O);
+    // Legs
+    p(5,12,1,2, c.K); p(8,12,1,2, c.K);
+    p(6,12,2,2, c.B);
+    p(5,13,1,1, c.K); p(8,13,1,1, c.K);
+  }
+
+  function drawSettler(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Wide hat
+    p(3,2,8,1, c.K);
+    p(4,3,6,1, c.D);
+    p(5,2,4,1, c.C);
+    // Head
+    p(5,4,4,2, c.S);
+    p(5,4,4,1, c.D);
+    p(6,5,1,1, c.K); p(8,5,1,1, c.K);
+    // Neck + shoulders
+    p(5,6,4,1, c.K);
+    // Cloak
+    p(3,6,1,1, c.K); p(10,6,1,1, c.K);
+    p(3,7,8,4, c.C);
+    p(3,7,1,4, c.D); p(10,7,1,4, c.D);
+    p(3,7,8,1, c.K);
+    // Large bundle/pack on back
+    p(4,8,6,3, c.O);
+    p(4,8,6,1, c.K);
+    p(4,10,6,1, c.K);
+    p(5,9,4,1, c.B);
+    p(7,9,1,1, c.Y);                  // a torch / lantern dot
+    p(3,11,8,1, c.K);
+    // Walking stick
+    p(11,5,1,8, c.B);
+    p(11,5,1,1, c.O);
+    // Legs
+    p(5,12,1,2, c.K); p(8,12,1,2, c.K);
+    p(6,12,2,2, c.B);
+    p(5,13,1,1, c.K); p(8,13,1,1, c.K);
+  }
+
+  function drawWorker(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Cap
+    p(5,2,4,1, c.K);
+    p(4,3,6,1, c.K);
+    p(5,3,4,1, c.C);
+    p(4,4,6,1, c.D);                  // cap brim
+    // Face
+    p(5,5,4,2, c.S);
+    p(5,5,4,1, c.D);
+    p(6,6,1,1, c.K); p(8,6,1,1, c.K);
+    // Body / tunic
+    p(4,7,6,1, c.K);
+    p(4,8,6,3, c.C);
+    p(5,9,1,1, c.L); p(8,9,1,1, c.D);
+    p(4,11,6,1, c.K);
+    // Right arm holding pickaxe haft
+    p(10,7,1,4, c.S);
+    p(10,7,1,1, c.K);
+    // Pickaxe haft (diagonal-ish via steps)
+    p(11,4,1,1, c.K); p(11,5,1,1, c.O);
+    p(11,6,1,1, c.O); p(11,7,1,1, c.O);
+    p(11,8,1,1, c.O); p(11,9,1,1, c.O);
+    // Pickaxe head
+    p(8,3,4,1, c.K);
+    p(8,4,4,1, c.m);
+    p(9,4,2,1, c.M);
+    p(8,3,1,1, c.M); p(11,3,1,1, c.M);
+    // Left arm holding belt
+    p(3,8,1,2, c.S);
+    p(3,8,1,1, c.K);
+    // Belt
+    p(4,11,6,1, c.B);
+    // Legs
+    p(5,12,1,2, c.K); p(8,12,1,2, c.K);
+    p(6,12,2,2, c.B);
+    p(5,13,1,1, c.K); p(8,13,1,1, c.K);
+  }
+
+  function drawHorseman(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Horse body (low rectangle, mid-screen)
+    p(2,8,10,1, c.K);
+    p(2,9,10,3, c.B);
+    p(3,9,8,1, c.O);
+    p(2,12,10,1, c.K);
+    // Horse head (right)
+    p(11,7,1,1, c.K);
+    p(11,8,2,1, c.K);
+    p(12,9,1,2, c.K);
+    p(11,9,1,2, c.B);
+    p(12,8,1,1, c.B);
+    p(12,7,1,1, c.K);
+    // Mane
+    p(10,7,1,2, c.K);
+    p(10,6,1,1, c.K);
+    // Tail
+    p(1,8,1,3, c.K);
+    p(1,8,1,1, c.B);
+    // Legs
+    p(3,13,1,1, c.K); p(5,13,1,1, c.K);
+    p(8,13,1,1, c.K); p(10,13,1,1, c.K);
+    // Rider torso
+    p(5,3,4,1, c.K);
+    p(4,4,6,1, c.K);
+    p(5,4,4,1, c.C);                  // helm
+    p(5,5,4,1, c.S);                  // face
+    p(6,5,1,1, c.K); p(8,5,1,1, c.K); // eyes
+    p(4,6,6,1, c.K);                  // shoulders
+    p(4,7,6,2, c.C);
+    p(4,7,6,1, c.D);
+    p(5,7,1,1, c.L);
+    p(4,9,6,1, c.K);
+    // Lance forward
+    p(13,4,1,1, c.W);
+    p(11,5,3,1, c.K);
+    p(10,6,4,1, c.M);
+    p(12,7,1,1, c.K);
+  }
+
+  function drawCitySprite(cx, cy, size, city) {
     var civ = CIVS[city.civ];
-    var s = size * 0.62;
-    ctx.fillStyle = civ.color;
-    ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = civ.edge;
-    ctx.strokeRect(cx - s / 2, cy - s / 2, s, s);
+    shadowBlob(cx, cy, size * 1.1);
+    var p = makeSpriteCtx(cx, cy, size * 1.05, 16, 14);
+    var c = spriteColors(civ);
+    // Ground/base
+    p(2,12,12,2, '#2a2418');
+    p(2,12,12,1, '#000');
+    // Outer walls
+    p(1,8,14,5, c.K);
+    p(2,9,12,3, shade(civ.color, 0.45));
+    p(2,9,12,1, c.D);
+    p(2,11,12,1, c.D);
+    p(3,10,2,1, c.L);
+    p(11,10,2,1, c.L);
+    // Crenellations
+    p(2,7,2,1, c.K); p(5,7,2,1, c.K); p(8,7,2,1, c.K); p(11,7,2,1, c.K);
+    p(2,8,2,1, shade(civ.color, 0.45));
+    p(5,8,2,1, shade(civ.color, 0.45));
+    p(8,8,2,1, shade(civ.color, 0.45));
+    p(11,8,2,1, shade(civ.color, 0.45));
+    // Gate
+    p(7,10,2,3, c.K);
+    p(7,11,2,2, c.B);
+    p(7,10,2,1, c.K);
+    // Central tower
+    p(6,3,4,5, c.K);
+    p(7,4,2,4, shade(civ.color, 0.55));
+    p(7,4,2,1, c.D);
+    p(7,7,2,1, c.D);
+    p(7,5,1,1, c.K);                  // window
+    // Tower crenellations
+    p(6,2,1,1, c.K); p(7,2,1,1, c.K); p(8,2,1,1, c.K); p(9,2,1,1, c.K);
+    p(7,2,1,1, c.K); p(9,2,1,1, c.K); // dark gaps
+    p(6,3,1,1, c.D);
+    p(8,3,1,1, c.D);
+    // Flagpole + flag
+    p(7,0,1,3, c.K);
+    p(8,1,3,2, c.C);
+    p(8,1,3,1, c.L);
+    p(10,1,1,1, c.K);
+    // Capital marker
+    if (city.capital) {
+      p(7,4,1,1, c.Y);
+      p(8,4,1,1, c.Y);
+    }
 
-    ctx.fillStyle = '#001018';
-    ctx.font = 'bold ' + (size * 0.32) + 'px sans-serif';
+    // Name banner
+    var fontSize = Math.max(9, Math.round(size * 0.32));
+    var label = city.name + (city.capital ? ' ★' : '') + ' ' + city.pop;
+    ctx.font = 'bold ' + fontSize + 'px -apple-system, "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('★', cx, cy + size * 0.03);
+    ctx.textBaseline = 'top';
+    var tw = ctx.measureText(label).width;
+    var by = cy + size * 0.55;
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillRect(cx - tw/2 - 5, by, tw + 10, fontSize + 4);
+    ctx.fillStyle = civ.color;
+    ctx.fillRect(cx - tw/2 - 5, by, tw + 10, 1);
+    ctx.fillRect(cx - tw/2 - 5, by + fontSize + 3, tw + 10, 1);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, cx, by + 2);
+  }
 
-    // Name tag
-    ctx.fillStyle = '#000';
-    var tw = ctx.measureText(city.name).width;
-    ctx.fillRect(cx - tw / 2 - 4, cy + size * 0.55, tw + 8, 14);
-    ctx.fillStyle = civ.edge;
-    ctx.font = 'bold 10px sans-serif';
-    ctx.fillText(city.name + ' ' + city.pop, cx, cy + size * 0.55 + 7);
+  var UNIT_DRAW = {
+    settler:  drawSettler,
+    worker:   drawWorker,
+    warrior:  drawWarrior,
+    archer:   drawArcher,
+    horseman: drawHorseman
+  };
+
+  function drawCity(cx, cy, size, city) {
+    drawCitySprite(cx, cy, size, city);
   }
 
   function drawUnit(cx, cy, size, unit) {
     var civ = CIVS[unit.civ];
-    var rad = size * 0.40;
-    ctx.beginPath();
-    ctx.arc(cx, cy + size * 0.05, rad, 0, Math.PI * 2);
-    ctx.fillStyle = civ.color;
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = unit.civ === 'player' ? '#001018' : '#3a0d04';
-    ctx.stroke();
-
-    // Glyph
-    ctx.fillStyle = '#001018';
-    ctx.font = 'bold ' + (size * 0.5) + 'px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(UNITS[unit.type].glyph, cx, cy + size * 0.08);
+    var fn = UNIT_DRAW[unit.type] || drawWarrior;
+    fn(cx, cy, size, civ);
 
     // HP bar if damaged
     if (unit.hp < unit.maxHp) {
       var bw = size * 0.7;
       var bh = 3;
-      var bx = cx - bw / 2, by = cy - size * 0.55;
-      ctx.fillStyle = '#3a0d04';
+      var bx = cx - bw / 2, by = cy - size * 0.62;
+      ctx.fillStyle = '#1a0509';
+      ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+      ctx.fillStyle = '#ff4466';
       ctx.fillRect(bx, by, bw, bh);
       ctx.fillStyle = '#00ff88';
       ctx.fillRect(bx, by, bw * (unit.hp / unit.maxHp), bh);
@@ -599,23 +1082,30 @@
     // Selected ring
     if (state.selected && state.selected.c === unit.c && state.selected.r === unit.r) {
       ctx.beginPath();
-      ctx.arc(cx, cy + size * 0.05, rad + 4, 0, Math.PI * 2);
+      ctx.arc(cx, cy + size * 0.42, size * 0.42, 0, Math.PI * 2);
       ctx.strokeStyle = '#00ff88';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([4, 3]);
       ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // Exhausted dot
     if (unit.civ === 'player' && unit.moves === 0 && !unit.fortified) {
-      ctx.fillStyle = '#888';
+      ctx.fillStyle = 'rgba(140,140,160,0.85)';
       ctx.beginPath();
-      ctx.arc(cx + size * 0.42, cy + size * 0.42, 3, 0, Math.PI * 2);
+      ctx.arc(cx + size * 0.45, cy + size * 0.45, 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
     if (unit.fortified) {
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(cx - size * 0.18, cy + size * 0.28, size * 0.36, size * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(cx - size * 0.18, cy + size * 0.43);
+      ctx.lineTo(cx - size * 0.18, cy + size * 0.55);
+      ctx.lineTo(cx + size * 0.18, cy + size * 0.55);
+      ctx.lineTo(cx + size * 0.18, cy + size * 0.43);
+      ctx.stroke();
     }
   }
 
@@ -679,20 +1169,29 @@
     var selUnit = state.selected && tileAt(state.selected.c, state.selected.r);
     selUnit = selUnit && selUnit.unit;
     if (state.selected && !selUnit) state.selected = null;
+
+    var hasMovesLeft = civ.units.some(function (u) { return u.moves > 0 && !u.fortified; });
+    var readyToEnd = !hasMovesLeft && !state.victory;
+
     if (selUnit) {
-      hint.textContent = UNITS[selUnit.type].name + ' ' + selUnit.moves + '/' + selUnit.maxMoves + ' moves · ⏎ act · Esc cancel';
+      hint.textContent = UNITS[selUnit.type].name + ' · ' + selUnit.moves + '/' + selUnit.maxMoves + ' moves · ⏎ to move · Esc cancel';
     } else if (state.mode === 'scroll') {
       hint.textContent = 'Arrows pan · ↑↓↑↓ cursor · ←→←→ zoom';
+    } else if (readyToEnd) {
+      hint.textContent = 'All units acted — pinch empty tile to end turn';
     } else {
-      hint.textContent = '↑↓↑↓ scroll · ←→←→ zoom · ⏎ act';
+      hint.textContent = 'Pinch unit to select · ↑↓↑↓ scroll · ←→←→ zoom';
     }
 
     var ti = state.map[state.cursor.r][state.cursor.c];
     var label = TERRAIN[ti.terrain].name;
     if (ti.resource) label += ' · ' + ti.resource;
-    if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name + ' (' + CIVS[ti.unit.civ].name + ')';
+    if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name;
     if (ti.city) label += ' · ' + ti.city.name;
     document.getElementById('hud-tile').textContent = label;
+
+    var chip = document.getElementById('end-turn-chip');
+    if (chip) chip.classList.toggle('ready', readyToEnd);
   }
 
   // =====================================================================
@@ -1251,27 +1750,59 @@
   function activate() {
     var t = state.map[state.cursor.r][state.cursor.c];
 
-    // If selected unit and cursor moved to a destination — try to move there
+    // -------- Selected unit flow --------
     if (state.selected) {
       var sel = tileAt(state.selected.c, state.selected.r);
       var su = sel && sel.unit;
       if (su && su.civ === 'player') {
-        if (state.selected.c === state.cursor.c && state.selected.r === state.cursor.r) {
-          // same tile — open action menu
+        var sameTile = state.selected.c === state.cursor.c && state.selected.r === state.cursor.r;
+        var dist = hexDist([su.c, su.r], [state.cursor.c, state.cursor.r]);
+
+        if (sameTile) {
+          // Pinch on the selected unit's own tile -> open unit menu
           openActionMenu();
-        } else if (hexDist([su.c, su.r], [state.cursor.c, state.cursor.r]) === 1) {
-          moveUnit(su, state.cursor.c, state.cursor.r);
-          if (!su.hp || su.hp <= 0) state.selected = null;
-          else state.selected = { c: su.c, r: su.r };
-        } else {
-          // open menu anyway
-          openActionMenu();
+          return;
         }
-        return;
+        if (dist === 1 && su.moves > 0) {
+          // Click-to-move: walk into adjacent tile (or attack)
+          var moved = moveUnit(su, state.cursor.c, state.cursor.r);
+          if (moved) {
+            if (!su.hp || su.hp <= 0) {
+              state.selected = null;
+            } else {
+              state.selected = { c: su.c, r: su.r };
+              state.cursor.c = su.c;
+              state.cursor.r = su.r;
+            }
+          }
+          // If move failed (friendly unit / impassable), keep selection and cursor as-is
+          return;
+        }
+        // Far tile or no moves: deselect and treat as new click
+        state.selected = null;
       }
     }
 
-    // No selection — open the contextual action menu
+    // -------- Fresh activation on the tile under cursor --------
+    if (t.unit && t.unit.civ === 'player') {
+      // Instant select — no menu
+      state.selected = { c: t.unit.c, r: t.unit.r };
+      showToast('Selected ' + UNITS[t.unit.type].name);
+      return;
+    }
+    if (t.city && t.city.civ === 'player') {
+      // Open city screen directly
+      openCity(t.city);
+      return;
+    }
+    // Otherwise (empty/enemy tile): if all units have acted, end turn instantly
+    var civ = state.civs.player;
+    var hasMovesLeft = civ.units.some(function (u) { return u.moves > 0 && !u.fortified; });
+    if (!hasMovesLeft && !state.victory) {
+      endTurn();
+      return;
+    }
+    // Otherwise: open lightweight global menu
     openActionMenu();
   }
 
@@ -1282,48 +1813,60 @@
 
   function openActionMenu() {
     var t = state.map[state.cursor.r][state.cursor.c];
+    var civPl = state.civs.player;
     var actions = [];
+    var hasMovesLeft = civPl.units.some(function (u) { return u.moves > 0 && !u.fortified; });
 
-    if (t.unit && t.unit.civ === 'player') {
+    var title = 'Actions';
+    var isUnit = t.unit && t.unit.civ === 'player';
+    var isCity = t.city && t.city.civ === 'player';
+
+    if (isUnit) {
       var u = t.unit;
       state.selected = { c: u.c, r: u.r };
       var def = UNITS[u.type];
+      title = UNITS[u.type].name;
 
-      actions.push({ icon: '⊕', title: 'Select / Move', sub: u.moves + '/' + u.maxMoves + ' moves left · arrows to step', do: function () { closeModal(); } });
       if (def.canFound) {
-        actions.push({ icon: '★', title: 'Found City', sub: '30 prod start', do: function () { foundCity(u); closeModal(); draw(); } });
+        actions.push({ icon: '★', primary: true, title: 'Found City', sub: 'Plant a settlement here', do: function () { foundCity(u); closeModal(); draw(); } });
       }
       if (def.canImprove) {
         var canImp = ['grass','plains','hills'].indexOf(t.terrain) >= 0 && !t.improvement;
-        actions.push({ icon: '⛏', title: 'Build Improvement', sub: canImp ? (t.terrain === 'hills' ? 'Mine (+2 prod)' : 'Farm (+1 food)') : 'Not buildable here', disabled: !canImp, do: function () {
+        actions.push({ icon: '⛏', title: 'Build Improvement', sub: canImp ? (t.terrain === 'hills' ? 'Mine · +2 prod' : 'Farm · +1 food') : 'Not buildable here', disabled: !canImp, do: function () {
           t.improvement = t.terrain === 'hills' ? 'mine' : 'farm';
           u.moves = 0;
           showToast('Improvement built', 'success');
           closeModal();
+          draw();
         } });
       }
       if (def.atk > 0) {
-        // Attack adjacent?
         var enemyN = adjacentEnemy(u);
-        actions.push({ icon: '⚔', title: 'Attack Adjacent', sub: enemyN ? UNITS[enemyN.unit.type].name + ' to ' + dirLabel(u, enemyN) : 'No adjacent enemy', disabled: !enemyN, do: function () { attack(u, enemyN.unit); closeModal(); draw(); } });
+        actions.push({ icon: '⚔', title: 'Attack Adjacent', sub: enemyN ? UNITS[enemyN.unit.type].name + ' (' + dirLabel(u, enemyN) + ')' : 'No enemy adjacent', disabled: !enemyN, do: function () { attack(u, enemyN.unit); closeModal(); draw(); } });
       }
-      actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn, +25% defense', do: function () { u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
+      actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
       actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
+    } else if (isCity) {
+      title = t.city.name;
+      actions.push({ icon: '🏛', primary: true, title: 'Manage ' + t.city.name, sub: 'Production, food, science', do: function () { closeModal(); openCity(t.city); } });
     }
 
-    if (t.city && t.city.civ === 'player') {
-      actions.push({ icon: '🏛', title: 'Manage ' + t.city.name, sub: 'Production · stats', do: function () { closeModal(); openCity(t.city); } });
-    }
+    // Global actions (always at bottom)
+    actions.push({ icon: '◆', title: 'Research', sub: civPl.currentTech ? TECHS[civPl.currentTech].name + ' · ' + civPl.techProgress + '/' + TECHS[civPl.currentTech].cost : 'Choose research', do: function () { closeModal(); openTech(); } });
 
-    actions.push({ icon: '◉', title: 'Research', sub: state.civs.player.currentTech ? TECHS[state.civs.player.currentTech].name + ' ' + state.civs.player.techProgress + '/' + TECHS[state.civs.player.currentTech].cost : 'Choose research', do: function () { closeModal(); openTech(); } });
-
-    actions.push({ icon: '⏵', title: 'End Turn', sub: 'Advance one round', do: function () { closeModal(); endTurn(); } });
+    var endIcon = '▶';
+    var endSub = hasMovesLeft ? Math.max(0, civPl.units.filter(function (u) { return u.moves > 0 && !u.fortified; }).length) + ' unit(s) still have moves' : 'All units acted — ready';
+    actions.push({ icon: endIcon, primary: !hasMovesLeft, danger: hasMovesLeft, title: 'End Turn', sub: endSub, do: function () { closeModal(); endTurn(); } });
 
     var list = document.getElementById('action-list');
     list.innerHTML = '';
     actions.forEach(function (a, i) {
       var row = document.createElement('button');
-      row.className = 'action-row focusable' + (a.disabled ? ' disabled' : '');
+      var cls = 'action-row focusable';
+      if (a.disabled) cls += ' disabled';
+      if (a.primary)  cls += ' primary';
+      if (a.danger)   cls += ' danger';
+      row.className = cls;
       if (a.disabled) row.setAttribute('disabled','');
       row.tabIndex = 0;
       row.innerHTML = '<div class="action-icon">' + a.icon + '</div>' +
@@ -1333,11 +1876,16 @@
       list.appendChild(row);
     });
 
-    var title = 'Tile';
-    if (t.unit && t.unit.civ === 'player') title = UNITS[t.unit.type].name;
-    else if (t.city) title = t.city.name;
     document.getElementById('action-title').textContent = title;
     showModal('action-menu');
+    // If End Turn is the primary action, focus it
+    if (!hasMovesLeft) {
+      setTimeout(function () {
+        var rows = document.querySelectorAll('#action-list .action-row.focusable:not([disabled])');
+        var endRow = rows[rows.length - 1];
+        if (endRow) endRow.focus();
+      }, 20);
+    }
   }
 
   function adjacentEnemy(u) {

@@ -12,12 +12,13 @@
   <div id="app">
 
     <div id="title" class="screen">
+      <div class="title-bg-hex"></div>
       <div class="title-wrap">
         <div class="title-mark">
-          <span class="title-hex">⬡</span>
+          <span class="title-hex">⬢</span>
         </div>
         <h1 class="title-name">MicroCiv</h1>
-        <p class="title-sub">A 4X for the Display</p>
+        <p class="title-sub">4X · For The Display</p>
         <div class="title-actions">
           <button class="nav-item primary focusable" data-action="new-game">New Game</button>
           <button class="nav-item focusable" data-action="continue-game" id="continue-btn">Continue</button>
@@ -29,15 +30,16 @@
     <div id="game" class="screen hidden">
       <canvas id="map" width="600" height="540"></canvas>
       <div id="hud-top" class="hud-top">
-        <span class="hud-cell"><span class="hud-ico">T</span><span id="hud-turn">1</span></span>
-        <span class="hud-cell"><span class="hud-ico g">$</span><span id="hud-gold">0</span></span>
+        <span class="hud-cell turn"><span class="hud-lbl">TURN</span><span id="hud-turn">1</span></span>
+        <span class="hud-cell"><span class="hud-ico g">⬢</span><span id="hud-gold">0</span></span>
         <span class="hud-cell"><span class="hud-ico s">◆</span><span id="hud-sci">0</span></span>
-        <span class="hud-cell"><span id="hud-tech-name">—</span></span>
+        <span class="hud-cell hud-tech"><span id="hud-tech-name">—</span></span>
       </div>
       <div id="hud-bottom" class="hud-bottom">
         <span id="mode-pill" class="mode-pill">CURSOR</span>
-        <span id="hud-hint" class="hud-hint">↑↓↑↓ scroll · ←→←→ zoom · ⏎ act</span>
         <span id="hud-tile" class="hud-tile">—</span>
+        <span id="hud-hint" class="hud-hint">⏎ act · esc cancel</span>
+        <span id="end-turn-chip" class="end-turn-chip">END TURN</span>
       </div>
       <div id="end-turn-flash" class="end-turn-flash hidden">End Turn</div>
       <div id="toast" class="toast"></div>
@@ -88,13 +90,14 @@
           <h2>How to Play</h2>
         </header>
         <div class="help-body">
-          <p><b>Goal:</b> Capture the enemy capital, or research every tech.</p>
-          <p><b>Cursor mode</b> (default): arrows move the cursor one tile at a time.</p>
-          <p><b>Scroll mode:</b> arrows pan the map. Toggle with <b>↑ ↓ ↑ ↓</b>.</p>
-          <p><b>Zoom:</b> cycle with <b>← → ← →</b>.</p>
-          <p><b>Pinch / Enter:</b> open actions for the tile under the cursor — move units, attack, found cities, manage production, end turn.</p>
-          <p><b>Esc:</b> close menus.</p>
-          <p>End turn from the action menu when nothing is left to do.</p>
+          <p><b>Goal.</b> Capture the enemy capital, or research every tech.</p>
+          <p><b>Pinch on your unit</b> — selects it instantly. Pinch an adjacent tile to walk into it (or attack). Pinch the same unit again for its action menu (found, fortify, skip).</p>
+          <p><b>Pinch your city</b> — opens the city screen (production, food, prod).</p>
+          <p><b>Pinch empty ground</b> — global menu: end turn, research, help.</p>
+          <p><b>Scroll mode</b> — toggle with <kbd>↑ ↓ ↑ ↓</kbd>. Arrows pan the map instead of moving the cursor.</p>
+          <p><b>Zoom</b> — cycle with <kbd>← → ← →</kbd>: far · normal · close.</p>
+          <p><b>End turn</b> — when all your units have moved, the <b>END TURN</b> chip in the corner glows. Pinch any empty tile to fire it instantly.</p>
+          <p><b>Esc</b> — cancel selection / close menu.</p>
         </div>
         <button class="nav-item primary focusable" data-action="back">Got it</button>
       </div>
