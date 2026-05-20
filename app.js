@@ -45,6 +45,64 @@
     raider:   { name: 'Raider',   cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,        barb: true }
   };
 
+  // Worker-built tile improvements. Each one has a context check and a yield.
+  // Priority order in pickImprovement matters — specific improvements pick first.
+  var IMPROVEMENTS = {
+    pasture: {
+      name: 'Pasture',
+      yield: { food: 1, prod: 1 },
+      suitable: function (t) {
+        return (t.terrain === 'plains' || t.terrain === 'grass')
+          && (t.resource === 'cattle' || t.resource === 'horses');
+      }
+    },
+    fishing: {
+      name: 'Fishing Boats',
+      yield: { food: 1, gold: 1 },
+      suitable: function (t) { return t.terrain === 'water' && t.resource === 'fish'; }
+    },
+    lumber: {
+      name: 'Lumber Mill',
+      yield: { prod: 1, gold: 1 },
+      suitable: function (t) { return t.terrain === 'forest'; }
+    },
+    mine: {
+      name: 'Mine',
+      yield: { prod: 2 },
+      suitable: function (t) {
+        if (t.terrain === 'hills') return true;
+        if (t.terrain === 'desert' &&
+            (t.resource === 'iron' || t.resource === 'copper' ||
+             t.resource === 'gold' || t.resource === 'gems')) return true;
+        return false;
+      }
+    },
+    quarry: {
+      name: 'Quarry',
+      yield: { prod: 1, gold: 1 },
+      suitable: function (t) { return t.terrain === 'desert' && !t.resource; }
+    },
+    farm: {
+      name: 'Farm',
+      yield: { food: 1 },
+      suitable: function (t) {
+        return (t.terrain === 'grass' || t.terrain === 'plains') && !t.improvement
+          && !(t.resource === 'cattle' || t.resource === 'horses');
+      }
+    }
+  };
+  // Order = priority. First matching wins.
+  var IMPROVEMENT_ORDER = ['pasture', 'fishing', 'lumber', 'mine', 'quarry', 'farm'];
+
+  function pickImprovement(t) {
+    if (!t || t.improvement) return null;
+    for (var i = 0; i < IMPROVEMENT_ORDER.length; i++) {
+      var id = IMPROVEMENT_ORDER[i];
+      if (IMPROVEMENTS[id].suitable(t)) return id;
+    }
+    return null;
+  }
+
   var BUILDINGS = {
     granary: { name: 'Granary', cost: 30, food: 2, tech: 'pottery'  },
     walls:   { name: 'Walls',   cost: 40, def: 4,  tech: 'masonry'  },
@@ -109,8 +167,12 @@
   var CIVS = {
     player: { name: 'Solaris', color: '#00d4ff', edge: '#7ce5ff' },
     ai:     { name: 'Umbra',   color: '#ff7a59', edge: '#ffb59a' },
+    ai2:    { name: 'Tellus',  color: '#b388ff', edge: '#d4b8ff' },
     barb:   { name: 'Raiders', color: '#7a7888', edge: '#b8b6c4' }
   };
+  // Non-barbarian civilization side IDs. Loops over real civs iterate this.
+  var CIV_SIDES = ['player', 'ai', 'ai2'];
+  var AI_SIDES  = ['ai', 'ai2'];
 
   function applyFaction(sideId, factionId) {
     var f = FACTIONS[factionId];
@@ -223,11 +285,12 @@
       resource: null,
       city: null,
       unit: null,
-      improvement: null, // 'farm' | 'mine'
+      improvement: null, // 'farm' | 'mine' | 'pasture' | 'lumber' | 'quarry' | 'fishing'
       village: null,     // null or { reward: 'gold' | 'worker' | 'science' | 'pop' }
-      owner: null,       // 'player' | 'ai' | null — territorial control
-      visible: { player: false, ai: false },
-      explored: { player: false, ai: false }
+      river: false,      // tile sits on a river — +1 food worked, fresh water for cities
+      owner: null,       // 'player' | 'ai' | 'ai2' | null
+      visible: { player: false, ai: false, ai2: false },
+      explored: { player: false, ai: false, ai2: false }
     };
   }
 
@@ -321,10 +384,70 @@
     placeWonder(map, 'volcano', ['mountain','hills','plains']);
     placeWonder(map, 'geyser',  ['grass','plains','forest']);
 
+    // Carve 2 rivers from high terrain toward water/edge
+    placeRivers(map, 2);
+
     // Scatter ~8 tribal villages
     placeVillages(map, 8);
 
     return map;
+  }
+
+  function neighborsRaw(c, r) {
+    var deltas = neighborDeltas(r);
+    var out = [];
+    for (var i = 0; i < 6; i++) {
+      var nc = c + deltas[i][0], nr = r + deltas[i][1];
+      if (nc >= 0 && nc < MAP_W && nr >= 0 && nr < MAP_H) out.push([nc, nr]);
+    }
+    return out;
+  }
+
+  function placeRivers(map, count) {
+    for (var k = 0; k < count; k++) {
+      var start = null;
+      for (var tries = 0; tries < 200; tries++) {
+        var c = rndInt(2, MAP_W - 3);
+        var r = rndInt(2, MAP_H - 3);
+        var t = map[r][c];
+        if (t.terrain === 'hills' || t.terrain === 'mountain') { start = [c, r]; break; }
+      }
+      if (!start) continue;
+      var cur = start;
+      var visited = {};
+      visited[cur[0] + ',' + cur[1]] = true;
+      var path = [cur];
+      for (var steps = 0; steps < 18; steps++) {
+        var ns = neighborsRaw(cur[0], cur[1]);
+        var best = null, bestScore = Infinity;
+        for (var i = 0; i < ns.length; i++) {
+          var nc = ns[i][0], nr = ns[i][1];
+          if (visited[nc + ',' + nr]) continue;
+          var nt = map[nr][nc];
+          if (nt.river) continue;
+          var score = 0;
+          if (nt.terrain === 'water') score -= 100;
+          var edgeDist = Math.min(nc, nr, MAP_W - 1 - nc, MAP_H - 1 - nr);
+          score += edgeDist * 0.6;
+          if (nt.terrain === 'mountain') score += 8;
+          if (nt.terrain === 'volcano') score += 50;
+          if (nt.terrain === 'hills')    score += 3;
+          if (nt.terrain === 'grass' || nt.terrain === 'plains' || nt.terrain === 'forest') score -= 2;
+          score += rnd() * 2.5;
+          if (score < bestScore) { best = ns[i]; bestScore = score; }
+        }
+        if (!best) break;
+        visited[best[0] + ',' + best[1]] = true;
+        path.push(best);
+        if (map[best[1]][best[0]].terrain === 'water') break;
+        cur = best;
+      }
+      path.forEach(function (p) {
+        var t = map[p[1]][p[0]];
+        if (t.terrain === 'water' || t.terrain === 'mountain' || t.terrain === 'volcano') return;
+        t.river = true;
+      });
+    }
   }
 
   function placeVillages(map, n) {
@@ -372,25 +495,29 @@
   }
 
   function pickStart(map, awayFrom) {
-    var minDist = 10;
+    // awayFrom can be a single [c,r] or an array of them
+    var existing = [];
+    if (awayFrom && awayFrom.length) {
+      existing = (typeof awayFrom[0] === 'number') ? [awayFrom] : awayFrom;
+    }
+    var minDist = 8;
     for (var tries = 0; tries < 600; tries++) {
       var c = rndInt(2, MAP_W - 3);
       var r = rndInt(2, MAP_H - 3);
       var t = map[r][c];
       if (TERRAIN[t.terrain].impassable) continue;
-      if (awayFrom) {
-        var d = hexDist([c, r], awayFrom);
-        if (d < minDist) continue;
+      var tooClose = false;
+      for (var i = 0; i < existing.length; i++) {
+        if (hexDist([c, r], existing[i]) < minDist) { tooClose = true; break; }
       }
-      // ensure a few traversable neighbors
+      if (tooClose) continue;
       var ok = 0;
       var ns = (function () { var prev = state; state = { map: map }; var n = neighbors(c, r); state = prev; return n; })();
-      for (var i = 0; i < ns.length; i++) {
-        if (!TERRAIN[map[ns[i][1]][ns[i][0]].terrain].impassable) ok++;
+      for (var j = 0; j < ns.length; j++) {
+        if (!TERRAIN[map[ns[j][1]][ns[j][0]].terrain].impassable) ok++;
       }
       if (ok >= 4) return [c, r];
-      // relax min distance as tries grow
-      if (tries > 300) minDist = 8;
+      if (tries > 300) minDist = 6;
     }
     return [Math.floor(MAP_W / 2), Math.floor(MAP_H / 2)];
   }
@@ -403,10 +530,14 @@
     playerFaction = playerFaction || 'solaris';
     if (!FACTIONS[playerFaction]) playerFaction = 'solaris';
     var others = FACTION_ORDER.filter(function (f) { return f !== playerFaction; });
-    var aiFaction = others[Math.floor(Math.random() * others.length)];
+    // Shuffle so AI faction assignment is randomized
+    others.sort(function () { return Math.random() - 0.5; });
+    var aiFaction  = others[0];
+    var ai2Faction = others[1];
 
     applyFaction('player', playerFaction);
-    applyFaction('ai', aiFaction);
+    applyFaction('ai',  aiFaction);
+    applyFaction('ai2', ai2Faction);
 
     var map = generateMap(seed);
 
@@ -417,7 +548,8 @@
       map: map,
       civs: {
         player: makeCiv('player', playerFaction),
-        ai:     makeCiv('ai', aiFaction),
+        ai:     makeCiv('ai',  aiFaction),
+        ai2:    makeCiv('ai2', ai2Faction),
         barb:   makeBarbCiv()
       },
       cursor: { c: 0, r: 0 },
@@ -431,19 +563,23 @@
       wondersBuilt: {}                   // wonder id -> civ id who built it
     };
 
-    var p = pickStart(map);
-    var a = pickStart(map, p);
+    var p  = pickStart(map);
+    var a  = pickStart(map, [p]);
+    var a2 = pickStart(map, [p, a]);
 
     state.cursor.c = p[0]; state.cursor.r = p[1];
 
     spawnStarter('player', p);
-    spawnStarter('ai', a);
+    spawnStarter('ai',  a);
+    spawnStarter('ai2', a2);
 
     state.civs.player.currentTech = 'pottery';
-    state.civs.ai.currentTech = 'archery';
+    state.civs.ai.currentTech     = 'archery';
+    state.civs.ai2.currentTech    = 'pottery';
 
     recomputeVisibility('player');
     recomputeVisibility('ai');
+    recomputeVisibility('ai2');
     recomputeBorders();
     centerCameraOn(state.cursor.c, state.cursor.r);
     save();
@@ -553,11 +689,21 @@
           var tl = state.map[rr][cc];
           if (tl.village === undefined) tl.village = null;
           if (tl.owner === undefined) tl.owner = null;
+          if (tl.river === undefined) tl.river = false;
+          if (!tl.visible.ai2) tl.visible.ai2 = false;
+          if (!tl.explored.ai2) tl.explored.ai2 = false;
         }
       }
-      // Re-apply faction so CIVS colors/names match the saved game
-      ['player','ai'].forEach(function (id) {
-        var fid = state.civs[id].faction || (id === 'player' ? 'solaris' : 'umbra');
+      // Older saves may have only one AI — synth a second one from the remaining faction.
+      if (!state.civs.ai2) {
+        var picked = [state.civs.player.faction, state.civs.ai.faction];
+        var leftover = FACTION_ORDER.filter(function (f) { return picked.indexOf(f) < 0; })[0] || 'tellus';
+        state.civs.ai2 = makeCiv('ai2', leftover);
+        state.civs.ai2.currentTech = 'pottery';
+      }
+      // Re-apply factions so CIVS colors/names match the saved game
+      CIV_SIDES.forEach(function (id) {
+        var fid = state.civs[id].faction || 'solaris';
         state.civs[id].faction = fid;
         applyFaction(id, fid);
         state.civs[id].name = CIVS[id].name;
@@ -566,8 +712,8 @@
       // restore unit refs on tiles
       for (var r = 0; r < MAP_H; r++)
         for (var c = 0; c < MAP_W; c++) state.map[r][c].unit = null;
-      ['player','ai','barb'].forEach(function (id) {
-        state.civs[id].units.forEach(function (u) {
+      CIV_SIDES.concat(['barb']).forEach(function (id) {
+        (state.civs[id].units || []).forEach(function (u) {
           var t = tileAt(u.c, u.r); if (t) t.unit = u;
         });
         (state.civs[id].cities || []).forEach(function (ct) {
@@ -594,8 +740,9 @@
       for (var c = 0; c < MAP_W; c++) state.map[r][c].owner = null;
 
     var all = [];
-    state.civs.player.cities.forEach(function (ct) { all.push(ct); });
-    state.civs.ai.cities.forEach(function (ct) { all.push(ct); });
+    CIV_SIDES.forEach(function (id) {
+      (state.civs[id].cities || []).forEach(function (ct) { all.push(ct); });
+    });
 
     // Each tile is claimed by the closest city within that city's culture range.
     // Ties broken by city age (older city wins — found order = array order).
@@ -965,6 +1112,68 @@
     }
   }
 
+  // Draw a meandering cyan stream across a river tile. We choose 2 of the 6
+  // edges as the entry/exit based on which neighbors are also river/water tiles,
+  // so connected rivers actually look continuous.
+  function drawRiverOnTile(cx, cy, size, c, r) {
+    var ns = neighborsAll(c, r);
+    var anchors = [];
+    for (var i = 0; i < 6; i++) {
+      if (!ns[i]) continue;
+      var nt = state.map[ns[i][1]][ns[i][0]];
+      if (!nt.river && nt.terrain !== 'water') continue;
+      // Use the midpoint of edge between vertex i and vertex (i+1) in our hex
+      // pointy-top hex vertices are at angles -30 + 60*i degrees
+      // neighbors[] order maps to edges by EDGE_TO_NEIGHBOR — invert:
+      // edge 0 -> neighbor 0 (E); edge 1 -> 4 (SE); edge 2 -> 5 (SW); edge 3 -> 1 (W); edge 4 -> 3 (NW); edge 5 -> 2 (NE)
+      var edgeIdx = [0, 3, 5, 4, 1, 2][i]; // inverse of EDGE_TO_NEIGHBOR
+      var ang1 = Math.PI / 180 * (60 * edgeIdx - 30);
+      var ang2 = Math.PI / 180 * (60 * (edgeIdx + 1) - 30);
+      var rad = size * 0.82;
+      var mx = cx + rad * (Math.cos(ang1) + Math.cos(ang2)) / 2;
+      var my = cy + rad * (Math.sin(ang1) + Math.sin(ang2)) / 2;
+      anchors.push([mx, my]);
+    }
+    if (anchors.length < 2) {
+      // headwater spring — small pond
+      ctx.fillStyle = '#1a5c7a';
+      ctx.beginPath();
+      ctx.arc(cx, cy + size * 0.05, size * 0.10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#7ce5ff';
+      ctx.beginPath();
+      ctx.arc(cx, cy + size * 0.04, size * 0.06, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    // Pick first two anchors (rivers can fork, but two is fine visually)
+    var a = anchors[0], b = anchors[1 % anchors.length];
+    if (anchors.length > 2) b = anchors[Math.floor(anchors.length / 2)];
+    // Dark blue outline
+    ctx.strokeStyle = '#0a2c44';
+    ctx.lineWidth = Math.max(3, size * 0.18);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.quadraticCurveTo(cx + (rnd() - 0.5) * size * 0.2, cy + size * 0.05, b[0], b[1]);
+    ctx.stroke();
+    // Bright water
+    ctx.strokeStyle = '#3a92d0';
+    ctx.lineWidth = Math.max(2, size * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(a[0], a[1]);
+    ctx.quadraticCurveTo(cx, cy + size * 0.05, b[0], b[1]);
+    ctx.stroke();
+    // Sparkle highlight
+    ctx.strokeStyle = '#7ce5ff';
+    ctx.lineWidth = Math.max(1, size * 0.04);
+    ctx.beginPath();
+    ctx.moveTo(a[0] + 1, a[1] - 1);
+    ctx.quadraticCurveTo(cx + 1, cy + size * 0.04, b[0] + 1, b[1] - 1);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+
   function drawResourceMarker(cx, cy, size, kind) {
     var res = RESOURCES[kind];
     if (!res) return;
@@ -1131,6 +1340,209 @@
   function drawImprovement(cx, cy, size, kind) {
     if (kind === 'farm') drawFarmImprovement(cx, cy, size);
     else if (kind === 'mine') drawMineImprovement(cx, cy, size);
+    else if (kind === 'pasture') drawPastureImprovement(cx, cy, size);
+    else if (kind === 'lumber') drawLumberImprovement(cx, cy, size);
+    else if (kind === 'quarry') drawQuarryImprovement(cx, cy, size);
+    else if (kind === 'fishing') drawFishingImprovement(cx, cy, size);
+  }
+
+  function drawPastureImprovement(cx, cy, size) {
+    var w = size * 0.95, h = size * 0.55;
+    var x0 = cx - w / 2, y0 = cy + size * 0.05;
+    var px = Math.max(1, size / 18);
+    // Pasture ground (lighter green than grass)
+    ctx.fillStyle = '#0e0e0a';
+    ctx.fillRect(x0 - px, y0 - px, w + 2*px, h + 2*px);
+    ctx.fillStyle = '#3a5a28';
+    ctx.fillRect(x0, y0, w, h);
+    ctx.fillStyle = '#4c7038';
+    ctx.fillRect(x0, y0, w, h * 0.6);
+    // Wooden fence — repeated dark posts + 2 horizontal rails
+    ctx.fillStyle = '#3a2410';
+    for (var i = 0; i < 7; i++) {
+      var fx = x0 + i * (w / 6);
+      ctx.fillRect(fx - px*0.4, y0 - 2, px*0.8, h * 0.5);
+    }
+    ctx.fillStyle = '#5a3818';
+    ctx.fillRect(x0, y0 + h * 0.10, w, px * 0.6);
+    ctx.fillRect(x0, y0 + h * 0.30, w, px * 0.6);
+    // Small barn on right
+    var bx = x0 + w - size * 0.26;
+    var by = y0 - size * 0.10;
+    var bw = size * 0.22, bh = size * 0.22;
+    ctx.fillStyle = '#1a0a08';
+    ctx.beginPath();
+    ctx.moveTo(bx - 2, by + bh * 0.4);
+    ctx.lineTo(bx + bw / 2, by);
+    ctx.lineTo(bx + bw + 2, by + bh * 0.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7a3018';
+    ctx.fillRect(bx, by + bh * 0.4, bw, bh * 0.6);
+    ctx.fillStyle = '#3a1810';
+    ctx.fillRect(bx + bw * 0.4, by + bh * 0.7, bw * 0.2, bh * 0.3);
+    // Hay piles (yellow dots) scattered in foreground
+    ctx.fillStyle = '#d4a04a';
+    for (var i = 0; i < 4; i++) {
+      var hx = x0 + (i + 0.5) * (w * 0.18);
+      var hy = y0 + h * 0.70;
+      ctx.beginPath();
+      ctx.ellipse(hx, hy, px * 1.4, px * 0.7, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawLumberImprovement(cx, cy, size) {
+    var w = size * 0.95, h = size * 0.55;
+    var x0 = cx - w / 2, y0 = cy + size * 0.05;
+    var px = Math.max(1, size / 18);
+    // Forest floor outline
+    ctx.fillStyle = '#0a0a08';
+    ctx.fillRect(x0 - px, y0 - px, w + 2*px, h + 2*px);
+    ctx.fillStyle = '#1a3a1c';
+    ctx.fillRect(x0, y0, w, h);
+    // Sawmill shed on the left
+    var sx = x0 + size * 0.04;
+    var sy = y0 + size * 0.04;
+    var sw = size * 0.30, sh = size * 0.34;
+    // Pitched roof
+    ctx.fillStyle = '#1a0a08';
+    ctx.beginPath();
+    ctx.moveTo(sx - 2, sy + sh * 0.35);
+    ctx.lineTo(sx + sw / 2, sy);
+    ctx.lineTo(sx + sw + 2, sy + sh * 0.35);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#6a3818';
+    ctx.fillRect(sx, sy + sh * 0.35, sw, sh * 0.65);
+    ctx.fillStyle = '#3a1c08';
+    ctx.fillRect(sx + sw * 0.35, sy + sh * 0.6, sw * 0.30, sh * 0.40);
+    // Chimney + smoke
+    ctx.fillStyle = '#3a2010';
+    ctx.fillRect(sx + sw * 0.7, sy - 3, 3, 5);
+    ctx.fillStyle = 'rgba(220,220,220,0.5)';
+    ctx.beginPath();
+    ctx.arc(sx + sw * 0.7 + 1, sy - size * 0.1, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // Stack of logs on the right
+    var lx = x0 + w - size * 0.40;
+    var ly = y0 + size * 0.20;
+    ctx.fillStyle = '#1a0a08';
+    ctx.fillRect(lx - 2, ly - 2, size * 0.36, size * 0.20);
+    var logColors = ['#7a4a1c', '#8a5a2c', '#7a4a1c', '#8a5a2c'];
+    for (var i = 0; i < 4; i++) {
+      ctx.fillStyle = logColors[i];
+      ctx.fillRect(lx, ly + i * (px * 1.2), size * 0.32, px * 1.0);
+      // log end-circles
+      ctx.fillStyle = '#5a3018';
+      ctx.beginPath();
+      ctx.arc(lx, ly + i * (px * 1.2) + px * 0.5, px * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(lx + size * 0.32, ly + i * (px * 1.2) + px * 0.5, px * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function drawQuarryImprovement(cx, cy, size) {
+    var w = size * 0.95, h = size * 0.55;
+    var x0 = cx - w / 2, y0 = cy + size * 0.05;
+    var px = Math.max(1, size / 18);
+    // Sandy ground
+    ctx.fillStyle = '#1a1208';
+    ctx.fillRect(x0 - px, y0 - px, w + 2*px, h + 2*px);
+    ctx.fillStyle = '#7a5a1c';
+    ctx.fillRect(x0, y0, w, h);
+    ctx.fillStyle = '#9a7a2c';
+    ctx.fillRect(x0, y0, w, h * 0.4);
+    // Excavated pit on left (dark trapezoid)
+    ctx.fillStyle = '#3a2810';
+    ctx.beginPath();
+    ctx.moveTo(x0 + size * 0.06, y0 + h * 0.30);
+    ctx.lineTo(x0 + size * 0.32, y0 + h * 0.30);
+    ctx.lineTo(x0 + size * 0.28, y0 + h * 0.85);
+    ctx.lineTo(x0 + size * 0.10, y0 + h * 0.85);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#1a0e08';
+    ctx.fillRect(x0 + size * 0.13, y0 + h * 0.55, size * 0.13, size * 0.15);
+    // Stacked grey stone blocks on right
+    var bx = x0 + size * 0.45;
+    var by = y0 + h * 0.20;
+    var bs = size * 0.10;
+    function block(qx, qy) {
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(qx - 1, qy - 1, bs + 2, bs + 2);
+      ctx.fillStyle = '#8a8a92';
+      ctx.fillRect(qx, qy, bs, bs);
+      ctx.fillStyle = '#aeaeb6';
+      ctx.fillRect(qx + 1, qy + 1, bs - 2, bs * 0.4);
+    }
+    block(bx,                by + bs * 1.2);
+    block(bx + bs + 2,        by + bs * 1.2);
+    block(bx + 2 * bs + 4,    by + bs * 1.2);
+    block(bx + bs / 2 + 1,    by);
+    block(bx + 1.5 * bs + 3,  by);
+    // Tiny pickaxe leaning against blocks
+    ctx.strokeStyle = '#7a4a1c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx + 2 * bs + 6, y0 + h - 1);
+    ctx.lineTo(bx + 2 * bs + 10, y0 + h - size * 0.18);
+    ctx.stroke();
+    ctx.fillStyle = '#aeaeb6';
+    ctx.fillRect(bx + 2 * bs + 8, y0 + h - size * 0.20, 5, 2);
+    ctx.lineWidth = 1;
+  }
+
+  function drawFishingImprovement(cx, cy, size) {
+    // Small boat on the water tile
+    var bw = size * 0.55, bh = size * 0.16;
+    var bx = cx - bw / 2, by = cy + size * 0.08;
+    // hull
+    ctx.fillStyle = '#1a0a08';
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + bw, by);
+    ctx.lineTo(bx + bw - bh * 1.2, by + bh);
+    ctx.lineTo(bx + bh * 1.2, by + bh);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7a4a1c';
+    ctx.beginPath();
+    ctx.moveTo(bx + 2, by + 2);
+    ctx.lineTo(bx + bw - 2, by + 2);
+    ctx.lineTo(bx + bw - bh * 1.2 - 2, by + bh - 1);
+    ctx.lineTo(bx + bh * 1.2 + 2, by + bh - 1);
+    ctx.closePath();
+    ctx.fill();
+    // mast
+    ctx.fillStyle = '#3a2410';
+    ctx.fillRect(bx + bw / 2 - 1, by - size * 0.28, 2, size * 0.30);
+    // triangular sail
+    ctx.fillStyle = '#f4f4f4';
+    ctx.beginPath();
+    ctx.moveTo(bx + bw / 2 + 1, by - size * 0.28);
+    ctx.lineTo(bx + bw / 2 + 1 + size * 0.20, by - size * 0.05);
+    ctx.lineTo(bx + bw / 2 + 1, by - size * 0.02);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#c0c0c8';
+    ctx.beginPath();
+    ctx.moveTo(bx + bw / 2 + 1, by - size * 0.20);
+    ctx.lineTo(bx + bw / 2 + 1 + size * 0.10, by - size * 0.08);
+    ctx.lineTo(bx + bw / 2 + 1, by - size * 0.07);
+    ctx.closePath();
+    ctx.fill();
+    // wake / ripples in front and behind
+    ctx.strokeStyle = '#7ce5ff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(bx + bw * 1.1, by + bh / 2, size * 0.10, -0.5, 0.5);
+    ctx.moveTo(bx - size * 0.06, by + bh + 2);
+    ctx.lineTo(bx + bh, by + bh + 2);
+    ctx.stroke();
+    ctx.lineWidth = 1;
   }
 
   function drawFarmImprovement(cx, cy, size) {
@@ -1335,6 +1747,7 @@
         ctx.save();
         ctx.clip();                      // clip decals to hex
         drawTerrainDetail(cx, cy, size, t, c, r);
+        if (t.river) drawRiverOnTile(cx, cy, size, c, r);
         ctx.restore();
         ctx.lineWidth = 1.2;
         ctx.strokeStyle = terrain.edge;
@@ -2089,6 +2502,8 @@
     // Wonder: Hanging Gardens — +2 food in every city of its owner
     var wb = state.wondersBuilt || {};
     if (wb.hanging_gardens === city.civ) food += BUILDINGS.hanging_gardens.perCityFood;
+    // Fresh-water bonus when the city itself sits on a river
+    if (city.onRiver) { food += 1; gold += 1; }
     var ns = neighbors(city.c, city.r);
     ns.unshift([city.c, city.r]);
     // simulate "citizens" working pop best tiles
@@ -2111,9 +2526,15 @@
         if (res.yield.prod) p += res.yield.prod;
         if (res.yield.gold) g += res.yield.gold;
       }
-      // Improvement bonus
-      if (t.improvement === 'farm') f += 1;
-      if (t.improvement === 'mine') p += 2;
+      // River tile gives +1 food (fresh water for irrigation)
+      if (t.river) f += 1;
+      // Improvement bonus (data-driven from IMPROVEMENTS table)
+      if (t.improvement && IMPROVEMENTS[t.improvement]) {
+        var iy = IMPROVEMENTS[t.improvement].yield;
+        if (iy.food) f += iy.food;
+        if (iy.prod) p += iy.prod;
+        if (iy.gold) g += iy.gold;
+      }
       // World wonder per-tile bonuses (only if this city's civ owns the wonder)
       if (wb.great_lighthouse === city.civ && t.terrain === 'water') g += BUILDINGS.great_lighthouse.perWaterGold;
       if (wb.forge === city.civ && t.terrain === 'hills')              p += BUILDINGS.forge.perHillProd;
@@ -2322,6 +2743,8 @@
     var nameList = CITY_NAMES[civ.faction] || CITY_NAMES.solaris;
     var name = nameList[civ.cities.length % nameList.length];
     var isCapital = civ.cities.length === 0;
+    // Fresh-water city: founded directly on a river (or on a tile adjacent to river/water? keep it strict)
+    var onRiver = !!t.river;
     var city = {
       civ: unit.civ,
       name: name,
@@ -2333,6 +2756,7 @@
       buildings: {},
       producing: 'warrior', // default
       capital: isCapital,
+      onRiver: onRiver,
       foundedTurn: state.turn
     };
     civ.cities.push(city);
@@ -2531,26 +2955,28 @@
       aiTurn();
       barbTurn();
 
-      // AI end-of-turn
-      var ai = state.civs.ai;
-      recomputeIncome('ai');
-      ai.cities.forEach(processCity);
-      ai.gold += ai.goldPerTurn;
-      progressTech(ai);
+      // End-of-turn for every AI side
+      AI_SIDES.forEach(function (id) {
+        var c = state.civs[id];
+        recomputeIncome(id);
+        c.cities.forEach(processCity);
+        c.gold += c.goldPerTurn;
+        progressTech(c);
+      });
 
-      // Next turn for player
+      // Roll into the next turn
       state.turn += 1;
       state.currentCiv = 'player';
-      pl.units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
-      ai.units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
+      CIV_SIDES.forEach(function (id) {
+        state.civs[id].units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
+      });
       state.civs.barb.units.forEach(function (u) { u.moves = u.maxMoves; });
       recomputeBorders();
-      recomputeVisibility('player');
-      recomputeVisibility('ai');
+      CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
-      // heal idle units
-      [pl, ai].forEach(function (civ) {
-        civ.units.forEach(function (u) {
+      // Heal idle units across all real civs
+      CIV_SIDES.forEach(function (id) {
+        state.civs[id].units.forEach(function (u) {
           if (u.moves === u.maxMoves && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 2);
         });
       });
@@ -2638,13 +3064,15 @@
   // AI
   // =====================================================================
   function aiTurn() {
-    var ai = state.civs.ai;
-    // Move units
-    ai.units.slice().forEach(function (u) {
-      if (u.hp <= 0) return;
-      aiMoveUnit(u);
+    AI_SIDES.forEach(function (id) {
+      var civ = state.civs[id];
+      if (!civ) return;
+      civ.units.slice().forEach(function (u) {
+        if (u.hp <= 0) return;
+        aiMoveUnit(u);
+      });
     });
-    // Cities pick production (handled in processCity)
+    // City production picked in processCity / pickNextProduction
   }
 
   // -------- Barbarians ----------------------------------------------------
@@ -2691,16 +3119,16 @@
 
   function aiMoveUnit(u) {
     if (u.type === 'settler') {
-      // Found city if good spot — must be far from ALL existing cities (player + ai)
+      // Found city if good spot — must be far from ALL existing cities of every civ
       var t = tileAt(u.c, u.r);
       if (t && !t.city && !TERRAIN[t.terrain].impassable) {
         var ok = true;
-        ['player','ai'].forEach(function (id) {
+        CIV_SIDES.forEach(function (id) {
           state.civs[id].cities.forEach(function (ct) {
             if (hexDist([u.c, u.r], [ct.c, ct.r]) < 4) ok = false;
           });
         });
-        if (state.civs.ai.cities.length === 0) { foundCity(u); return; }
+        if (state.civs[u.civ].cities.length === 0) { foundCity(u); return; }
         if (ok) { foundCity(u); return; }
       }
       aiWander(u);
@@ -2723,8 +3151,9 @@
       return;
     }
     // Past aggressive threshold: also require parity — don't suicide attack
-    var enemyForce = state.civs.player.units.length;
-    var myForce = state.civs.ai.units.length;
+    var enemyForce = 0;
+    CIV_SIDES.forEach(function (id) { if (id !== u.civ) enemyForce += state.civs[id].units.length; });
+    var myForce = state.civs[u.civ].units.length;
     if (myForce < enemyForce) {
       // hold position
       if (homeCt && hexDist([u.c, u.r], [homeCt.c, homeCt.r]) > 3) {
@@ -2996,19 +3425,26 @@
         actions.push({ icon: '★', primary: true, title: 'Found City', sub: 'Plant a settlement here', do: function () { foundCity(u); closeModal(); draw(); } });
       }
       if (def.canImprove) {
-        // Hills / desert -> mine (+2 prod). Grass / plains -> farm (+1 food).
-        var mineTerrain = (t.terrain === 'hills' || t.terrain === 'desert');
-        var farmTerrain = (t.terrain === 'grass' || t.terrain === 'plains');
-        var canImp = (mineTerrain || farmTerrain) && !t.improvement;
-        var impKind = mineTerrain ? 'mine' : 'farm';
-        var impName = impKind === 'mine' ? 'Mine · +2 prod' : 'Farm · +1 food';
-        actions.push({ icon: '⛏', primary: true, title: canImp ? 'Build ' + (impKind.charAt(0).toUpperCase() + impKind.slice(1)) : 'Build Improvement', sub: canImp ? impName : (t.improvement ? 'Already improved' : 'Not buildable here'), disabled: !canImp, do: function () {
-          t.improvement = impKind;
-          u.moves = 0;
-          showToast('Improvement built', 'success');
-          closeModal();
-          draw();
-        } });
+        var impKind = pickImprovement(t);
+        var canImp = !!impKind;
+        var idef = impKind && IMPROVEMENTS[impKind];
+        var yieldStr = idef ? Object.keys(idef.yield).map(function (k) {
+          return '+' + idef.yield[k] + ' ' + k;
+        }).join(' · ') : '';
+        actions.push({
+          icon: '⛏',
+          primary: true,
+          title: canImp ? 'Build ' + idef.name : 'Build Improvement',
+          sub: canImp ? yieldStr : (t.improvement ? 'Already improved' : 'Not buildable here'),
+          disabled: !canImp,
+          do: function () {
+            t.improvement = impKind;
+            u.moves = 0;
+            showToast(idef.name + ' built', 'success');
+            closeModal();
+            draw();
+          }
+        });
       }
       actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
       actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
