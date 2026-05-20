@@ -1796,7 +1796,8 @@
     var size = ZOOM_LEVELS[state.zoom];
     var inset = size * 0.92;
 
-    // Determine visible bounds for culling
+    // --- PASS 1: Terrain, resources, improvements, fog ---
+    // Draws all flat ground layers so nothing paints over cities/units later.
     for (var r = 0; r < MAP_H; r++) {
       for (var c = 0; c < MAP_W; c++) {
         var p = pixelOf(c, r, size);
@@ -1858,26 +1859,48 @@
           ctx.fillStyle = 'rgba(0,0,0,0.48)';
           ctx.fill();
         }
+      }
+    }
+
+    // Territorial borders (between owners) — drawn after terrain, before entities
+    drawBorders(size, inset);
+
+    // --- PASS 2: Villages, cities, units ---
+    // Drawn in a separate pass so name banners and sprites are never
+    // covered by a neighboring row's terrain fill.
+    for (var r = 0; r < MAP_H; r++) {
+      for (var c = 0; c < MAP_W; c++) {
+        var t = state.map[r][c];
+        if (!t.explored.player) continue;
+        var visible = t.visible.player;
+
+        // Skip tiles with nothing to draw in this pass
+        var hasVillage = t.village && t.explored.player;
+        var hasCity = !!t.city;
+        var hasUnit = t.unit && visible;
+        if (!hasVillage && !hasCity && !hasUnit) continue;
+
+        var p = pixelOf(c, r, size);
+        var cx = p.x - state.camera.x + size * SQRT3 / 2;
+        var cy = p.y - state.camera.y + size;
+        if (cx < -size * 2 || cy < -size * 2 || cx > VIEW_W + size * 2 || cy > VIEW_H + size * 2) continue;
 
         // Tribal village
-        if (t.village && t.explored.player) {
+        if (hasVillage) {
           drawVillage(cx, cy, size);
         }
 
         // City
-        if (t.city) {
+        if (hasCity) {
           drawCity(cx, cy, size, t.city);
         }
 
         // Unit
-        if (t.unit && visible) {
+        if (hasUnit) {
           drawUnit(cx, cy, size, t.unit);
         }
       }
     }
-
-    // Territorial borders (between owners)
-    drawBorders(size, inset);
 
     // Movement range — selected unit (full) or hover preview (faint)
     if (state.selected) {
