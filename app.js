@@ -45,12 +45,18 @@
     swordsman: { name: 'Swordsman', cost: 45, hp: 18, atk: 8, def: 5, move: 2, glyph: '⚔', tech: 'steel' },
     catapult:  { name: 'Catapult',  cost: 40, hp: 8,  atk: 7, def: 1, move: 2, glyph: '⊕', tech: 'engineering', ranged: 2, siege: true },
     musketman: { name: 'Musketman', cost: 50, hp: 20, atk: 9, def: 4, move: 2, glyph: '⚡', tech: 'gunpowder',  ranged: 2 },
+    galley:    { name: 'Galley',    cost: 30, hp: 14, atk: 5, def: 3, move: 3, glyph: '⛵', tech: 'sailing',     naval: true },
     raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true }
   };
 
   // Worker-built tile improvements. Each one has a context check and a yield.
   // Priority order in pickImprovement matters — specific improvements pick first.
   var IMPROVEMENTS = {
+    fishing_boats: {
+      name: 'Fishing Boats',
+      yield: { food: 2, gold: 1 },
+      suitable: function (t) { return t.terrain === 'water' && t.resource === 'fish'; }
+    },
     pasture: {
       name: 'Pasture',
       yield: { food: 1, prod: 1 },
@@ -90,7 +96,7 @@
     }
   };
   // Order = priority. First matching wins.
-  var IMPROVEMENT_ORDER = ['pasture', 'lumber', 'mine', 'quarry', 'farm'];
+  var IMPROVEMENT_ORDER = ['fishing_boats', 'pasture', 'lumber', 'mine', 'quarry', 'farm'];
 
   function pickImprovement(t) {
     if (!t || t.improvement) return null;
@@ -123,6 +129,7 @@
 
   var TECHS = {
     pottery:     { name: 'Pottery',      cost:  20, req: [],                       unlocks: 'Granary' },
+    sailing:     { name: 'Sailing',      cost:  30, req: ['pottery'],              unlocks: 'Galley, Fishing Boats' },
     archery:     { name: 'Archery',      cost:  30, req: [],                       unlocks: 'Archer' },
     masonry:     { name: 'Masonry',      cost:  35, req: ['pottery'],              unlocks: 'Walls' },
     husbandry:   { name: 'Husbandry',    cost:  40, req: ['archery'],              unlocks: 'Horseman' },
@@ -134,7 +141,7 @@
     gunpowder:   { name: 'Gunpowder',   cost: 110, req: ['steel','engineering'],  unlocks: 'Musketman' },
     banking:     { name: 'Banking',      cost: 100, req: ['theology','currency'],  unlocks: 'Bank' }
   };
-  var TECH_ORDER = ['pottery','archery','masonry','husbandry','currency','iron','engineering','theology','steel','gunpowder','banking'];
+  var TECH_ORDER = ['pottery','sailing','archery','masonry','husbandry','currency','iron','engineering','theology','steel','gunpowder','banking'];
 
   // Age thresholds — purely cosmetic + small gold bonus on advancement
   var AGES = [
@@ -234,6 +241,22 @@
   function tileAt(c, r) {
     if (!inBounds(c, r)) return null;
     return state.map[r][c];
+  }
+
+  // Can this unit type enter this tile? Handles land/water domain rules.
+  function canEnterTile(unit, tile) {
+    if (!tile) return false;
+    var ter = TERRAIN[tile.terrain];
+    var udef = UNITS[unit.type];
+    // Naval units: water only
+    if (udef.naval) return tile.terrain === 'water';
+    // Water tiles: only workers with Sailing tech
+    if (tile.terrain === 'water') {
+      return !!(udef.canImprove && state.civs[unit.civ].techs && state.civs[unit.civ].techs.sailing);
+    }
+    // Standard impassable check for land tiles
+    if (ter.impassable) return false;
+    return true;
   }
 
   function neighborDeltas(r) {
@@ -1373,6 +1396,54 @@
     else if (kind === 'pasture') drawPastureImprovement(cx, cy, size);
     else if (kind === 'lumber') drawLumberImprovement(cx, cy, size);
     else if (kind === 'quarry') drawQuarryImprovement(cx, cy, size);
+    else if (kind === 'fishing_boats') drawFishingBoatsImprovement(cx, cy, size);
+  }
+
+  function drawFishingBoatsImprovement(cx, cy, size) {
+    // Small boat with a fishing net on water
+    var bw = size * 0.50, bh = size * 0.14;
+    var bx = cx - bw / 2, by = cy + size * 0.05;
+    // hull
+    ctx.fillStyle = '#1a0a08';
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + bw, by);
+    ctx.lineTo(bx + bw - bh, by + bh);
+    ctx.lineTo(bx + bh, by + bh);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7a4a1c';
+    ctx.beginPath();
+    ctx.moveTo(bx + 2, by + 2);
+    ctx.lineTo(bx + bw - 2, by + 2);
+    ctx.lineTo(bx + bw - bh - 1, by + bh - 1);
+    ctx.lineTo(bx + bh + 1, by + bh - 1);
+    ctx.closePath();
+    ctx.fill();
+    // mast
+    ctx.fillStyle = '#3a2410';
+    ctx.fillRect(bx + bw * 0.35 - 1, by - size * 0.22, 2, size * 0.24);
+    // fishing net (arc with dots)
+    ctx.strokeStyle = '#d4a87a';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(bx + bw * 0.35, by - size * 0.08, size * 0.18, 0.3, Math.PI - 0.3);
+    ctx.stroke();
+    // net crosshatch
+    ctx.strokeStyle = '#c0905a';
+    ctx.lineWidth = 0.8;
+    for (var i = 0; i < 3; i++) {
+      var nx = bx + bw * 0.15 + i * size * 0.08;
+      ctx.beginPath();
+      ctx.moveTo(nx, by - size * 0.20);
+      ctx.lineTo(nx + size * 0.02, by - size * 0.02);
+      ctx.stroke();
+    }
+    // fish on the net
+    ctx.fillStyle = '#5ad4e6';
+    ctx.fillRect(bx + bw * 0.25, by - size * 0.14, 3, 2);
+    ctx.fillRect(bx + bw * 0.45, by - size * 0.12, 3, 2);
+    ctx.lineWidth = 1;
   }
 
   function drawPastureImprovement(cx, cy, size) {
@@ -2262,6 +2333,36 @@
     ctx.fillText(label, cx, by + 2);
   }
 
+  function drawGalley(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Hull
+    p(1,8,12,1, c.K);                     // gunwale outline
+    p(2,8,10,1, c.D);                     // gunwale civ stripe
+    p(2,9,10,2, c.K);                     // hull outline
+    p(3,9,8,2, c.O);                      // hull wood
+    p(3,9,8,1, c.B);                      // hull shadow
+    // Pointed bow and stern
+    p(0,8,1,1, c.K);  p(13,8,1,1, c.K);
+    p(1,9,1,1, c.O);  p(12,9,1,1, c.O);
+    // Mast
+    p(7,1,1,7, c.B);
+    p(7,0,1,1, c.K);                      // masthead
+    // Sail
+    p(8,1,3,1, c.C);
+    p(8,2,4,1, c.C);
+    p(8,3,4,1, c.L);
+    p(8,4,3,1, c.D);
+    p(8,5,2,1, c.D);
+    // Oar hints
+    p(3,11,1,1, c.B); p(5,11,1,1, c.B);
+    p(8,11,1,1, c.B); p(10,11,1,1, c.B);
+    // Water waves below hull
+    p(1,12,12,1, '#1c4a7a');
+    p(2,13,10,1, '#0a2848');
+  }
+
   var UNIT_DRAW = {
     settler:   drawSettler,
     worker:    drawWorker,
@@ -2271,6 +2372,7 @@
     swordsman: drawSwordsman,
     catapult:  drawCatapult,
     musketman: drawMusketman,
+    galley:    drawGalley,
     raider:    drawWarrior   // reuses warrior sprite; civ color makes it grey
   };
 
@@ -2410,7 +2512,7 @@
       for (var i = 0; i < ns.length; i++) {
         var nc = ns[i][0], nr = ns[i][1];
         var t = tileAt(nc, nr);
-        if (!t || TERRAIN[t.terrain].impassable) continue;
+        if (!canEnterTile(unit, t)) continue;
         // Friendly unit blocks the path (can't pass through allies)
         if (t.unit && t.unit.civ === unit.civ && !(nc === unit.c && nr === unit.r)) continue;
         var key = nc + ',' + nr;
@@ -2677,7 +2779,7 @@
       label = TERRAIN[ti.terrain].name;
       if (ti.river) label += ' · River';
       if (ti.resource && RESOURCES[ti.resource]) label += ' · ' + RESOURCES[ti.resource].label;
-      if (ti.improvement) label += ' · ' + ti.improvement;
+      if (ti.improvement) label += ' · ' + (IMPROVEMENTS[ti.improvement] ? IMPROVEMENTS[ti.improvement].name : ti.improvement);
       if (ti.village) label += ' · Village';
       if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name;
       if (ti.city) label += ' · ' + ti.city.name;
@@ -2783,7 +2885,7 @@
   function moveUnit(unit, c, r) {
     var t = tileAt(c, r);
     if (!t) return false;
-    if (TERRAIN[t.terrain].impassable) { showToast('Impassable terrain'); return false; }
+    if (!canEnterTile(unit, t)) { showToast('Impassable terrain'); return false; }
     if (t.unit && t.unit.civ === unit.civ) { showToast('Friendly unit there'); return false; }
     if (unit.moves <= 0) { showToast('No moves left'); return false; }
 
@@ -3046,7 +3148,7 @@
           if (city.civ === 'player') logEvent(city.name + ' built ' + bdef.name, 'success');
         }
       } else {
-        var spawnTile = findSpawnTile(city);
+        var spawnTile = findSpawnTile(city, p);
         if (spawnTile) {
           spawnUnit(city.civ, p, spawnTile[0], spawnTile[1]);
           if (city.civ === 'player') logEvent(city.name + ' trained ' + UNITS[p].name, 'success');
@@ -3065,13 +3167,32 @@
     }
   }
 
-  function findSpawnTile(city) {
-    var ct = tileAt(city.c, city.r);
-    if (ct && !ct.unit) return [city.c, city.r];
+  function isCoastalCity(city) {
     var ns = neighbors(city.c, city.r);
     for (var i = 0; i < ns.length; i++) {
       var t = tileAt(ns[i][0], ns[i][1]);
-      if (t && !TERRAIN[t.terrain].impassable && !t.unit) return ns[i];
+      if (t && t.terrain === 'water') return true;
+    }
+    return false;
+  }
+
+  function findSpawnTile(city, unitType) {
+    var udef = unitType && UNITS[unitType];
+    if (udef && udef.naval) {
+      // Naval units spawn on adjacent water
+      var ns = neighbors(city.c, city.r);
+      for (var i = 0; i < ns.length; i++) {
+        var t = tileAt(ns[i][0], ns[i][1]);
+        if (t && t.terrain === 'water' && !t.unit) return ns[i];
+      }
+      return null;
+    }
+    var ct = tileAt(city.c, city.r);
+    if (ct && !ct.unit) return [city.c, city.r];
+    var ns2 = neighbors(city.c, city.r);
+    for (var i = 0; i < ns2.length; i++) {
+      var t = tileAt(ns2[i][0], ns2[i][1]);
+      if (t && !TERRAIN[t.terrain].impassable && !t.unit) return ns2[i];
     }
     return null;
   }
@@ -3093,6 +3214,7 @@
       if (available.indexOf('horseman') >= 0) return 'horseman';
       if (available.indexOf('archer') >= 0) return 'archer';
       if (available.indexOf('catapult') >= 0 && rnd() < 0.3) return 'catapult';
+      if (available.indexOf('galley') >= 0 && isCoastalCity(city) && rnd() < 0.2) return 'galley';
       return 'warrior';
     }
     return city.producing;
@@ -3104,6 +3226,7 @@
       var u = UNITS[k];
       if (u.tech && !civ.techs[u.tech]) continue;
       if (u.barb) continue;             // raiders aren't trainable
+      if (u.naval && city && !isCoastalCity(city)) continue; // naval only at coastal cities
       out.push(k);
     }
     for (var k in BUILDINGS) {
@@ -3368,7 +3491,8 @@
       for (var cc = Math.max(0, u.c - 4); cc <= Math.min(MAP_W - 1, u.c + 4); cc++) {
         var nt = tileAt(cc, rr);
         if (!nt || nt.owner !== u.civ || nt.improvement || nt.city) continue;
-        if (TERRAIN[nt.terrain].impassable) continue;
+        var civ = state.civs[u.civ];
+        if (TERRAIN[nt.terrain].impassable && !(nt.terrain === 'water' && civ.techs && civ.techs.sailing)) continue;
         if (!pickImprovement(nt)) continue;
         var d = hexDist([u.c, u.r], [cc, rr]);
         if (d < bestDist) { bestDist = d; bestTile = [cc, rr]; }
@@ -3382,6 +3506,15 @@
   }
 
   function aiMoveUnit(u) {
+    // Naval units: attack adjacent enemies on water, or patrol
+    if (UNITS[u.type].naval) {
+      var adj = adjacentEnemy(u);
+      if (adj) { attack(u, adj.unit); return; }
+      var target = findNearestEnemy(u, 5);
+      if (target) aiStepToward(u, target);
+      else aiWander(u);
+      return;
+    }
     if (u.type === 'settler') {
       // Found city if good spot — must be far from ALL existing cities of every civ
       var t = tileAt(u.c, u.r);
@@ -3496,8 +3629,7 @@
     while (u.moves > 0) {
       var ns = neighbors(u.c, u.r).filter(function (n) {
         var t = tileAt(n[0], n[1]);
-        if (!t) return false;
-        if (TERRAIN[t.terrain].impassable) return false;
+        if (!canEnterTile(u, t)) return false;
         if (t.unit && t.unit.civ === u.civ) return false;
         return true;
       });
@@ -3518,8 +3650,7 @@
       if (hexDist([u.c, u.r], target) <= range) break;  // in firing range, stop
       var ns = neighbors(u.c, u.r).filter(function (n) {
         var t = tileAt(n[0], n[1]);
-        if (!t) return false;
-        if (TERRAIN[t.terrain].impassable) return false;
+        if (!canEnterTile(u, t)) return false;
         if (t.unit && t.unit.civ === u.civ) return false;
         return true;
       });
@@ -3539,7 +3670,7 @@
     while (u.moves > 0) {
       var ns = neighbors(u.c, u.r).filter(function (n) {
         var t = tileAt(n[0], n[1]);
-        if (!t || TERRAIN[t.terrain].impassable) return false;
+        if (!canEnterTile(u, t)) return false;
         if (t.unit && t.unit.civ === u.civ) return false;
         return true;
       });
@@ -3918,7 +4049,7 @@
     var list = document.getElementById('tech-list');
     list.innerHTML = '';
     // Techs grouped by age for section headers
-    var TECH_AGES = { pottery:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, steel:2, gunpowder:3, banking:3 };
+    var TECH_AGES = { pottery:0, sailing:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, steel:2, gunpowder:3, banking:3 };
     var AGE_LABELS = ['Ancient Age', 'Classical Age', 'Medieval Age', 'Modern Age'];
     var lastAge = -1;
     TECH_ORDER.forEach(function (k) {
