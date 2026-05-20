@@ -442,9 +442,12 @@
         if (map[best[1]][best[0]].terrain === 'water') break;
         cur = best;
       }
+      // Only valid land terrains carry rivers; everything else is skipped so a
+      // walk that ends in tundra or desert doesn't paint the wrong biome blue.
+      var RIVER_LAND = { grass: 1, plains: 1, forest: 1, hills: 1 };
       path.forEach(function (p) {
         var t = map[p[1]][p[0]];
-        if (t.terrain === 'water' || t.terrain === 'mountain' || t.terrain === 'volcano') return;
+        if (!RIVER_LAND[t.terrain]) return;
         t.river = true;
       });
     }
@@ -512,7 +515,7 @@
       }
       if (tooClose) continue;
       var ok = 0;
-      var ns = (function () { var prev = state; state = { map: map }; var n = neighbors(c, r); state = prev; return n; })();
+      var ns = neighborsRaw(c, r);
       for (var j = 0; j < ns.length; j++) {
         if (!TERRAIN[map[ns[j][1]][ns[j][0]].terrain].impassable) ok++;
       }
@@ -1149,13 +1152,16 @@
     // Pick first two anchors (rivers can fork, but two is fine visually)
     var a = anchors[0], b = anchors[1 % anchors.length];
     if (anchors.length > 2) b = anchors[Math.floor(anchors.length / 2)];
+    // Deterministic wiggle so rivers don't shimmer across frames and don't
+    // perturb the global RNG (which seeds tile decals etc.)
+    var wiggle = (((c * 73856093) ^ (r * 19349663)) >>> 0) % 1000 / 1000 - 0.5;
     // Dark blue outline
     ctx.strokeStyle = '#0a2c44';
     ctx.lineWidth = Math.max(3, size * 0.18);
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(a[0], a[1]);
-    ctx.quadraticCurveTo(cx + (rnd() - 0.5) * size * 0.2, cy + size * 0.05, b[0], b[1]);
+    ctx.quadraticCurveTo(cx + wiggle * size * 0.2, cy + size * 0.05, b[0], b[1]);
     ctx.stroke();
     // Bright water
     ctx.strokeStyle = '#3a92d0';
@@ -2768,6 +2774,7 @@
 
   function captureCity(city, newOwnerId) {
     var oldOwner = state.civs[city.civ];
+    var oldOwnerId = oldOwner.id;
     var idx = oldOwner.cities.indexOf(city);
     if (idx >= 0) oldOwner.cities.splice(idx, 1);
     city.civ = newOwnerId;
@@ -2775,13 +2782,17 @@
     city.producing = 'warrior';
     state.civs[newOwnerId].cities.push(city);
     recomputeBorders();
-    recomputeVisibility(newOwnerId);            // new owner gets sight around captured city
+    recomputeVisibility(newOwnerId);
+    recomputeVisibility(oldOwnerId);            // old owner loses sight around the lost city
+    recomputeIncome(newOwnerId);
+    recomputeIncome(oldOwnerId);
     showToast('Captured ' + city.name + '!', newOwnerId === 'player' ? 'success' : 'error');
 
-    // Domination victory: a capital fell AND the loser has no cities left.
-    if (city.capital && oldOwner.cities.length === 0) {
-      declareVictory(newOwnerId, 'domination');
-    }
+    // Domination victory: every rival civ is wiped out (no cities anywhere).
+    var soleSurvivor = CIV_SIDES.every(function (id) {
+      return id === newOwnerId || state.civs[id].cities.length === 0;
+    });
+    if (soleSurvivor) declareVictory(newOwnerId, 'domination');
   }
 
   function processCity(city) {
@@ -2816,8 +2827,9 @@
         // while this city was producing it, refund prod and reroll.
         if (bdef.wonder) {
           if (state.wondersBuilt[p]) {
-            // Race lost — refund half cost, pick a default so we don't try this wonder again next turn
-            city.prod += Math.floor(cost * 0.5);
+            // Race lost — banked production is forfeit (otherwise a lost race would
+            // pop a free warrior the next turn). Pick a sensible default.
+            city.prod = 0;
             city.producing = 'warrior';
             if (city.civ === 'player') logEvent('Lost the race for ' + bdef.name, 'error');
           } else {
@@ -2864,9 +2876,9 @@
 
   function pickNextProduction(city) {
     var civ = state.civs[city.civ];
-    if (civ.cities.length < 2 && hasTech(civ, null)) return 'settler';
-    var available = availableProducibles(civ);
-    if (city.civ === 'ai') {
+    if (civ.cities.length < 2) return 'settler';
+    var available = availableProducibles(civ, city);
+    if (AI_SIDES.indexOf(city.civ) >= 0) {
       // ~25% chance to chase an available wonder, otherwise lean military
       var wonders = available.filter(function (k) { return BUILDINGS[k] && BUILDINGS[k].wonder; });
       if (wonders.length && rnd() < 0.25) return wonders[Math.floor(rnd() * wonders.length)];
@@ -2880,7 +2892,7 @@
     return city.producing;
   }
 
-  function availableProducibles(civ) {
+  function availableProducibles(civ, city) {
     var out = [];
     for (var k in UNITS) {
       var u = UNITS[k];
@@ -2892,6 +2904,8 @@
       var b = BUILDINGS[k];
       if (b.tech && !civ.techs[b.tech]) continue;
       if (b.wonder && state.wondersBuilt && state.wondersBuilt[k]) continue;
+      // Don't suggest already-built regular buildings to this city
+      if (city && city.buildings && city.buildings[k] && !b.wonder) continue;
       out.push(k);
     }
     return out;
@@ -2908,8 +2922,8 @@
       civ.techProgress = 0;
       if (civ.id === 'player') logEvent('Researched ' + def.name, 'success');
       civ.currentTech = null;
-      // Auto-pick next tech for AI; player picks from the menu.
-      if (civ.id === 'ai') civ.currentTech = pickAiTech(civ);
+      // Every AI picks its next tech automatically; player picks from the menu.
+      if (AI_SIDES.indexOf(civ.id) >= 0) civ.currentTech = pickAiTech(civ);
       // Check science victory
       var allDone = true;
       for (var i = 0; i < TECH_ORDER.length; i++) if (!civ.techs[TECH_ORDER[i]]) { allDone = false; break; }
@@ -3522,7 +3536,7 @@
 
     // Options
     var civ = state.civs.player;
-    var avail = availableProducibles(civ);
+    var avail = availableProducibles(civ, city);
     var list = document.getElementById('c-options');
     list.innerHTML = '';
     // Sort: units first, then buildings, then wonders last
