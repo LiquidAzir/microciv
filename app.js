@@ -3049,7 +3049,8 @@
 
   function pickNextProduction(city) {
     var civ = state.civs[city.civ];
-    if (civ.cities.length < 2) return 'settler';
+    // AI with only one city should prioritize a settler for expansion
+    if (AI_SIDES.indexOf(city.civ) >= 0 && civ.cities.length < 2) return 'settler';
     var available = availableProducibles(civ, city);
     if (AI_SIDES.indexOf(city.civ) >= 0) {
       // ~25% chance to chase an available wonder, otherwise lean military
@@ -3168,6 +3169,14 @@
       // Roll into the next turn
       state.turn += 1;
       state.currentCiv = 'player';
+      // Heal BEFORE moves reset — fortified +2 HP, idle (full moves) +1, moved = nothing
+      CIV_SIDES.forEach(function (id) {
+        state.civs[id].units.forEach(function (u) {
+          if (u.hp >= u.maxHp) return;
+          if (u.fortified) u.hp = Math.min(u.maxHp, u.hp + 2);
+          else if (u.moves === u.maxMoves) u.hp = Math.min(u.maxHp, u.hp + 1);
+        });
+      });
       CIV_SIDES.forEach(function (id) {
         state.civs[id].units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
       });
@@ -3175,12 +3184,6 @@
       recomputeBorders();
       CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
-      // Heal idle units across all real civs
-      CIV_SIDES.forEach(function (id) {
-        state.civs[id].units.forEach(function (u) {
-          if (u.moves === u.maxMoves && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 2);
-        });
-      });
       autoSelectNextUnit();
       showTurnSummary();
       aiThinking = false;
@@ -3708,6 +3711,7 @@
     document.getElementById('c-pop').textContent = city.pop;
     document.getElementById('c-food').textContent = (city.food | 0) + '/' + city.foodCap + ' (+' + (y.food - city.pop * 2) + ')';
     document.getElementById('c-prod').textContent = '+' + y.prod;
+    document.getElementById('c-sci').textContent = '+' + cityScience(city);
     var def = (city.buildings.walls ? 4 : 0) + (city.pop);
     document.getElementById('c-def').textContent = def;
 
@@ -3752,8 +3756,7 @@
         sub = (parts.length ? parts.join(', ') : 'Building') + ' · ' + u.cost + ' prod';
       } else {
         var uDef = UNITS[k];
-        var uParts = [uDef.atk + '⚔ ' + uDef.def + '🛡 ' + uDef.move + '→'];
-        if (uDef.ranged) uParts.push('range ' + uDef.ranged);
+        var uParts = [uDef.atk + '⚔ ' + uDef.def + '🛡 ' + uDef.hp + '♥ ' + uDef.move + '→'];
         if (uDef.siege) uParts.push('siege');
         sub = uParts.join(' · ') + ' · ' + u.cost + ' prod';
       }
@@ -3844,7 +3847,8 @@
     } else {
       title.textContent = 'Defeat';
       title.style.color = '#ff4466';
-      detail.textContent = (kind === 'domination' ? CIVS.ai.name + ' took your capital.' : CIVS.ai.name + ' completed all research first.');
+      var winName = CIVS[winner] ? CIVS[winner].name : 'Enemy';
+      detail.textContent = (kind === 'domination' ? winName + ' took your capital.' : winName + ' completed all research first.');
     }
     showModal('end-screen');
   }

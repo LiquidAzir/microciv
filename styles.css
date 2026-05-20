@@ -841,8 +841,22 @@ html, body {
   color: var(--text-2);
   line-height: 1.5;
   overflow-y: auto;
-  max-height: 380px;
-  padding-right: 4px;
+  max-height: 440px;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0,212,255,0.3) transparent;
+}
+.help-body::-webkit-scrollbar { width: 4px; }
+.help-body::-webkit-scrollbar-track { background: transparent; }
+.help-body::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.3); border-radius: 2px; }
+.help-section {
+  font-size: 10px;
+  letter-spacing: 2px;
+  font-weight: 700;
+  color: #ffd34d;
+  text-transform: uppercase;
+  padding: 8px 0 2px;
+  border-bottom: 1px solid rgba(255,211,77,0.15);
 }
 .help-body p { padding: 4px 0; }
 .help-body b { color: var(--text); }

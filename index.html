@@ -90,6 +90,7 @@
           <div><span class="lbl">Pop</span><span id="c-pop">1</span></div>
           <div><span class="lbl">Food</span><span id="c-food">0/10</span></div>
           <div><span class="lbl">Prod</span><span id="c-prod">+0</span></div>
+          <div><span class="lbl">Sci</span><span id="c-sci">+0</span></div>
           <div><span class="lbl">Def</span><span id="c-def">0</span></div>
         </div>
         <div class="city-build-label">Producing</div>
@@ -117,23 +118,51 @@
           <h2>How to Play</h2>
         </header>
         <div class="help-body">
-          <p><b>Win:</b> capture the enemy capital, or research every tech.</p>
-          <p><b>Pinch your unit</b> — selects it. Pinch any reachable tile and it walks the shortest path; enemies in range are red and pinching them attacks.</p>
-          <p><b>Pinch the same unit again</b> — opens its menu (Found City, Build Mine/Farm, Fortify, Skip).</p>
-          <p><b>Pinch your city</b> — opens the city screen (production, food, prod).</p>
-          <p><b>Pinch empty ground</b> — when units have moves left it opens the global menu; when they don't it just ends the turn.</p>
-          <p><b>Esc</b> — cycles cursor to the next unit with moves.</p>
-          <p><b>Scroll mode</b> — toggle with <kbd>↑ ↓ ↑ ↓</kbd>. Arrows then pan the map even into unexplored areas.</p>
+          <div class="help-section">Goal</div>
+          <p><b>Domination:</b> capture every rival capital. <b>Science:</b> research all 11 technologies.</p>
+
+          <div class="help-section">Controls</div>
+          <p><b>Pinch your unit</b> — selects it. Pinch a reachable tile to walk there; enemies in range are red — pinch to attack.</p>
+          <p><b>Pinch same unit again</b> — opens its action menu (Found City, Build Improvement, Fortify, Skip).</p>
+          <p><b>Pinch your city</b> — opens the city screen (production, food, science, defense).</p>
+          <p><b>Pinch empty ground</b> — opens global menu if units have moves; ends the turn if all are done.</p>
+          <p><b>Esc</b> — cycles to the next unit with moves left.</p>
+          <p><b>Scroll mode</b> — toggle with <kbd>↑ ↓ ↑ ↓</kbd>. Arrows pan the camera freely.</p>
           <p><b>Zoom</b> — cycle with <kbd>← → ← →</kbd>: far · normal · close.</p>
-          <p><b>Factions:</b> Solaris (+1 food per city), Umbra (+1 atk on military), Tellus (+1 gold per city). You and two rivals start on the same map.</p>
-          <p><b>Ages:</b> Ancient → Classical (4 techs) → Medieval (7) → Modern (10). Advancing gives a gold bonus.</p>
-          <p><b>Later units:</b> Swordsman (Steel), Catapult (Engineering, siege), Musketman (Gunpowder, strong ranged).</p>
-          <p><b>Later buildings:</b> Aqueduct (+3 food), Temple (+3 sci), Bank (+4 gold).</p>
-          <p><b>Borders</b> grow with city population. Working a tile requires your culture. Defending in your own borders gives +10%.</p>
-          <p><b>Tribal villages</b> — three-tent encampments. First unit in claims a one-shot reward: gold, free worker, research, or a population bump.</p>
-          <p><b>Barbarian raiders</b> — grey warriors that spawn from unowned edges in the early game. Weaker than your warriors. Walls + Fortify shut them down.</p>
-          <p><b>World Wonders</b> — once-per-game buildings in the city menu marked with <b>✦</b>. Race the AI: lose the race and you get half your invested production back.</p>
-          <p><b>Natural wonders</b> — Volcano gives +1 prod to adjacent worked tiles; Geyser gives +1 food to adjacent.</p>
+
+          <div class="help-section">Factions</div>
+          <p><b>Solaris</b> — +1 food per city. <b>Umbra</b> — +1 atk on military. <b>Tellus</b> — +1 gold per city. You face two AI rivals.</p>
+
+          <div class="help-section">Ages &amp; Tech Tree</div>
+          <p>Research techs to advance through four ages. Each age-up grants bonus gold.</p>
+          <p><b>Ancient:</b> Pottery (Granary) · Archery (Archer) · Masonry (Walls) · Husbandry (Horseman) · Currency (Market) · Metalworking (+2 atk Warriors)</p>
+          <p><b>Classical:</b> Engineering (Catapult, Aqueduct) · Theology (Temple)</p>
+          <p><b>Medieval:</b> Steel (Swordsman)</p>
+          <p><b>Modern:</b> Gunpowder (Musketman) · Banking (Bank)</p>
+
+          <div class="help-section">Units</div>
+          <p><b>Settler</b> — founds cities. <b>Worker</b> — builds improvements (farm, mine, pasture, lumber mill).</p>
+          <p><b>Warrior</b> 4⚔/3🛡 · <b>Archer</b> 5⚔/2🛡 · <b>Horseman</b> 6⚔/3🛡, 4 move</p>
+          <p><b>Swordsman</b> 8⚔/5🛡 · <b>Catapult</b> 7⚔/1🛡, siege (halves city defense) · <b>Musketman</b> 9⚔/4🛡</p>
+
+          <div class="help-section">Buildings</div>
+          <p><b>Granary</b> +2 food · <b>Walls</b> +4 def · <b>Market</b> +3 gold · <b>Aqueduct</b> +3 food · <b>Temple</b> +3 science · <b>Bank</b> +4 gold</p>
+
+          <div class="help-section">Combat &amp; Healing</div>
+          <p>Attack by walking into enemies. Defense bonuses: hills +50%, city +25%, walls +75%, fortify +25%, home territory +10%.</p>
+          <p><b>Fortified</b> units heal +2 HP/turn. Idle units (didn't move) heal +1 HP/turn. Units that moved don't heal.</p>
+          <p><b>Catapults</b> halve city defense bonuses — ideal for breaking fortified positions.</p>
+
+          <div class="help-section">Economy &amp; Borders</div>
+          <p>Cities work nearby tiles for food/prod/gold. <b>Borders</b> grow with population — working a tile requires your culture.</p>
+          <p>Military units cost 1 gold/turn upkeep. Negative gold slowly drains your treasury.</p>
+
+          <div class="help-section">Map Features</div>
+          <p><b>Tribal villages</b> — reward on first visit: gold, worker, research, or +1 pop.</p>
+          <p><b>Barbarian raiders</b> — spawn from unowned edges early game. Weaker than warriors.</p>
+          <p><b>World Wonders</b> — unique buildings marked ✦. Race the AI to complete them first.</p>
+          <p><b>Natural wonders</b> — Volcano (+1 prod adjacent), Geyser (+1 food adjacent).</p>
+          <p><b>Rivers</b> — +1 food to worked tiles along the river.</p>
         </div>
         <button class="nav-item primary focusable" data-action="back">Got it</button>
       </div>
