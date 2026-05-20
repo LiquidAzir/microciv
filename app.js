@@ -888,6 +888,96 @@
   }
 
   // =====================================================================
+  // COMBAT ANIMATIONS
+  // =====================================================================
+  // Lightweight overlay queue — each entry draws for a few frames then dies.
+  var combatFx = [];    // [{ type, c, r, data, startMs, durationMs }]
+
+  function addFx(type, c, r, data, durationMs) {
+    combatFx.push({ type: type, c: c, r: r, data: data || {}, start: Date.now(), dur: durationMs || 600 });
+  }
+  function addCombatFx(defC, defR, dmgToDef, dmgToAtk, atkC, atkR) {
+    // Hex flash on defender
+    addFx('hexFlash', defC, defR, { color: 'rgba(255,80,80,0.45)' }, 350);
+    // Floating damage on defender
+    addFx('floatNum', defC, defR, { text: '-' + dmgToDef, color: '#ff4466' }, 900);
+    // Counter-damage on attacker (if any)
+    if (dmgToAtk > 0 && atkC != null) {
+      addFx('floatNum', atkC, atkR, { text: '-' + dmgToAtk, color: '#ffaa44' }, 900);
+    }
+    // Screen shake
+    addFx('shake', 0, 0, { intensity: Math.min(6, 2 + dmgToDef * 0.3) }, 300);
+  }
+  function addRangedFx(defC, defR, dmg) {
+    addFx('hexFlash', defC, defR, { color: 'rgba(255,180,60,0.45)' }, 350);
+    addFx('floatNum', defC, defR, { text: '-' + dmg, color: '#ffcc44' }, 900);
+    addFx('shake', 0, 0, { intensity: 2 }, 200);
+  }
+  function addCityBombardFx(defC, defR, dmg) {
+    addFx('hexFlash', defC, defR, { color: 'rgba(255,120,40,0.40)' }, 300);
+    addFx('floatNum', defC, defR, { text: '-' + dmg, color: '#ff8844' }, 800);
+  }
+
+  // Returns current shake offset { x, y } for the frame
+  function getShakeOffset() {
+    var ox = 0, oy = 0;
+    for (var i = 0; i < combatFx.length; i++) {
+      var fx = combatFx[i];
+      if (fx.type !== 'shake') continue;
+      var t = (Date.now() - fx.start) / fx.dur;
+      if (t >= 1) continue;
+      var decay = 1 - t;
+      var inten = fx.data.intensity * decay;
+      ox += (Math.random() * 2 - 1) * inten;
+      oy += (Math.random() * 2 - 1) * inten;
+    }
+    return { x: ox, y: oy };
+  }
+
+  // Draw all active FX overlays on top of the map
+  function drawCombatFx(size) {
+    var now = Date.now();
+    for (var i = combatFx.length - 1; i >= 0; i--) {
+      var fx = combatFx[i];
+      var t = (now - fx.start) / fx.dur;
+      if (t >= 1) { combatFx.splice(i, 1); continue; }
+
+      if (fx.type === 'hexFlash') {
+        var p = pixelOf(fx.c, fx.r, size);
+        var cx = p.x - state.camera.x + size * SQRT3 / 2;
+        var cy = p.y - state.camera.y + size;
+        var inset = size * 0.92;
+        var alpha = (1 - t) * 0.8;
+        hexPath(cx, cy, inset);
+        var rgb = fx.data.color.replace(/[\d.]+\)$/, alpha + ')');
+        ctx.fillStyle = rgb;
+        ctx.fill();
+      } else if (fx.type === 'floatNum') {
+        var p = pixelOf(fx.c, fx.r, size);
+        var cx = p.x - state.camera.x + size * SQRT3 / 2;
+        var cy = p.y - state.camera.y + size;
+        var yOff = -t * size * 0.8;  // float upward
+        var alpha = Math.max(0, 1 - t * 1.2);
+        ctx.font = 'bold ' + Math.max(12, Math.round(size * 0.4)) + 'px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Dark outline for readability
+        ctx.fillStyle = 'rgba(0,0,0,' + (alpha * 0.8) + ')';
+        ctx.fillText(fx.data.text, cx + 1, cy + yOff + 1);
+        ctx.fillStyle = fx.data.color;
+        ctx.globalAlpha = alpha;
+        ctx.fillText(fx.data.text, cx, cy + yOff);
+        ctx.globalAlpha = 1;
+      }
+      // 'shake' handled in getShakeOffset, not drawn here
+    }
+    // Schedule redraw if any FX still active
+    if (combatFx.length > 0) {
+      requestAnimationFrame(function () { draw(); });
+    }
+  }
+
+  // =====================================================================
   // RENDER
   // =====================================================================
   function clearCanvas() {
@@ -1802,6 +1892,13 @@
     var size = ZOOM_LEVELS[state.zoom];
     var inset = size * 0.92;
 
+    // Apply screen shake offset
+    var shake = getShakeOffset();
+    if (shake.x || shake.y) {
+      ctx.save();
+      ctx.translate(shake.x, shake.y);
+    }
+
     // --- PASS 1: Terrain, resources, improvements, fog ---
     // Draws all flat ground layers so nothing paints over cities/units later.
     for (var r = 0; r < MAP_H; r++) {
@@ -1951,6 +2048,14 @@
       ctx.beginPath(); ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y);
       ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10); ctx.stroke();
       ctx.shadowBlur = 0;
+    }
+
+    // Combat FX overlays (hex flashes, floating damage numbers)
+    drawCombatFx(size);
+
+    // Restore shake transform
+    if (shake.x || shake.y) {
+      ctx.restore();
     }
   }
 
@@ -2661,6 +2766,9 @@
     defender.hp -= dmgToDef;
     attacker.moves = 0;
 
+    // Ranged combat animation
+    addRangedFx(defender.c, defender.r, dmgToDef);
+
     var msg = aDef.name + ' → ' + dmgToDef + ' dmg (ranged)';
     showToast(msg, attacker.civ === 'player' ? 'success' : 'error');
 
@@ -3093,6 +3201,9 @@
     attacker.hp -= dmgToAtk;
     attacker.moves = 0;
 
+    // Combat animations
+    addCombatFx(defender.c, defender.r, dmgToDef, dmgToAtk, attacker.c, attacker.r);
+
     var msg = aDef.name + ' ' + dmgToDef + ' / took ' + dmgToAtk;
     showToast(msg, attacker.civ === 'player' ? 'success' : 'error');
 
@@ -3251,6 +3362,51 @@
     }
   }
 
+  // City bombardment — each city fires at one adjacent enemy per turn
+  function cityBombard(city) {
+    var ns = neighbors(city.c, city.r);
+    var targets = [];
+    for (var i = 0; i < ns.length; i++) {
+      var t = tileAt(ns[i][0], ns[i][1]);
+      if (t && t.unit && t.unit.civ !== city.civ && t.unit.civ !== 'barb') {
+        targets.push(t.unit);
+      }
+    }
+    if (targets.length === 0) return;
+    // Fire at the weakest adjacent enemy
+    targets.sort(function (a, b) { return a.hp - b.hp; });
+    var target = targets[0];
+
+    // City attack power: base 3 + pop + 2 if walls
+    var atkPower = 3 + city.pop + (city.buildings.walls ? 2 : 0);
+    var dDef = UNITS[target.type];
+    var dBonus = 0;
+    var dTile = tileAt(target.c, target.r);
+    if (dTile && TERRAIN[dTile.terrain].defBonus) dBonus += TERRAIN[dTile.terrain].defBonus;
+    if (target.fortified) dBonus += 0.25;
+    var dPower = dDef.def * (1 + dBonus);
+    var ratio = atkPower / (atkPower + dPower);
+
+    var dmg = Math.max(1, Math.round(8 * ratio + rndInt(0, 2)));
+    target.hp -= dmg;
+
+    // Visual feedback
+    addCityBombardFx(target.c, target.r, dmg);
+
+    var isPlayerCity = city.civ === 'player';
+    var isPlayerTarget = target.civ === 'player';
+    if (isPlayerCity) {
+      logEvent(city.name + ' bombarded ' + UNITS[target.type].name + ' for ' + dmg, 'success');
+    } else if (isPlayerTarget) {
+      logEvent(CIVS[city.civ].name + '\'s ' + city.name + ' bombarded your ' + UNITS[target.type].name + ' for ' + dmg, 'error');
+    }
+
+    if (target.hp <= 0) {
+      killUnit(target);
+      if (isPlayerCity) logEvent('City bombardment killed ' + UNITS[target.type].name + '!', 'success');
+    }
+  }
+
   function applyWonderOneShot(city, wid) {
     var bdef = BUILDINGS[wid];
     if (!bdef || !bdef.wonder) return;
@@ -3397,6 +3553,7 @@
     // Player end-of-turn
     var pl = state.civs.player;
     state.turnLog = [];                  // fresh log for events from this round
+    pl.cities.forEach(function (ct) { cityBombard(ct); });   // cities fire at adjacent enemies
     recomputeIncome('player');
     pl.cities.forEach(processCity);
     pl.gold += pl.goldPerTurn;
@@ -3413,6 +3570,7 @@
       // End-of-turn for every AI side
       AI_SIDES.forEach(function (id) {
         var c = state.civs[id];
+        c.cities.forEach(function (ct) { cityBombard(ct); }); // AI cities fire too
         recomputeIncome(id);
         c.cities.forEach(processCity);
         c.gold += c.goldPerTurn;
@@ -3642,7 +3800,31 @@
         if (state.civs[u.civ].cities.length === 0) { foundCity(u); return; }
         if (ok) { foundCity(u); return; }
       }
-      aiWander(u);
+      // Move away from own cities to find a good spot
+      var bestSpot = null, bestScore = -Infinity;
+      for (var rr = Math.max(0, u.r - 6); rr <= Math.min(MAP_H - 1, u.r + 6); rr++) {
+        for (var cc = Math.max(0, u.c - 6); cc <= Math.min(MAP_W - 1, u.c + 6); cc++) {
+          var st = tileAt(cc, rr);
+          if (!st || st.city || TERRAIN[st.terrain].impassable) continue;
+          var tooClose = false;
+          CIV_SIDES.forEach(function (id) {
+            state.civs[id].cities.forEach(function (ct) {
+              if (hexDist([cc, rr], [ct.c, ct.r]) < 4) tooClose = true;
+            });
+          });
+          if (tooClose) continue;
+          // Score: food/prod of nearby tiles
+          var score = 0;
+          var nbs = neighbors(cc, rr);
+          for (var ni = 0; ni < nbs.length; ni++) {
+            var nt = tileAt(nbs[ni][0], nbs[ni][1]);
+            if (nt && !TERRAIN[nt.terrain].impassable) score += TERRAIN[nt.terrain].food + TERRAIN[nt.terrain].prod;
+          }
+          if (score > bestScore) { bestScore = score; bestSpot = [cc, rr]; }
+        }
+      }
+      if (bestSpot) aiStepToward(u, bestSpot);
+      else aiWander(u);
       return;
     }
     if (u.type === 'worker') { aiWorkerAction(u); return; }
@@ -3650,11 +3832,47 @@
     // Ranged units: try to fire at visible targets before moving
     if (aiTryRangedAttack(u)) return;
 
-    // Military behavior: build up for ~12 turns then become aggressive
-    var aggressive = state.turn >= 12;
     var homeCt = nearestFriendlyCity(u);
+    var civ = state.civs[u.civ];
+    var myMil = civ.units.filter(function (x) { return !UNITS[x.type].civilian; }).length;
+
+    // ---- Priority 1: Retreat if badly wounded (< 35% HP) ----
+    if (u.hp < u.maxHp * 0.35 && homeCt) {
+      if (hexDist([u.c, u.r], [homeCt.c, homeCt.r]) <= 1) {
+        u.fortified = true; u.moves = 0;  // heal at home
+      } else {
+        aiStepToward(u, [homeCt.c, homeCt.r]);
+      }
+      return;
+    }
+
+    // ---- Priority 2: Defend threatened cities ----
+    var threatenedCity = null;
+    civ.cities.forEach(function (ct) {
+      var ns = neighbors(ct.c, ct.r);
+      for (var i = 0; i < ns.length; i++) {
+        var nt = tileAt(ns[i][0], ns[i][1]);
+        if (nt && nt.unit && nt.unit.civ !== u.civ && !UNITS[nt.unit.type].civilian) {
+          if (!threatenedCity || hexDist([u.c, u.r], [ct.c, ct.r]) < hexDist([u.c, u.r], [threatenedCity.c, threatenedCity.r])) {
+            threatenedCity = ct;
+          }
+        }
+      }
+    });
+    if (threatenedCity) {
+      var dHome = hexDist([u.c, u.r], [threatenedCity.c, threatenedCity.r]);
+      if (dHome <= 4) {
+        // Rush to defend
+        var adj = adjacentEnemy(u);
+        if (adj) { attack(u, adj.unit); return; }
+        aiStepToward(u, [threatenedCity.c, threatenedCity.r]);
+        return;
+      }
+    }
+
+    // ---- Build-up phase: early game, stay home ----
+    var aggressive = state.turn >= 10 && myMil >= 3;
     if (!aggressive) {
-      // Defend: stay within 2 tiles of home, attack adjacent only
       if (homeCt && hexDist([u.c, u.r], [homeCt.c, homeCt.r]) > 2) {
         aiStepToward(u, [homeCt.c, homeCt.r]);
       } else {
@@ -3664,35 +3882,43 @@
       }
       return;
     }
-    // Past aggressive threshold: also require parity — don't suicide attack
-    var enemyForce = 0;
-    CIV_SIDES.forEach(function (id) { if (id !== u.civ) enemyForce += state.civs[id].units.length; });
-    var myForce = state.civs[u.civ].units.length;
-    if (myForce < enemyForce) {
-      // hold position
-      if (homeCt && hexDist([u.c, u.r], [homeCt.c, homeCt.r]) > 3) {
-        aiStepToward(u, [homeCt.c, homeCt.r]);
-      } else {
-        var adj2 = adjacentEnemy(u);
-        if (adj2) attack(u, adj2.unit);
-        else aiFortifyOrWait(u);
-      }
-      return;
-    }
-    var target = findNearestEnemy(u);
-    if (target) {
-      // Ranged units: step toward but stop at firing range instead of melee
+
+    // ---- Priority 3: Target selection ----
+    // Prefer: undefended cities > capitals > weak units > nearest enemy
+    var bestTarget = null, bestPri = Infinity;
+    CIV_SIDES.forEach(function (id) {
+      if (id === u.civ) return;
+      // Enemy cities — prioritize undefended and capitals
+      state.civs[id].cities.forEach(function (ct) {
+        var ctTile = tileAt(ct.c, ct.r);
+        var defended = ctTile && ctTile.unit;
+        var d = hexDist([u.c, u.r], [ct.c, ct.r]);
+        var pri = d;
+        if (!defended) pri -= 5;         // big bonus for undefended
+        if (ct.capital) pri -= 3;        // prioritize capitals
+        if (pri < bestPri) { bestPri = pri; bestTarget = [ct.c, ct.r]; }
+      });
+      // Enemy units — target weak ones
+      state.civs[id].units.forEach(function (e) {
+        if (UNITS[e.type].civilian) return; // don't chase settlers/workers
+        var d = hexDist([u.c, u.r], [e.c, e.r]);
+        var pri = d;
+        if (e.hp < e.maxHp * 0.5) pri -= 2; // wounded enemies are attractive
+        if (pri < bestPri) { bestPri = pri; bestTarget = [e.c, e.r]; }
+      });
+    });
+
+    if (bestTarget) {
+      // Ranged units: close to range then fire
       if (UNITS[u.type].ranged) {
-        var d = hexDist([u.c, u.r], target);
+        var d = hexDist([u.c, u.r], bestTarget);
         if (d > UNITS[u.type].ranged) {
-          aiStepTowardRange(u, target, UNITS[u.type].ranged);
-          // After closing distance, try to fire
+          aiStepTowardRange(u, bestTarget, UNITS[u.type].ranged);
           aiTryRangedAttack(u);
         }
-        // Already in range (or just got there) — fire if we haven't already
         if (u.moves > 0) aiTryRangedAttack(u);
       } else {
-        aiStepToward(u, target);
+        aiStepToward(u, bestTarget);
       }
     } else {
       aiWander(u);
