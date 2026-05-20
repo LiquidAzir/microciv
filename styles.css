@@ -373,6 +373,7 @@ html, body {
 }
 .hud-cell.age-cell.classical { color: #7ce5ff; background: rgba(124,229,255,0.08); border-color: rgba(124,229,255,0.35); }
 .hud-cell.age-cell.medieval  { color: #ff7a59; background: rgba(255,122,89,0.08);  border-color: rgba(255,122,89,0.35); }
+.hud-cell.age-cell.modern    { color: #00ff88; background: rgba(0,255,136,0.08);   border-color: rgba(0,255,136,0.35); }
 .hud-cell.hud-tech {
   flex: 1;
   justify-content: flex-end;

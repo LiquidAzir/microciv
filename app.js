@@ -44,6 +44,7 @@
     horseman:  { name: 'Horseman',  cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' },
     swordsman: { name: 'Swordsman', cost: 45, hp: 18, atk: 8, def: 5, move: 2, glyph: '⚔', tech: 'steel' },
     catapult:  { name: 'Catapult',  cost: 40, hp: 8,  atk: 7, def: 1, move: 2, glyph: '⊕', tech: 'engineering', ranged: 2, siege: true },
+    musketman: { name: 'Musketman', cost: 50, hp: 20, atk: 9, def: 4, move: 2, glyph: '⚡', tech: 'gunpowder',  ranged: 2 },
     raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true }
   };
 
@@ -111,6 +112,7 @@
     market:   { name: 'Market',    cost: 50, gold: 3, tech: 'currency' },
     aqueduct: { name: 'Aqueduct',  cost: 45, food: 3, tech: 'engineering' },
     temple:   { name: 'Temple',    cost: 40, sci: 3,  tech: 'theology' },
+    bank:     { name: 'Bank',      cost: 55, gold: 4, tech: 'banking' },
     // World Wonders — each unique per game, first civ to finish locks it out
     hanging_gardens:  { name: 'Hanging Gardens',  cost:  90, tech: 'pottery',   wonder: true, perCityFood: 2,
                         lore: '+2 food in every city you own' },
@@ -133,15 +135,18 @@
     iron:        { name: 'Metalworking', cost:  70, req: ['husbandry','currency'], unlocks: '+2 atk Warriors' },
     engineering: { name: 'Engineering',  cost:  60, req: ['masonry','archery'],    unlocks: 'Catapult, Aqueduct' },
     theology:    { name: 'Theology',     cost:  75, req: ['currency','pottery'],   unlocks: 'Temple' },
-    steel:       { name: 'Steel',        cost:  90, req: ['iron'],                 unlocks: 'Swordsman' }
+    steel:       { name: 'Steel',        cost:  90, req: ['iron'],                 unlocks: 'Swordsman' },
+    gunpowder:   { name: 'Gunpowder',   cost: 110, req: ['steel','engineering'],  unlocks: 'Musketman' },
+    banking:     { name: 'Banking',      cost: 100, req: ['theology','currency'],  unlocks: 'Bank' }
   };
-  var TECH_ORDER = ['pottery','archery','masonry','husbandry','currency','iron','engineering','theology','steel'];
+  var TECH_ORDER = ['pottery','archery','masonry','husbandry','currency','iron','engineering','theology','steel','gunpowder','banking'];
 
   // Age thresholds — purely cosmetic + small gold bonus on advancement
   var AGES = [
     { name: 'Ancient',   minTechs: 0 },
     { name: 'Classical', minTechs: 4 },
-    { name: 'Medieval',  minTechs: 7 }
+    { name: 'Medieval',  minTechs: 7 },
+    { name: 'Modern',    minTechs: 10 }
   ];
   function getAge(civ) {
     var count = 0;
@@ -2206,6 +2211,47 @@
     p(11,6,2,1, c.D);                   // shadow
   }
 
+  function drawMusketman(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Tricorn hat
+    p(3,1,8,1, c.K);
+    p(4,2,6,1, c.K);
+    p(5,2,4,1, c.D);
+    p(3,1,1,1, c.D); p(10,1,1,1, c.D); // hat brims
+    // Face
+    p(5,3,4,2, c.S);
+    p(5,3,4,1, c.D);
+    p(6,4,1,1, c.K); p(8,4,1,1, c.K);  // eyes
+    // Collar
+    p(5,5,4,1, c.W);
+    // Uniform jacket
+    p(4,6,6,1, c.K);
+    p(4,7,6,3, c.C);
+    p(4,7,6,1, c.D);
+    p(6,8,2,1, c.Y);                    // brass buttons
+    p(6,9,2,1, c.Y);
+    p(3,7,1,3, c.K); p(10,7,1,3, c.K); // arms outline
+    // Cross-belt
+    p(5,7,1,3, c.W); p(8,7,1,3, c.W);
+    // Belt
+    p(4,10,6,1, c.B);
+    p(6,10,2,1, c.M);                   // buckle
+    // Musket (long barrel, right side)
+    p(11,1,1,1, c.M);                   // bayonet tip
+    p(11,2,1,9, c.B);                   // wooden stock
+    p(11,2,1,4, c.M);                   // metal barrel
+    p(11,2,1,1, c.W);                   // shine
+    // Left hand on musket
+    p(3,8,1,2, c.S);
+    // Legs
+    p(5,11,1,3, c.K); p(8,11,1,3, c.K);
+    p(6,11,2,2, c.W);                   // white breeches
+    p(6,13,2,1, c.K);                   // boots
+    p(5,13,1,1, c.K); p(8,13,1,1, c.K);
+  }
+
   function drawCitySprite(cx, cy, size, city) {
     var civ = CIVS[city.civ];
     shadowBlob(cx, cy, size * 1.1);
@@ -2278,6 +2324,7 @@
     horseman:  drawHorseman,
     swordsman: drawSwordsman,
     catapult:  drawCatapult,
+    musketman: drawMusketman,
     raider:    drawWarrior   // reuses warrior sprite; civ color makes it grey
   };
 
@@ -2548,9 +2595,10 @@
     if (ageEl) {
       ageEl.textContent = age.name.toUpperCase();
       var cell = ageEl.parentElement;
-      cell.classList.remove('classical', 'medieval');
+      cell.classList.remove('classical', 'medieval', 'modern');
       if (age.name === 'Classical') cell.classList.add('classical');
       if (age.name === 'Medieval') cell.classList.add('medieval');
+      if (age.name === 'Modern') cell.classList.add('modern');
     }
 
     // CIV chip (top HUD)
@@ -2681,6 +2729,7 @@
     if (city.buildings.granary) food += BUILDINGS.granary.food;
     if (city.buildings.aqueduct) food += BUILDINGS.aqueduct.food;
     if (city.buildings.market) gold += BUILDINGS.market.gold;
+    if (city.buildings.bank) gold += BUILDINGS.bank.gold;
 
     return { food: food, prod: prod, gold: gold };
   }
@@ -3009,6 +3058,7 @@
       // Sometimes build a regular building if available and not yet built
       var regBldgs = available.filter(function (k) { return BUILDINGS[k] && !BUILDINGS[k].wonder && !city.buildings[k]; });
       if (regBldgs.length && rnd() < 0.20) return regBldgs[Math.floor(rnd() * regBldgs.length)];
+      if (available.indexOf('musketman') >= 0) return 'musketman';
       if (available.indexOf('swordsman') >= 0) return 'swordsman';
       if (available.indexOf('horseman') >= 0) return 'horseman';
       if (available.indexOf('archer') >= 0) return 'archer';
@@ -3052,7 +3102,7 @@
       // Check for age advancement
       var ageAfter = getAge(civ);
       if (ageAfter.name !== ageBefore.name) {
-        var ageGold = ageAfter.minTechs >= 7 ? 40 : 20;
+        var ageGold = ageAfter.minTechs >= 10 ? 60 : ageAfter.minTechs >= 7 ? 40 : 20;
         civ.gold += ageGold;
         if (civ.id === 'player') {
           logEvent('Entered the ' + ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
@@ -3742,8 +3792,8 @@
     var list = document.getElementById('tech-list');
     list.innerHTML = '';
     // Techs grouped by age for section headers
-    var TECH_AGES = { pottery:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, steel:2 };
-    var AGE_LABELS = ['Ancient Age', 'Classical Age', 'Medieval Age'];
+    var TECH_AGES = { pottery:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, steel:2, gunpowder:3, banking:3 };
+    var AGE_LABELS = ['Ancient Age', 'Classical Age', 'Medieval Age', 'Modern Age'];
     var lastAge = -1;
     TECH_ORDER.forEach(function (k) {
       // Insert era header when crossing into a new age
