@@ -125,17 +125,50 @@
     return state.map[r][c];
   }
 
-  function neighbors(c, r) {
+  function neighborDeltas(r) {
     var even = (r & 1) === 0;
-    var deltas = even
+    // Order: E, W, NE, NW, SE, SW
+    return even
       ? [[+1,0],[-1,0],[0,-1],[-1,-1],[0,+1],[-1,+1]]
       : [[+1,0],[-1,0],[+1,-1],[0,-1],[+1,+1],[0,+1]];
+  }
+
+  function neighbors(c, r) {
+    var deltas = neighborDeltas(r);
     var out = [];
     for (var i = 0; i < 6; i++) {
       var nc = c + deltas[i][0], nr = r + deltas[i][1];
       if (inBounds(nc, nr)) out.push([nc, nr]);
     }
     return out;
+  }
+
+  // Returns array of 6 entries; null for out-of-bounds. Order matches edges below.
+  function neighborsAll(c, r) {
+    var deltas = neighborDeltas(r);
+    var out = [];
+    for (var i = 0; i < 6; i++) {
+      var nc = c + deltas[i][0], nr = r + deltas[i][1];
+      out.push(inBounds(nc, nr) ? [nc, nr] : null);
+    }
+    return out;
+  }
+
+  // Tiles within `range` of (c,r) by hex distance
+  function tilesInRange(c, r, range) {
+    var out = [];
+    for (var rr = Math.max(0, r - range); rr <= Math.min(MAP_H - 1, r + range); rr++) {
+      for (var cc = Math.max(0, c - range); cc <= Math.min(MAP_W - 1, c + range); cc++) {
+        if (hexDist([c, r], [cc, rr]) <= range) out.push([cc, rr]);
+      }
+    }
+    return out;
+  }
+
+  function cultureRange(city) {
+    if (city.pop >= 6) return 3;
+    if (city.pop >= 3) return 2;
+    return 1;
   }
 
   function offsetToAxial(c, r) {
@@ -164,6 +197,7 @@
       city: null,
       unit: null,
       improvement: null, // 'farm' | 'mine'
+      owner: null,       // 'player' | 'ai' | null — territorial control
       visible: { player: false, ai: false },
       explored: { player: false, ai: false }
     };
@@ -305,6 +339,7 @@
 
     recomputeVisibility('player');
     recomputeVisibility('ai');
+    recomputeBorders();
     centerCameraOn(state.cursor.c, state.cursor.r);
     save();
   }
@@ -405,6 +440,7 @@
           var t = tileAt(ct.c, ct.r); if (t) t.city = ct;
         });
       });
+      recomputeBorders();
       return true;
     } catch (e) { return false; }
   }
@@ -413,6 +449,38 @@
   }
   function clearSave() {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  }
+
+  // =====================================================================
+  // TERRITORY / CULTURE
+  // =====================================================================
+  function recomputeBorders() {
+    if (!state) return;
+    for (var r = 0; r < MAP_H; r++)
+      for (var c = 0; c < MAP_W; c++) state.map[r][c].owner = null;
+
+    var all = [];
+    state.civs.player.cities.forEach(function (ct) { all.push(ct); });
+    state.civs.ai.cities.forEach(function (ct) { all.push(ct); });
+
+    // Each tile is claimed by the closest city within that city's culture range.
+    // Ties broken by city age (older city wins — found order = array order).
+    for (var r = 0; r < MAP_H; r++) {
+      for (var c = 0; c < MAP_W; c++) {
+        var best = null, bestD = Infinity, bestAge = Infinity;
+        for (var i = 0; i < all.length; i++) {
+          var ct = all[i];
+          var range = cultureRange(ct);
+          var d = hexDist([c, r], [ct.c, ct.r]);
+          if (d > range) continue;
+          var age = ct.foundedTurn || 0;
+          if (d < bestD || (d === bestD && age < bestAge)) {
+            bestD = d; bestAge = age; best = ct;
+          }
+        }
+        if (best) state.map[r][c].owner = best.civ;
+      }
+    }
   }
 
   // =====================================================================
@@ -885,6 +953,13 @@
           drawImprovement(cx, cy, size, t.improvement);
         }
 
+        // Faint territory tint (drawn under fog)
+        if (t.owner) {
+          hexPath(cx, cy, inset);
+          ctx.fillStyle = withAlpha(CIVS[t.owner].color, visible ? 0.10 : 0.05);
+          ctx.fill();
+        }
+
         // Dim if not currently visible (fogged)
         if (!visible) {
           hexPath(cx, cy, inset);
@@ -903,6 +978,9 @@
         }
       }
     }
+
+    // Territorial borders (between owners)
+    drawBorders(size, inset);
 
     // Movement range — selected unit (full) or hover preview (faint)
     if (state.selected) {
@@ -1374,6 +1452,78 @@
     return path;
   }
 
+  // Edge i (vertices v[i] to v[i+1]) -> neighbor index in neighborsAll order
+  // neighbors order: 0:E, 1:W, 2:NE, 3:NW, 4:SE, 5:SW
+  // edges (vertex angle pairs): 0:E, 1:SE, 2:SW, 3:W, 4:NW, 5:NE
+  var EDGE_TO_NEIGHBOR = [0, 4, 5, 1, 3, 2];
+
+  function drawBorders(size, inset) {
+    var edgeInset = inset * 0.86;
+    for (var r = 0; r < MAP_H; r++) {
+      for (var c = 0; c < MAP_W; c++) {
+        var t = state.map[r][c];
+        if (!t.owner) continue;
+        if (!t.explored.player) continue;
+
+        var p = pixelOf(c, r, size);
+        var cx = p.x - state.camera.x + size * SQRT3 / 2;
+        var cy = p.y - state.camera.y + size;
+        // Cull off-screen tiles
+        if (cx < -size || cy < -size || cx > VIEW_W + size || cy > VIEW_H + size) continue;
+
+        var color = CIVS[t.owner].color;
+        var ns = neighborsAll(c, r);
+
+        for (var i = 0; i < 6; i++) {
+          var nIdx = EDGE_TO_NEIGHBOR[i];
+          var nPos = ns[nIdx];
+          var nTile = nPos ? tileAt(nPos[0], nPos[1]) : null;
+          var sameOwner = nTile && nTile.owner === t.owner && nTile.explored.player;
+          if (sameOwner) continue;
+
+          var ang1 = Math.PI / 180 * (60 * i - 30);
+          var ang2 = Math.PI / 180 * (60 * (i + 1) - 30);
+          var x1 = cx + edgeInset * Math.cos(ang1);
+          var y1 = cy + edgeInset * Math.sin(ang1);
+          var x2 = cx + edgeInset * Math.cos(ang2);
+          var y2 = cy + edgeInset * Math.sin(ang2);
+
+          // outer dark stroke for contrast
+          ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+          ctx.lineWidth = 3.5;
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          // inner colored stroke
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        }
+      }
+    }
+  }
+
+  function drawTerritoryTint(size, inset) {
+    // Faint civ-color wash over each owned tile for visibility at a glance
+    for (var r = 0; r < MAP_H; r++) {
+      for (var c = 0; c < MAP_W; c++) {
+        var t = state.map[r][c];
+        if (!t.owner || !t.explored.player) continue;
+        var p = pixelOf(c, r, size);
+        var cx = p.x - state.camera.x + size * SQRT3 / 2;
+        var cy = p.y - state.camera.y + size;
+        if (cx < -size || cy < -size || cx > VIEW_W + size || cy > VIEW_H + size) continue;
+        hexPath(cx, cy, inset);
+        var color = CIVS[t.owner].color;
+        ctx.fillStyle = withAlpha(color, 0.07);
+        ctx.fill();
+      }
+    }
+  }
+
+  function withAlpha(hex, a) {
+    var rgb = hexToRgb(hex);
+    return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a + ')';
+  }
+
   function drawMoveRange(unit, size, inset, alpha) {
     if (alpha == null) alpha = 1.0;
     var visited = computeReachable(unit);
@@ -1489,8 +1639,10 @@
     for (var i = 0; i < ns.length; i++) {
       var t = tileAt(ns[i][0], ns[i][1]);
       if (!t || TERRAIN[t.terrain].impassable) continue;
-      // tile claimed by another civ? skip
+      // Enemy city sitting on the tile blocks it
       if (t.city && (t.city.c !== city.c || t.city.r !== city.r)) continue;
+      // Tile owned by another civilization's culture can't be worked
+      if (t.owner && t.owner !== city.civ) continue;
       var ter = TERRAIN[t.terrain];
       var f = ter.food, p = ter.prod, g = ter.gold;
       if (t.resource === 'wheat') f += 2;
@@ -1567,6 +1719,8 @@
     if (dTile.city && state.civs[dTile.city.civ].id === defender.civ) {
       dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
     }
+    // Home-territory bonus: defender gets +10% on own owned tiles
+    if (dTile.owner === defender.civ) dBonus += 0.10;
 
     var aPower = aDef.atk + atkTechBonus(attacker);
     var dPower = dDef.def * (1 + dBonus);
@@ -1634,12 +1788,13 @@
       prod: 0,
       buildings: {},
       producing: 'warrior', // default
-      capital: isCapital
+      capital: isCapital,
+      foundedTurn: state.turn
     };
     civ.cities.push(city);
     t.city = city;
-    // Settler is consumed
     killUnit(unit);
+    recomputeBorders();
     showToast('Founded ' + name, 'success');
   }
 
@@ -1651,9 +1806,9 @@
     city.pop = Math.max(1, city.pop - 1);
     city.producing = 'warrior';
     state.civs[newOwnerId].cities.push(city);
+    recomputeBorders();
     showToast('Captured ' + city.name + '!', newOwnerId === 'player' ? 'success' : 'error');
 
-    // Check victory: was it a capital?
     if (city.capital) {
       var loser = oldOwner.cities.length === 0 ? oldOwner.id : null;
       if (loser) declareVictory(newOwnerId, 'domination');
@@ -1811,6 +1966,7 @@
       state.currentCiv = 'player';
       pl.units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
       ai.units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
+      recomputeBorders();
       recomputeVisibility('player');
       recomputeVisibility('ai');
       recomputeIncome('player');
