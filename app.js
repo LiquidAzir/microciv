@@ -99,7 +99,7 @@
   var IMPROVEMENT_ORDER = ['fishing_boats', 'pasture', 'lumber', 'mine', 'quarry', 'farm'];
 
   function pickImprovement(t) {
-    if (!t || t.improvement) return null;
+    if (!t || t.improvement || t.city) return null;
     for (var i = 0; i < IMPROVEMENT_ORDER.length; i++) {
       var id = IMPROVEMENT_ORDER[i];
       if (IMPROVEMENTS[id].suitable(t)) return id;
@@ -758,6 +758,12 @@
         applyFaction(id, fid);
         state.civs[id].name = CIVS[id].name;
         state.civs[id].color = CIVS[id].color;
+      });
+      // Backfill originalCiv for capital cities from older saves
+      CIV_SIDES.forEach(function (id) {
+        (state.civs[id].cities || []).forEach(function (ct) {
+          if (ct.capital && !ct.originalCiv) ct.originalCiv = ct.civ;
+        });
       });
       // restore unit refs on tiles
       for (var r = 0; r < MAP_H; r++)
@@ -2974,11 +2980,13 @@
     if (t.unit && t.unit.civ !== unit.civ) {
       return attack(unit, t.unit);
     }
-    // Capture enemy city if no defender
+    // Capture enemy city if no defender (only military units can capture)
     if (t.city && t.city.civ !== unit.civ) {
       var capture = !t.unit;
       if (!capture) return attack(unit, t.unit);
-      captureCity(t.city, unit.civ);
+      if (!UNITS[unit.type].civilian) {
+        captureCity(t.city, unit.civ);
+      }
     }
     // Move
     var oldT = tileAt(unit.c, unit.r);
@@ -3090,13 +3098,15 @@
 
     if (defender.hp <= 0) {
       killUnit(defender);
-      // Move into vacated tile
-      var oldT = tileAt(attacker.c, attacker.r);
-      if (oldT) oldT.unit = null;
-      attacker.c = defender.c; attacker.r = defender.r;
-      var newT = tileAt(attacker.c, attacker.r);
-      if (newT.city && newT.city.civ !== attacker.civ) captureCity(newT.city, attacker.civ);
-      newT.unit = attacker;
+      // Only move in and capture if the attacker survived
+      if (attacker.hp > 0) {
+        var oldT = tileAt(attacker.c, attacker.r);
+        if (oldT) oldT.unit = null;
+        attacker.c = defender.c; attacker.r = defender.r;
+        var newT = tileAt(attacker.c, attacker.r);
+        if (newT.city && newT.city.civ !== attacker.civ) captureCity(newT.city, attacker.civ);
+        newT.unit = attacker;
+      }
     }
     if (attacker.hp <= 0) killUnit(attacker);
     return true;
@@ -3143,6 +3153,7 @@
       buildings: {},
       producing: 'warrior', // default
       capital: isCapital,
+      originalCiv: isCapital ? unit.civ : null,   // tracks who founded this capital for domination check
       onRiver: onRiver,
       foundedTurn: state.turn
     };
@@ -3169,15 +3180,16 @@
     recomputeIncome(oldOwnerId);
     showToast('Captured ' + city.name + '!', newOwnerId === 'player' ? 'success' : 'error');
 
-    // Domination victory: capturing civ now owns every capital on the map.
-    var allCapitals = true;
-    CIV_SIDES.forEach(function (id) {
-      if (id === newOwnerId) return;
-      // Check if this rival still holds their own capital
-      var hasCapital = state.civs[id].cities.some(function (ct) { return ct.capital; });
-      if (hasCapital) allCapitals = false;
+    // Domination victory: capturing civ holds every rival's ORIGINAL capital.
+    // We count how many rival original capitals this civ controls vs how many rivals exist.
+    var rivalCount = CIV_SIDES.length - 1;
+    var capturedRivalCapitals = 0;
+    state.civs[newOwnerId].cities.forEach(function (ct) {
+      if (ct.capital && ct.originalCiv && ct.originalCiv !== newOwnerId) {
+        capturedRivalCapitals++;
+      }
     });
-    if (allCapitals) declareVictory(newOwnerId, 'domination');
+    if (capturedRivalCapitals >= rivalCount) declareVictory(newOwnerId, 'domination');
   }
 
   function processCity(city) {
@@ -3344,7 +3356,15 @@
         }
       }
       // Every AI picks its next tech automatically; player picks from the menu.
-      if (AI_SIDES.indexOf(civ.id) >= 0) civ.currentTech = pickAiTech(civ);
+      if (AI_SIDES.indexOf(civ.id) >= 0) {
+        civ.currentTech = pickAiTech(civ);
+      } else if (civ.id === 'player') {
+        // Prompt player to pick a new tech
+        var hasMore = TECH_ORDER.some(function (tk) { return !civ.techs[tk]; });
+        if (hasMore) {
+          logEvent('Choose your next research!', 'info');
+        }
+      }
       // Check science victory
       var allDone = true;
       for (var i = 0; i < TECH_ORDER.length; i++) if (!civ.techs[TECH_ORDER[i]]) { allDone = false; break; }
@@ -3398,6 +3418,19 @@
         c.gold += c.goldPerTurn;
         progressTech(c);
       });
+
+      // Check player elimination — no cities and no settlers means defeat
+      if (!state.victory) {
+        var plCheck = state.civs.player;
+        var hasCities = plCheck.cities.length > 0;
+        var hasSettlers = plCheck.units.some(function (u) { return u.type === 'settler'; });
+        if (!hasCities && !hasSettlers) {
+          // Find which AI is strongest as the "winner"
+          var winner = 'ai';
+          if (state.civs.ai2.cities.length > state.civs.ai.cities.length) winner = 'ai2';
+          declareVictory(winner, 'domination');
+        }
+      }
 
       // Roll into the next turn
       state.turn += 1;
@@ -4183,7 +4216,12 @@
       title.textContent = 'Defeat';
       title.style.color = '#ff4466';
       var winName = CIVS[winner] ? CIVS[winner].name : 'Enemy';
-      detail.textContent = (kind === 'domination' ? winName + ' took your capital.' : winName + ' completed all research first.');
+      if (kind === 'domination') {
+        var plHasCities = state.civs.player.cities.length > 0;
+        detail.textContent = plHasCities ? winName + ' captured all rival capitals.' : winName + ' conquered your civilization.';
+      } else {
+        detail.textContent = winName + ' completed all research first.';
+      }
     }
     showModal('end-screen');
   }
