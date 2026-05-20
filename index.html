@@ -36,10 +36,26 @@
         <span class="hud-cell hud-tech"><span id="hud-tech-name">—</span></span>
       </div>
       <div id="hud-bottom" class="hud-bottom">
-        <span id="mode-pill" class="mode-pill">CURSOR</span>
-        <span id="hud-tile" class="hud-tile">—</span>
-        <span id="hud-hint" class="hud-hint">⏎ act · esc cancel</span>
-        <span id="end-turn-chip" class="end-turn-chip">END TURN</span>
+        <div class="hud-row hud-row-1">
+          <span id="mode-pill" class="hud-chip mode-pill" title="↑↓↑↓">
+            <span class="chip-lbl">MODE</span><span class="chip-val">CURSOR</span>
+          </span>
+          <span id="zoom-pill" class="hud-chip zoom-pill" title="←→←→">
+            <span class="chip-lbl">ZOOM</span><span class="chip-val">●●○</span>
+          </span>
+          <span id="units-pill" class="hud-chip units-pill" title="esc cycles">
+            <span class="chip-lbl">UNITS</span><span class="chip-val">0</span>
+          </span>
+          <span id="end-turn-chip" class="end-turn-chip">END TURN</span>
+        </div>
+        <div class="hud-row hud-row-2">
+          <span id="hud-tile" class="hud-tile">—</span>
+          <span id="hud-hint" class="hud-hint">pinch a unit · esc cycles · ⏎ act</span>
+        </div>
+      </div>
+      <div id="turn-summary" class="turn-summary hidden">
+        <div class="turn-summary-title">Turn 1</div>
+        <div class="turn-summary-body"></div>
       </div>
       <div id="end-turn-flash" class="end-turn-flash hidden">End Turn</div>
       <div id="toast" class="toast"></div>

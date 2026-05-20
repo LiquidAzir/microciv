@@ -236,7 +236,8 @@
       mode: 'cursor',                    // 'cursor' | 'scroll'
       selected: null,                    // { c, r } of selected friendly unit
       victory: null,                     // 'player' | 'ai' | null
-      log: []
+      log: [],
+      turnLog: []
     };
 
     var p = pickStart(map);
@@ -842,11 +843,16 @@
       }
     }
 
-    // Movement range indicator for selected unit
+    // Movement range — selected unit (full) or hover preview (faint)
     if (state.selected) {
       var su = tileAt(state.selected.c, state.selected.r);
       if (su && su.unit && su.unit.civ === 'player' && su.unit.moves > 0) {
-        drawMoveRange(su.unit, size, inset);
+        drawMoveRange(su.unit, size, inset, 1.0);
+      }
+    } else {
+      var ht = tileAt(state.cursor.c, state.cursor.r);
+      if (ht && ht.unit && ht.unit.civ === 'player' && ht.unit.moves > 0 && state.mode === 'cursor') {
+        drawMoveRange(ht.unit, size, inset, 0.45);
       }
     }
 
@@ -1307,7 +1313,8 @@
     return path;
   }
 
-  function drawMoveRange(unit, size, inset) {
+  function drawMoveRange(unit, size, inset, alpha) {
+    if (alpha == null) alpha = 1.0;
     var visited = computeReachable(unit);
     var size2 = ZOOM_LEVELS[state.zoom];
     for (var key in visited) {
@@ -1320,9 +1327,10 @@
       hexPath(x, y, inset);
       var t = tileAt(c, r);
       var enemy = (t && t.unit && t.unit.civ !== unit.civ) || (t && t.city && t.city.civ !== unit.civ);
-      ctx.fillStyle = enemy ? 'rgba(255, 68, 102, 0.32)' : 'rgba(0, 255, 136, 0.16)';
+      var fillA = (enemy ? 0.32 : 0.16) * alpha;
+      ctx.fillStyle = enemy ? 'rgba(255, 68, 102, ' + fillA + ')' : 'rgba(0, 255, 136, ' + fillA + ')';
       ctx.fill();
-      if (enemy) {
+      if (enemy && alpha > 0.7) {
         ctx.strokeStyle = 'rgba(255, 68, 102, 0.6)';
         ctx.lineWidth = 1.5;
         ctx.stroke();
@@ -1344,31 +1352,52 @@
       ? TECHS[civ.currentTech].name
       : 'No research';
 
+    // MODE pill
     var pill = document.getElementById('mode-pill');
-    pill.textContent = state.mode === 'cursor' ? 'CURSOR' : 'SCROLL';
+    var pillVal = pill.querySelector('.chip-val');
+    pillVal.textContent = state.mode === 'cursor' ? 'CURSOR' : 'SCROLL';
     pill.classList.toggle('scroll', state.mode === 'scroll');
+
+    // ZOOM pill — visual dots
+    var zPill = document.getElementById('zoom-pill');
+    if (zPill) {
+      var dots = ['○○○', '●○○', '●●○', '●●●'][state.zoom + 1] || '●●○';
+      // map ZOOM_LEVELS index (0..2) to readable
+      var z = state.zoom;
+      var disp = z === 0 ? '○○●' : z === 1 ? '○●●' : '●●●';
+      zPill.querySelector('.chip-val').textContent = disp;
+    }
+
+    // UNITS pill
+    var hasMovesLeft = civ.units.some(function (u) { return u.moves > 0 && !u.fortified; });
+    var movesCount = civ.units.filter(function (u) { return u.moves > 0 && !u.fortified; }).length;
+    var uPill = document.getElementById('units-pill');
+    if (uPill) {
+      uPill.querySelector('.chip-val').textContent = movesCount;
+      uPill.classList.toggle('empty', movesCount === 0);
+    }
 
     var hint = document.getElementById('hud-hint');
     var selUnit = state.selected && tileAt(state.selected.c, state.selected.r);
     selUnit = selUnit && selUnit.unit;
     if (state.selected && !selUnit) state.selected = null;
 
-    var hasMovesLeft = civ.units.some(function (u) { return u.moves > 0 && !u.fortified; });
     var readyToEnd = !hasMovesLeft && !state.victory;
 
     if (selUnit) {
-      hint.textContent = UNITS[selUnit.type].name + ' · ' + selUnit.moves + '/' + selUnit.maxMoves + ' moves · ⏎ to move · Esc cancel';
+      hint.textContent = '⏎ move · esc next · ' + selUnit.moves + '/' + selUnit.maxMoves + ' mv';
     } else if (state.mode === 'scroll') {
-      hint.textContent = 'Arrows pan · ↑↓↑↓ cursor · ←→←→ zoom';
+      hint.textContent = 'arrows pan · ↑↓↑↓ cursor';
     } else if (readyToEnd) {
-      hint.textContent = 'All units acted — pinch empty tile to end turn';
+      hint.textContent = 'pinch any empty tile to end turn';
     } else {
-      hint.textContent = 'Pinch unit to select · ↑↓↑↓ scroll · ←→←→ zoom';
+      hint.textContent = 'pinch unit · esc next · ⏎ act';
     }
 
     var ti = state.map[state.cursor.r][state.cursor.c];
     var label = TERRAIN[ti.terrain].name;
     if (ti.resource) label += ' · ' + ti.resource;
+    if (ti.improvement) label += ' · ' + ti.improvement;
     if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name;
     if (ti.city) label += ' · ' + ti.city.name;
     document.getElementById('hud-tile').textContent = label;
@@ -1567,13 +1596,13 @@
     if (city.food < 0) {
       city.pop = Math.max(1, city.pop - 1);
       city.food = 0;
-      showToast(city.name + ' starved', 'error');
+      if (city.civ === 'player') logEvent(city.name + ' starved (pop ' + city.pop + ')', 'error');
     }
     if (city.food >= city.foodCap) {
       city.pop += 1;
       city.food = 0;
       city.foodCap = 8 + city.pop * 5;
-      if (city.civ === 'player') showToast(city.name + ' grew to ' + city.pop, 'success');
+      if (city.civ === 'player') logEvent(city.name + ' grew to pop ' + city.pop, 'success');
     }
 
     // Production
@@ -1587,12 +1616,12 @@
       city.prod -= cost;
       if (isBuilding) {
         city.buildings[p] = true;
-        if (city.civ === 'player') showToast(city.name + ' built ' + BUILDINGS[p].name, 'success');
+        if (city.civ === 'player') logEvent(city.name + ' built ' + BUILDINGS[p].name, 'success');
       } else {
         var spawnTile = findSpawnTile(city);
         if (spawnTile) {
           spawnUnit(city.civ, p, spawnTile[0], spawnTile[1]);
-          if (city.civ === 'player') showToast(city.name + ' trained ' + UNITS[p].name, 'success');
+          if (city.civ === 'player') logEvent(city.name + ' trained ' + UNITS[p].name, 'success');
         }
       }
       // Pick next production sensibly
@@ -1650,7 +1679,7 @@
     if (civ.techProgress >= def.cost) {
       civ.techs[civ.currentTech] = true;
       civ.techProgress = 0;
-      if (civ.id === 'player') showToast('Researched ' + def.name + '!', 'success');
+      if (civ.id === 'player') logEvent('Researched ' + def.name, 'success');
       var done = civ.currentTech;
       civ.currentTech = null;
       // Auto-pick next if AI
@@ -1686,6 +1715,7 @@
     if (state.victory) return;
     // Player end-of-turn
     var pl = state.civs.player;
+    state.turnLog = [];                  // fresh log for events from this round
     recomputeIncome('player');
     pl.cities.forEach(processCity);
     pl.gold += pl.goldPerTurn;
@@ -1719,11 +1749,43 @@
           if (u.moves === u.maxMoves && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + 2);
         });
       });
-      // Auto-select next player unit with moves
       autoSelectNextUnit();
+      showTurnSummary();
       save();
       draw();
     }, 300);
+  }
+
+  function logEvent(msg, kind) {
+    if (!state.turnLog) state.turnLog = [];
+    state.turnLog.push({ msg: msg, kind: kind || 'info' });
+  }
+
+  function showTurnSummary() {
+    var el = document.getElementById('turn-summary');
+    if (!el) return;
+    var titleEl = el.querySelector('.turn-summary-title');
+    var body = el.querySelector('.turn-summary-body');
+    titleEl.textContent = 'Turn ' + state.turn;
+    body.innerHTML = '';
+    var events = state.turnLog || [];
+    if (events.length === 0) {
+      body.innerHTML = '<div class="turn-summary-empty">Quiet round.</div>';
+    } else {
+      events.forEach(function (ev) {
+        var row = document.createElement('div');
+        row.className = 'ev-row' + (ev.kind === 'error' ? ' err' : ev.kind === 'success' ? ' win' : '');
+        var ico = ev.kind === 'error' ? '!' : ev.kind === 'success' ? '✓' : '·';
+        row.innerHTML = '<span class="ev-ico">' + ico + '</span><span>' + ev.msg + '</span>';
+        body.appendChild(row);
+      });
+    }
+    el.classList.add('visible');
+    el.classList.remove('hidden');
+    clearTimeout(showTurnSummary._t);
+    showTurnSummary._t = setTimeout(function () {
+      el.classList.remove('visible');
+    }, Math.max(2400, 1600 + events.length * 350));
   }
 
   function flashEndTurn() {
@@ -1743,6 +1805,27 @@
     } else {
       state.selected = null;
     }
+  }
+
+  // Esc cycles through units that still have moves. If none, deselects.
+  function cycleNextUnit() {
+    var pl = state.civs.player;
+    var available = pl.units.filter(function (u) { return u.moves > 0 && !u.fortified; });
+    if (available.length === 0) {
+      state.selected = null;
+      return;
+    }
+    // Find the unit after the currently selected (or cursor) one
+    var curIdx = -1;
+    var ref = state.selected || state.cursor;
+    available.forEach(function (u, i) {
+      if (u.c === ref.c && u.r === ref.r) curIdx = i;
+    });
+    var next = available[(curIdx + 1) % available.length];
+    state.cursor.c = next.c;
+    state.cursor.r = next.r;
+    state.selected = { c: next.c, r: next.r };
+    ensureCursorVisible();
   }
 
   // =====================================================================
@@ -2341,7 +2424,8 @@
       draw();
     } else if (k === 'Escape') {
       e.preventDefault();
-      if (state.selected) { state.selected = null; draw(); }
+      cycleNextUnit();
+      draw();
     } else if (k === 'm' || k === 'M') {
       e.preventDefault();
       toggleMode(); draw();
