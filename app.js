@@ -608,25 +608,174 @@
   }
 
   function drawImprovement(cx, cy, size, kind) {
-    var x = cx - size * 0.55;
-    var y = cy + size * 0.45;
-    var s = size * 0.14;
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.beginPath();
-    ctx.arc(x, y, s + 2, 0, Math.PI * 2);
-    ctx.fill();
-    if (kind === 'farm') {
-      ctx.fillStyle = '#5a8a3a';
-      ctx.fillRect(x - s, y - s, s*2, s*2);
-      ctx.fillStyle = '#7aaa4a';
-      ctx.fillRect(x - s, y - s/3, s*2, 1);
-      ctx.fillRect(x - s, y + s/3, s*2, 1);
-    } else if (kind === 'mine') {
-      ctx.fillStyle = '#c8c8d0';
-      ctx.fillRect(x - s, y - s*0.5, s*2, s*0.4);
-      ctx.fillStyle = '#7a4a1c';
-      ctx.fillRect(x - s*0.2, y - s*0.6, s*0.4, s*1.5);
+    if (kind === 'farm') drawFarmImprovement(cx, cy, size);
+    else if (kind === 'mine') drawMineImprovement(cx, cy, size);
+  }
+
+  function drawFarmImprovement(cx, cy, size) {
+    // Sized to fill ~60% of the hex, positioned just below center
+    var w = size * 1.0;
+    var h = size * 0.55;
+    var x0 = cx - w / 2;
+    var y0 = cy + size * 0.05;
+    var px = Math.max(1, size / 16);
+
+    // Dark soil base / outline
+    ctx.fillStyle = '#0e0e0a';
+    ctx.fillRect(x0 - px, y0 - px, w + 2*px, h + 2*px);
+    ctx.fillStyle = '#3d2a14';
+    ctx.fillRect(x0, y0, w, h);
+
+    // Crop rows — alternating wheat-gold and tilled dirt
+    var nRows = 4;
+    var rowH = h / nRows;
+    for (var i = 0; i < nRows; i++) {
+      var ry = y0 + i * rowH;
+      // dirt furrow
+      ctx.fillStyle = '#2a1a0a';
+      ctx.fillRect(x0 + px, ry, w - 2*px, rowH * 0.30);
+      // wheat strip
+      ctx.fillStyle = '#d4a04a';
+      ctx.fillRect(x0 + px, ry + rowH * 0.30, w - 2*px, rowH * 0.55);
+      // highlight
+      ctx.fillStyle = '#f0c468';
+      ctx.fillRect(x0 + px, ry + rowH * 0.30, w - 2*px, rowH * 0.18);
+      // base shadow
+      ctx.fillStyle = '#7a5a20';
+      ctx.fillRect(x0 + px, ry + rowH * 0.78, w - 2*px, rowH * 0.10);
     }
+
+    // Small barn at the right edge
+    var bx = x0 + w - size * 0.30;
+    var by = y0 - size * 0.18;
+    var bw = size * 0.26;
+    var bh = size * 0.26;
+    // Walls
+    ctx.fillStyle = '#5a1a14';
+    ctx.fillRect(bx, by + bh * 0.4, bw, bh * 0.6);
+    ctx.fillStyle = '#7a2820';
+    ctx.fillRect(bx + 1, by + bh * 0.4 + 1, bw - 2, bh * 0.55);
+    // Roof (triangle)
+    ctx.fillStyle = '#1a0a08';
+    ctx.beginPath();
+    ctx.moveTo(bx - 2, by + bh * 0.4);
+    ctx.lineTo(bx + bw / 2, by);
+    ctx.lineTo(bx + bw + 2, by + bh * 0.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#3a1410';
+    ctx.beginPath();
+    ctx.moveTo(bx + 1, by + bh * 0.42);
+    ctx.lineTo(bx + bw / 2, by + 2);
+    ctx.lineTo(bx + bw - 1, by + bh * 0.42);
+    ctx.closePath();
+    ctx.fill();
+    // Door
+    ctx.fillStyle = '#1a0a08';
+    ctx.fillRect(bx + bw * 0.40, by + bh * 0.65, bw * 0.22, bh * 0.35);
+    // Crossbeam on door
+    ctx.fillStyle = '#3a2010';
+    ctx.fillRect(bx + bw * 0.10, by + bh * 0.55, bw * 0.80, 1);
+
+    // Subtle outline at the bottom of the field
+    ctx.fillStyle = '#1a0e08';
+    ctx.fillRect(x0, y0 + h, w, px);
+  }
+
+  function drawMineImprovement(cx, cy, size) {
+    // Mine entrance into a rocky outcrop, below center
+    var w = size * 0.85;
+    var h = size * 0.55;
+    var x0 = cx - w / 2;
+    var y0 = cy + size * 0.05;
+    var px = Math.max(1, size / 16);
+
+    // Rocky base outline
+    ctx.fillStyle = '#0a0608';
+    ctx.beginPath();
+    ctx.moveTo(x0, y0 + h);
+    ctx.lineTo(x0 + w * 0.05, y0 + h * 0.20);
+    ctx.lineTo(x0 + w * 0.35, y0 - h * 0.05);
+    ctx.lineTo(x0 + w * 0.55, y0 + h * 0.10);
+    ctx.lineTo(x0 + w * 0.80, y0 - h * 0.05);
+    ctx.lineTo(x0 + w, y0 + h * 0.25);
+    ctx.lineTo(x0 + w, y0 + h);
+    ctx.closePath();
+    ctx.fill();
+    // Rock face
+    ctx.fillStyle = '#3a2e34';
+    ctx.beginPath();
+    ctx.moveTo(x0 + px, y0 + h - px);
+    ctx.lineTo(x0 + w * 0.08, y0 + h * 0.22);
+    ctx.lineTo(x0 + w * 0.36, y0 + px);
+    ctx.lineTo(x0 + w * 0.55, y0 + h * 0.13);
+    ctx.lineTo(x0 + w * 0.80, y0 + px);
+    ctx.lineTo(x0 + w - px, y0 + h * 0.28);
+    ctx.lineTo(x0 + w - px, y0 + h - px);
+    ctx.closePath();
+    ctx.fill();
+    // Highlights on rock
+    ctx.fillStyle = '#5a4a52';
+    ctx.fillRect(x0 + w * 0.10, y0 + h * 0.30, w * 0.10, 2);
+    ctx.fillRect(x0 + w * 0.70, y0 + h * 0.35, w * 0.12, 2);
+    ctx.fillRect(x0 + w * 0.40, y0 + h * 0.12, w * 0.08, 2);
+
+    // Mine entrance — dark arch
+    var ex = cx;
+    var ey = y0 + h * 0.62;
+    var ew = w * 0.32;
+    var eh = h * 0.55;
+    // Frame
+    ctx.fillStyle = '#1a0e0c';
+    ctx.fillRect(ex - ew/2 - 1, ey - eh/2, ew + 2, eh + 1);
+    // Wood support beams (left + right + top)
+    ctx.fillStyle = '#7a4a1c';
+    ctx.fillRect(ex - ew/2 - 1, ey - eh/2, 3, eh);
+    ctx.fillRect(ex + ew/2 - 2, ey - eh/2, 3, eh);
+    ctx.fillRect(ex - ew/2 - 1, ey - eh/2, ew + 2, 3);
+    ctx.fillStyle = '#5a3414';
+    ctx.fillRect(ex - ew/2 - 1, ey - eh/2 + 2, ew + 2, 1);
+    // Pure black interior
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(ex - ew/2 + 2, ey - eh/2 + 3, ew - 4, eh - 4);
+
+    // Minecart tracks leading away
+    ctx.strokeStyle = '#3a2a18';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ex - 4, ey + eh/2);
+    ctx.lineTo(ex - 4 - size * 0.12, ey + eh/2 + size * 0.10);
+    ctx.moveTo(ex + 4, ey + eh/2);
+    ctx.lineTo(ex + 4 + size * 0.12, ey + eh/2 + size * 0.10);
+    ctx.stroke();
+    // Track ties
+    ctx.lineWidth = 1;
+    for (var i = 0; i < 3; i++) {
+      var tx = ex - size * 0.04 + (i - 1) * size * 0.06;
+      var ty = ey + eh/2 + size * 0.05 + i * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(tx - 4, ty);
+      ctx.lineTo(tx + 4, ty);
+      ctx.stroke();
+    }
+
+    // Pile of ore beside entrance
+    ctx.fillStyle = '#888896';
+    ctx.beginPath();
+    ctx.arc(ex - ew/2 - 4, y0 + h - 3, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#aaaab8';
+    ctx.fillRect(ex - ew/2 - 6, y0 + h - 5, 2, 1);
+
+    // Pickaxe leaning against entrance
+    ctx.strokeStyle = '#7a4a1c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ex + ew/2 + 3, y0 + h - 1);
+    ctx.lineTo(ex + ew/2 + 6, y0 + h - size * 0.20);
+    ctx.stroke();
+    ctx.fillStyle = '#a0a0a8';
+    ctx.fillRect(ex + ew/2 + 4, y0 + h - size * 0.22, 5, 2);
   }
 
   function drawMap() {
@@ -1109,28 +1258,57 @@
     }
   }
 
-  function drawMoveRange(unit, size, inset) {
+  // Returns map of "c,r" -> { cost, parent } for every tile reachable
+  // within `unit.moves`. Enemies are reachable (to attack) but don't expand.
+  function computeReachable(unit) {
+    var maxMoves = unit.moves;
     var visited = {};
-    visited[unit.c + ',' + unit.r] = 0;
+    var startKey = unit.c + ',' + unit.r;
+    visited[startKey] = { cost: 0, parent: null };
+    if (maxMoves <= 0) return visited;
     var frontier = [[unit.c, unit.r, 0]];
     while (frontier.length) {
       var cur = frontier.shift();
       var cc = cur[0], cr = cur[1], used = cur[2];
-      if (used >= unit.moves) continue;
+      if (used >= maxMoves) continue;
       var ns = neighbors(cc, cr);
       for (var i = 0; i < ns.length; i++) {
         var nc = ns[i][0], nr = ns[i][1];
         var t = tileAt(nc, nr);
         if (!t || TERRAIN[t.terrain].impassable) continue;
-        if (t.unit && t.unit.civ === unit.civ) continue;
+        // Friendly unit blocks the path (can't pass through allies)
+        if (t.unit && t.unit.civ === unit.civ && !(nc === unit.c && nr === unit.r)) continue;
         var key = nc + ',' + nr;
         var cost = used + 1;
-        if (visited[key] === undefined || visited[key] > cost) {
-          visited[key] = cost;
-          if (!t.unit || t.unit.civ !== unit.civ) frontier.push([nc, nr, cost]);
+        if (!(key in visited) || visited[key].cost > cost) {
+          visited[key] = { cost: cost, parent: cc + ',' + cr };
+          // Stop expansion at enemy unit / enemy city (those are end-of-path attack targets)
+          var enemyUnit = t.unit && t.unit.civ !== unit.civ;
+          var enemyCity = t.city && t.city.civ !== unit.civ;
+          if (!enemyUnit && !enemyCity) frontier.push([nc, nr, cost]);
         }
       }
     }
+    return visited;
+  }
+
+  function pathTo(reachable, c, r) {
+    var key = c + ',' + r;
+    if (!(key in reachable)) return null;
+    var path = [];
+    var cur = key;
+    while (cur) {
+      var parts = cur.split(',');
+      path.push([+parts[0], +parts[1]]);
+      var rec = reachable[cur];
+      cur = rec ? rec.parent : null;
+    }
+    path.reverse();
+    return path;
+  }
+
+  function drawMoveRange(unit, size, inset) {
+    var visited = computeReachable(unit);
     var size2 = ZOOM_LEVELS[state.zoom];
     for (var key in visited) {
       var parts = key.split(',');
@@ -1141,9 +1319,14 @@
       var y = p.y - state.camera.y + size2;
       hexPath(x, y, inset);
       var t = tileAt(c, r);
-      var enemy = t && t.unit && t.unit.civ !== unit.civ;
-      ctx.fillStyle = enemy ? 'rgba(255, 68, 102, 0.28)' : 'rgba(0, 255, 136, 0.18)';
+      var enemy = (t && t.unit && t.unit.civ !== unit.civ) || (t && t.city && t.city.civ !== unit.civ);
+      ctx.fillStyle = enemy ? 'rgba(255, 68, 102, 0.32)' : 'rgba(0, 255, 136, 0.16)';
       ctx.fill();
+      if (enemy) {
+        ctx.strokeStyle = 'rgba(255, 68, 102, 0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
     }
   }
 
@@ -1747,7 +1930,41 @@
     showToast(state.mode === 'cursor' ? 'Cursor mode' : 'Scroll mode');
   }
 
+  var walkAnimating = false;
+
+  function walkPath(unit, path, onDone) {
+    if (walkAnimating) return;
+    if (!path || path.length <= 1) { if (onDone) onDone(); return; }
+    walkAnimating = true;
+    var i = 1;
+    function step() {
+      if (i >= path.length || unit.hp <= 0 || unit.moves <= 0) {
+        walkAnimating = false;
+        if (unit.hp > 0) {
+          state.selected = { c: unit.c, r: unit.r };
+          state.cursor.c = unit.c;
+          state.cursor.r = unit.r;
+          ensureCursorVisible();
+        } else {
+          state.selected = null;
+        }
+        draw();
+        save();
+        if (onDone) onDone();
+        return;
+      }
+      var nx = path[i][0], ny = path[i][1];
+      moveUnit(unit, nx, ny);
+      i++;
+      // If we walked into / attacked something or ran out of moves, stop after this step
+      draw();
+      setTimeout(step, 110);
+    }
+    step();
+  }
+
   function activate() {
+    if (walkAnimating) return;
     var t = state.map[state.cursor.r][state.cursor.c];
 
     // -------- Selected unit flow --------
@@ -1756,53 +1973,47 @@
       var su = sel && sel.unit;
       if (su && su.civ === 'player') {
         var sameTile = state.selected.c === state.cursor.c && state.selected.r === state.cursor.r;
-        var dist = hexDist([su.c, su.r], [state.cursor.c, state.cursor.r]);
 
         if (sameTile) {
-          // Pinch on the selected unit's own tile -> open unit menu
           openActionMenu();
           return;
         }
-        if (dist === 1 && su.moves > 0) {
-          // Click-to-move: walk into adjacent tile (or attack)
-          var moved = moveUnit(su, state.cursor.c, state.cursor.r);
-          if (moved) {
-            if (!su.hp || su.hp <= 0) {
-              state.selected = null;
-            } else {
-              state.selected = { c: su.c, r: su.r };
-              state.cursor.c = su.c;
-              state.cursor.r = su.r;
-            }
+        if (su.moves > 0) {
+          // Try multi-tile path
+          var reach = computeReachable(su);
+          var key = state.cursor.c + ',' + state.cursor.r;
+          if (key in reach && reach[key].cost > 0) {
+            var path = pathTo(reach, state.cursor.c, state.cursor.r);
+            walkPath(su, path);
+            return;
           }
-          // If move failed (friendly unit / impassable), keep selection and cursor as-is
-          return;
         }
-        // Far tile or no moves: deselect and treat as new click
+        // Unreachable target — treat the pinch as a fresh activation
         state.selected = null;
       }
     }
 
     // -------- Fresh activation on the tile under cursor --------
     if (t.unit && t.unit.civ === 'player') {
-      // Instant select — no menu
       state.selected = { c: t.unit.c, r: t.unit.r };
-      showToast('Selected ' + UNITS[t.unit.type].name);
+      var u = t.unit;
+      var reach2 = computeReachable(u);
+      var maxC = 0;
+      for (var k in reach2) if (reach2[k].cost > maxC) maxC = reach2[k].cost;
+      showToast(UNITS[u.type].name + ' · ' + u.moves + ' moves');
       return;
     }
     if (t.city && t.city.civ === 'player') {
-      // Open city screen directly
       openCity(t.city);
       return;
     }
-    // Otherwise (empty/enemy tile): if all units have acted, end turn instantly
+    // Empty/enemy tile: if all units exhausted, end turn instantly
     var civ = state.civs.player;
     var hasMovesLeft = civ.units.some(function (u) { return u.moves > 0 && !u.fortified; });
     if (!hasMovesLeft && !state.victory) {
       endTurn();
       return;
     }
-    // Otherwise: open lightweight global menu
     openActionMenu();
   }
 
@@ -1832,17 +2043,14 @@
       }
       if (def.canImprove) {
         var canImp = ['grass','plains','hills'].indexOf(t.terrain) >= 0 && !t.improvement;
-        actions.push({ icon: '⛏', title: 'Build Improvement', sub: canImp ? (t.terrain === 'hills' ? 'Mine · +2 prod' : 'Farm · +1 food') : 'Not buildable here', disabled: !canImp, do: function () {
+        var impName = t.terrain === 'hills' ? 'Mine · +2 prod' : 'Farm · +1 food';
+        actions.push({ icon: '⛏', primary: true, title: canImp ? 'Build ' + (t.terrain === 'hills' ? 'Mine' : 'Farm') : 'Build Improvement', sub: canImp ? impName : (t.improvement ? 'Already improved' : 'Not buildable here'), disabled: !canImp, do: function () {
           t.improvement = t.terrain === 'hills' ? 'mine' : 'farm';
           u.moves = 0;
           showToast('Improvement built', 'success');
           closeModal();
           draw();
         } });
-      }
-      if (def.atk > 0) {
-        var enemyN = adjacentEnemy(u);
-        actions.push({ icon: '⚔', title: 'Attack Adjacent', sub: enemyN ? UNITS[enemyN.unit.type].name + ' (' + dirLabel(u, enemyN) + ')' : 'No enemy adjacent', disabled: !enemyN, do: function () { attack(u, enemyN.unit); closeModal(); draw(); } });
       }
       actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
       actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
