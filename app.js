@@ -6,7 +6,7 @@
   // =====================================================================
   var STORAGE_KEY = 'mdg_microciv_v1';
   var MAP_W = 14, MAP_H = 14;
-  var ZOOM_LEVELS = [22, 28, 36];       // hex radius in px
+  var ZOOM_LEVELS = [26, 44, 64];       // hex radius in px — far / normal / close
   var ZOOM_NAMES  = ['FAR', 'NORMAL', 'CLOSE'];
   var DEFAULT_ZOOM = 1;
   var SQRT3 = Math.sqrt(3);
@@ -649,10 +649,15 @@
   }
   function clampCamera() {
     var ws = worldSize();
-    if (ws.w < VIEW_W) state.camera.x = (ws.w - VIEW_W) / 2;
-    else state.camera.x = Math.max(0, Math.min(state.camera.x, ws.w - VIEW_W));
-    if (ws.h < VIEW_H) state.camera.y = (ws.h - VIEW_H) / 2;
-    else state.camera.y = Math.max(0, Math.min(state.camera.y, ws.h - VIEW_H));
+    // In scroll mode, allow the camera to drift a bit past the world edges so
+    // the player can always pan freely even when the map fits on screen at low zoom.
+    var pad = (state && state.mode === 'scroll') ? Math.max(180, VIEW_W * 0.5) : 0;
+    var minX = -pad, maxX = (ws.w - VIEW_W) + pad;
+    var minY = -pad, maxY = (ws.h - VIEW_H) + pad;
+    if (maxX < minX) { state.camera.x = (ws.w - VIEW_W) / 2; }
+    else state.camera.x = Math.max(minX, Math.min(state.camera.x, maxX));
+    if (maxY < minY) { state.camera.y = (ws.h - VIEW_H) / 2; }
+    else state.camera.y = Math.max(minY, Math.min(state.camera.y, maxY));
   }
   function centerCameraOn(c, r) {
     var size = ZOOM_LEVELS[state.zoom];
@@ -2871,6 +2876,10 @@
   function toggleMode() {
     state.mode = state.mode === 'cursor' ? 'scroll' : 'cursor';
     showToast(state.mode === 'cursor' ? 'Cursor mode' : 'Scroll mode');
+    // Re-clamp so any scroll-mode buffer drift collapses back when entering cursor mode,
+    // and ensure cursor stays in view after the switch.
+    clampCamera();
+    if (state.mode === 'cursor') ensureCursorVisible();
   }
 
   var walkAnimating = false;
