@@ -1194,7 +1194,13 @@
 
         // Tile fill
         if (!explored) {
-          // Unexplored — leave black (transparent on additive)
+          // Unexplored — paint a faint hex outline so the map shape is
+          // navigable even before you've scouted there. Cursor sits on
+          // top with its own glow.
+          hexPath(cx, cy, inset);
+          ctx.strokeStyle = 'rgba(80, 80, 110, 0.35)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
           continue;
         }
 
@@ -1878,11 +1884,16 @@
     }
 
     var ti = state.map[state.cursor.r][state.cursor.c];
-    var label = TERRAIN[ti.terrain].name;
-    if (ti.resource && RESOURCES[ti.resource]) label += ' · ' + RESOURCES[ti.resource].label;
-    if (ti.improvement) label += ' · ' + ti.improvement;
-    if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name;
-    if (ti.city) label += ' · ' + ti.city.name;
+    var label;
+    if (!ti.explored.player) {
+      label = 'Unexplored';
+    } else {
+      label = TERRAIN[ti.terrain].name;
+      if (ti.resource && RESOURCES[ti.resource]) label += ' · ' + RESOURCES[ti.resource].label;
+      if (ti.improvement) label += ' · ' + ti.improvement;
+      if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name;
+      if (ti.city) label += ' · ' + ti.city.name;
+    }
     document.getElementById('hud-tile').textContent = label;
 
     var chip = document.getElementById('end-turn-chip');
