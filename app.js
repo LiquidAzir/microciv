@@ -2675,8 +2675,10 @@
       label = 'Unexplored';
     } else {
       label = TERRAIN[ti.terrain].name;
+      if (ti.river) label += ' · River';
       if (ti.resource && RESOURCES[ti.resource]) label += ' · ' + RESOURCES[ti.resource].label;
       if (ti.improvement) label += ' · ' + ti.improvement;
+      if (ti.village) label += ' · Village';
       if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name;
       if (ti.city) label += ' · ' + ti.city.name;
     }
