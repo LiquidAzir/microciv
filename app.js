@@ -2481,6 +2481,61 @@
     return visited;
   }
 
+  // Ranged attack: find all enemy units within `ranged` hex distance
+  function computeRangedTargets(unit) {
+    var def = UNITS[unit.type];
+    if (!def.ranged || unit.moves <= 0) return [];
+    var range = def.ranged;
+    var targets = [];
+    for (var rr = Math.max(0, unit.r - range); rr <= Math.min(MAP_H - 1, unit.r + range); rr++) {
+      for (var cc = Math.max(0, unit.c - range); cc <= Math.min(MAP_W - 1, unit.c + range); cc++) {
+        if (cc === unit.c && rr === unit.r) continue;
+        if (hexDist([unit.c, unit.r], [cc, rr]) > range) continue;
+        var t = tileAt(cc, rr);
+        if (!t || !t.unit) continue;
+        if (t.unit.civ === unit.civ) continue;
+        targets.push({ c: cc, r: rr, unit: t.unit });
+      }
+    }
+    return targets;
+  }
+
+  function rangedAttack(attacker, defender) {
+    var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
+    if (aDef.atk === 0) { showToast('Cannot attack'); return false; }
+    var dTile = tileAt(defender.c, defender.r);
+    var terr = TERRAIN[dTile.terrain];
+    var dBonus = (terr.defBonus || 0);
+    if (defender.fortified) dBonus += 0.25;
+    if (dTile.city && dTile.city.civ === defender.civ) {
+      dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
+      if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
+    }
+    if (dTile.owner === defender.civ) dBonus += 0.10;
+    if (dBonus > 1.5) dBonus = 1.5;
+
+    var aPower = aDef.atk + atkTechBonus(attacker);
+    // Siege bonus: catapults halve city defense bonuses
+    if (aDef.siege && dTile.city) dBonus = dBonus * 0.5;
+    var dPower = dDef.def * (1 + dBonus);
+    var ratio = aPower / (aPower + dPower);
+
+    // Ranged: full damage to defender, NO counter-damage to attacker
+    var dmgToDef = Math.round(12 * ratio + rndInt(0, 3));
+
+    defender.hp -= dmgToDef;
+    attacker.moves = 0;
+
+    var msg = aDef.name + ' → ' + dmgToDef + ' dmg (ranged)';
+    showToast(msg, attacker.civ === 'player' ? 'success' : 'error');
+
+    if (defender.hp <= 0) {
+      killUnit(defender);
+      // Ranged attacker does NOT move into the vacated tile
+    }
+    return true;
+  }
+
   function pathTo(reachable, c, r) {
     var key = c + ',' + r;
     if (!(key in reachable)) return null;
@@ -2573,6 +2628,27 @@
         ctx.stroke();
       }
     }
+    // Ranged targets — highlight enemies within firing range but outside move range
+    var uDef = UNITS[unit.type];
+    if (uDef.ranged && unit.moves > 0 && alpha > 0.7) {
+      var targets = computeRangedTargets(unit);
+      for (var i = 0; i < targets.length; i++) {
+        var tk = targets[i].c + ',' + targets[i].r;
+        if (tk in visited) continue;  // already shown as melee target
+        var tp = pixelOf(targets[i].c, targets[i].r, size2);
+        var tx = tp.x - state.camera.x + size2 * SQRT3 / 2;
+        var ty = tp.y - state.camera.y + size2;
+        hexPath(tx, ty, inset);
+        ctx.fillStyle = 'rgba(255, 180, 60, 0.28)';
+        ctx.fill();
+        // Pulsing orange border for ranged targets
+        ctx.strokeStyle = 'rgba(255, 180, 60, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
   }
 
   // =====================================================================
@@ -2637,7 +2713,8 @@
     var readyToEnd = !hasMovesLeft && !state.victory;
 
     if (selUnit) {
-      hint.textContent = '⏎ move · esc next · ' + selUnit.moves + '/' + selUnit.maxMoves + ' mv';
+      var rangeHint = UNITS[selUnit.type] && UNITS[selUnit.type].ranged ? ' · rng ' + UNITS[selUnit.type].ranged : '';
+      hint.textContent = '⏎ move/fire · esc next · ' + selUnit.moves + '/' + selUnit.maxMoves + ' mv' + rangeHint;
     } else if (state.mode === 'scroll') {
       hint.textContent = 'arrows pan · ↑↓↑↓ cursor';
     } else if (readyToEnd) {
@@ -3340,6 +3417,9 @@
     }
     if (u.type === 'worker') { aiWander(u); return; }
 
+    // Ranged units: try to fire at visible targets before moving
+    if (aiTryRangedAttack(u)) return;
+
     // Military behavior: build up for ~12 turns then become aggressive
     var aggressive = state.turn >= 12;
     var homeCt = nearestFriendlyCity(u);
@@ -3371,10 +3451,32 @@
     }
     var target = findNearestEnemy(u);
     if (target) {
-      aiStepToward(u, target);
+      // Ranged units: step toward but stop at firing range instead of melee
+      if (UNITS[u.type].ranged) {
+        var d = hexDist([u.c, u.r], target);
+        if (d > UNITS[u.type].ranged) {
+          aiStepToward(u, target);
+          // After moving, try to ranged attack again
+          aiTryRangedAttack(u);
+        } else {
+          aiTryRangedAttack(u);
+        }
+      } else {
+        aiStepToward(u, target);
+      }
     } else {
       aiWander(u);
     }
+  }
+
+  // AI ranged units fire at the weakest enemy in range. Returns true if it fired.
+  function aiTryRangedAttack(u) {
+    var targets = computeRangedTargets(u);
+    if (targets.length === 0) return false;
+    // Prefer lowest HP target (finish them off)
+    targets.sort(function (a, b) { return a.unit.hp - b.unit.hp; });
+    rangedAttack(u, targets[0].unit);
+    return true;
   }
 
   function nearestFriendlyCity(u) {
@@ -3566,7 +3668,20 @@
           return;
         }
         if (su.moves > 0) {
-          // Try multi-tile path
+          // Ranged attack: if this is a ranged unit and cursor is on an enemy in range, fire
+          var suDef = UNITS[su.type];
+          if (suDef.ranged) {
+            var ct = tileAt(state.cursor.c, state.cursor.r);
+            if (ct && ct.unit && ct.unit.civ !== 'player' &&
+                hexDist([su.c, su.r], [state.cursor.c, state.cursor.r]) <= suDef.ranged) {
+              rangedAttack(su, ct.unit);
+              recomputeVisibility('player');
+              draw();
+              save();
+              return;
+            }
+          }
+          // Try multi-tile path (walk / melee)
           var reach = computeReachable(su);
           var key = state.cursor.c + ',' + state.cursor.r;
           if (key in reach && reach[key].cost > 0) {
@@ -3757,6 +3872,7 @@
       } else {
         var uDef = UNITS[k];
         var uParts = [uDef.atk + '⚔ ' + uDef.def + '🛡 ' + uDef.hp + '♥ ' + uDef.move + '→'];
+        if (uDef.ranged) uParts.push('range ' + uDef.ranged);
         if (uDef.siege) uParts.push('siege');
         sub = uParts.join(' · ') + ' · ' + u.cost + ' prod';
       }
