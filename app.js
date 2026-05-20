@@ -13,15 +13,16 @@
   var VIEW_W = 600, VIEW_H = 540;
 
   var TERRAIN = {
-    grass:    { name: 'Grass',    food: 2, prod: 0, gold: 0, color: '#0a1a10', edge: '#13361f', glyph: '',  fg: '#3c8a52' },
-    plains:   { name: 'Plains',   food: 1, prod: 1, gold: 0, color: '#1a1808', edge: '#3a3414', glyph: '',  fg: '#a08648' },
-    forest:   { name: 'Forest',   food: 1, prod: 2, gold: 0, color: '#06150c', edge: '#0e3018', glyph: '♣', fg: '#2f7a3f' },
-    hills:    { name: 'Hills',    food: 1, prod: 2, gold: 0, defBonus: 0.5, color: '#15120a', edge: '#3a2e16', glyph: '▴', fg: '#c0a060' },
-    mountain: { name: 'Mountain', food: 0, prod: 0, gold: 0, impassable: true, color: '#100c12', edge: '#3a2e3e', glyph: '▲', fg: '#c2a8d0' },
-    desert:   { name: 'Desert',   food: 0, prod: 1, gold: 1, color: '#241c08', edge: '#5c451a', glyph: '·', fg: '#d4a04e' },
-    water:    { name: 'Sea',      food: 1, prod: 0, gold: 1, impassable: true, color: '#03101a', edge: '#0e2e4a', glyph: '~', fg: '#3a92d0' },
+    grass:    { name: 'Grass',    food: 2, prod: 0, gold: 0, color: '#1f4a2a', edge: '#3c8a52', glyph: '',  fg: '#5cb070' },
+    plains:   { name: 'Plains',   food: 1, prod: 1, gold: 0, color: '#4a3e1a', edge: '#a08648', glyph: '',  fg: '#d4b878' },
+    forest:   { name: 'Forest',   food: 1, prod: 2, gold: 0, color: '#143a1c', edge: '#2a6638', glyph: '♣', fg: '#4ca860' },
+    hills:    { name: 'Hills',    food: 1, prod: 2, gold: 0, defBonus: 0.5, color: '#4a3618', edge: '#a07840', glyph: '▴', fg: '#d4a060' },
+    mountain: { name: 'Mountain', food: 0, prod: 0, gold: 0, impassable: true, color: '#2c2832', edge: '#6c5878', glyph: '▲', fg: '#c2a8d0' },
+    desert:   { name: 'Desert',   food: 0, prod: 1, gold: 1, color: '#6a5418', edge: '#c89858', glyph: '·', fg: '#e8c878' },
+    tundra:   { name: 'Tundra',   food: 0, prod: 1, gold: 0, color: '#2e3c44', edge: '#7088a0', glyph: '',  fg: '#b8d4dc' },
+    water:    { name: 'Sea',      food: 1, prod: 0, gold: 1, impassable: true, color: '#0a2848', edge: '#3060a0', glyph: '~', fg: '#5a92d0' },
     volcano:  { name: 'Volcano',  food: 0, prod: 1, gold: 0, impassable: true, wonder: true, color: '#1a0a08', edge: '#5a1810', glyph: '',  fg: '#ff6a3a' },
-    geyser:   { name: 'Geyser',   food: 2, prod: 0, gold: 1, wonder: true, color: '#082030', edge: '#1a5c7a', glyph: '',  fg: '#7ce5ff' }
+    geyser:   { name: 'Geyser',   food: 2, prod: 0, gold: 1, wonder: true, color: '#0a2c3c', edge: '#3080a0', glyph: '',  fg: '#7ce5ff' }
   };
 
   var RESOURCES = {
@@ -225,17 +226,28 @@
       map.push(row);
     }
 
-    // Base terrain noise
+    // Base terrain noise with climate bands.
+    // Latitude is r normalized to 0..1 where 0=north (cold), 1=south (hot).
     for (var r = 0; r < MAP_H; r++) {
+      var lat = r / (MAP_H - 1);
+      var cold = Math.max(0, 1 - lat * 2.2);        // strong near top
+      var hot  = Math.max(0, (lat - 0.55) * 2.2);   // strong near bottom
       for (var c = 0; c < MAP_W; c++) {
         var t = map[r][c];
         var roll = rnd();
-        if (roll < 0.40) t.terrain = 'grass';
-        else if (roll < 0.65) t.terrain = 'plains';
-        else if (roll < 0.78) t.terrain = 'forest';
-        else if (roll < 0.86) t.terrain = 'hills';
-        else if (roll < 0.92) t.terrain = 'desert';
-        else if (roll < 0.97) t.terrain = 'mountain';
+        // Cold band: tundra dominant near top
+        if (cold > 0.5 && roll < 0.55) { t.terrain = 'tundra'; continue; }
+        if (cold > 0.2 && roll < 0.25) { t.terrain = 'tundra'; continue; }
+        // Hot band: desert dominant near bottom
+        if (hot > 0.5 && roll < 0.55) { t.terrain = 'desert'; continue; }
+        if (hot > 0.2 && roll < 0.30) { t.terrain = 'desert'; continue; }
+        // Temperate
+        if (roll < 0.34) t.terrain = 'grass';
+        else if (roll < 0.58) t.terrain = 'plains';
+        else if (roll < 0.74) t.terrain = 'forest';
+        else if (roll < 0.85) t.terrain = 'hills';
+        else if (roll < 0.91) t.terrain = 'desert';
+        else if (roll < 0.96) t.terrain = 'mountain';
         else t.terrain = 'water';
       }
     }
@@ -726,6 +738,42 @@
       }
       peak(-size*0.25, size*0.30, size*0.30, size*0.55, '#251820', '#4a2e3e', '#e0d0e0');
       peak(size*0.18, size*0.35, size*0.35, size*0.42, '#1a1014', '#3a242e', '#c0b0c0');
+    } else if (terrain === 'tundra') {
+      // Sparse snow patches and tiny stunted pines
+      var rng2 = tileRng(c, r);
+      // base ice sheen — a few pale patches
+      for (var i = 0; i < 4; i++) {
+        var sx = (rng2() - 0.5) * size * 1.1;
+        var sy = (rng2() - 0.5) * size * 0.9;
+        var ss = size * (0.12 + rng2() * 0.10);
+        ctx.fillStyle = 'rgba(220, 232, 240, 0.55)';
+        ctx.beginPath();
+        ctx.ellipse(cx + sx, cy + sy, ss, ss * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+        ctx.beginPath();
+        ctx.ellipse(cx + sx - 1, cy + sy - 1, ss * 0.5, ss * 0.18, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // a couple of stunted dark conifers
+      var trees = 1 + Math.floor(rng2() * 2);
+      for (var i = 0; i < trees; i++) {
+        var tx = (rng2() - 0.5) * size * 0.8;
+        var ty = (rng2() - 0.5) * size * 0.7;
+        var th = size * 0.18;
+        ctx.fillStyle = '#0a1a14';
+        ctx.beginPath();
+        ctx.moveTo(cx + tx - 2, cy + ty + th);
+        ctx.lineTo(cx + tx, cy + ty - th);
+        ctx.lineTo(cx + tx + 2, cy + ty + th);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#1c3a2a';
+        ctx.fillRect(cx + tx - 1, cy + ty - 1, 2, th + 1);
+        // snow cap
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(cx + tx - 1, cy + ty - th + 1, 2, 1);
+      }
     } else if (terrain === 'desert') {
       // dunes
       ctx.fillStyle = '#5c451a';
