@@ -37,12 +37,14 @@
   };
 
   var UNITS = {
-    settler:  { name: 'Settler',  cost: 30, hp: 8,  atk: 0, def: 1, move: 2, glyph: '☗', tech: null,        civilian: true, canFound: true },
-    worker:   { name: 'Worker',   cost: 20, hp: 8,  atk: 0, def: 1, move: 2, glyph: '⚒', tech: null,        civilian: true, canImprove: true },
-    warrior:  { name: 'Warrior',  cost: 15, hp: 14, atk: 4, def: 3, move: 2, glyph: '⚔', tech: null },
-    archer:   { name: 'Archer',   cost: 25, hp: 10, atk: 5, def: 2, move: 2, glyph: '➹', tech: 'archery',   ranged: 2 },
-    horseman: { name: 'Horseman', cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' },
-    raider:   { name: 'Raider',   cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,        barb: true }
+    settler:   { name: 'Settler',   cost: 30, hp: 8,  atk: 0, def: 1, move: 2, glyph: '☗', tech: null,          civilian: true, canFound: true },
+    worker:    { name: 'Worker',    cost: 20, hp: 8,  atk: 0, def: 1, move: 2, glyph: '⚒', tech: null,          civilian: true, canImprove: true },
+    warrior:   { name: 'Warrior',   cost: 15, hp: 14, atk: 4, def: 3, move: 2, glyph: '⚔', tech: null },
+    archer:    { name: 'Archer',    cost: 25, hp: 10, atk: 5, def: 2, move: 2, glyph: '➹', tech: 'archery',     ranged: 2 },
+    horseman:  { name: 'Horseman',  cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' },
+    swordsman: { name: 'Swordsman', cost: 45, hp: 18, atk: 8, def: 5, move: 2, glyph: '⚔', tech: 'steel' },
+    catapult:  { name: 'Catapult',  cost: 40, hp: 8,  atk: 7, def: 1, move: 2, glyph: '⊕', tech: 'engineering', ranged: 2, siege: true },
+    raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true }
   };
 
   // Worker-built tile improvements. Each one has a context check and a yield.
@@ -104,9 +106,11 @@
   }
 
   var BUILDINGS = {
-    granary: { name: 'Granary', cost: 30, food: 2, tech: 'pottery'  },
-    walls:   { name: 'Walls',   cost: 40, def: 4,  tech: 'masonry'  },
-    market:  { name: 'Market',  cost: 50, gold: 3, tech: 'currency' },
+    granary:  { name: 'Granary',   cost: 30, food: 2, tech: 'pottery'  },
+    walls:    { name: 'Walls',     cost: 40, def: 4,  tech: 'masonry'  },
+    market:   { name: 'Market',    cost: 50, gold: 3, tech: 'currency' },
+    aqueduct: { name: 'Aqueduct',  cost: 45, food: 3, tech: 'engineering' },
+    temple:   { name: 'Temple',    cost: 40, sci: 3,  tech: 'theology' },
     // World Wonders — each unique per game, first civ to finish locks it out
     hanging_gardens:  { name: 'Hanging Gardens',  cost:  90, tech: 'pottery',   wonder: true, perCityFood: 2,
                         lore: '+2 food in every city you own' },
@@ -121,14 +125,32 @@
   };
 
   var TECHS = {
-    pottery:   { name: 'Pottery',     cost:  20, req: [],                       unlocks: 'Granary' },
-    archery:   { name: 'Archery',     cost:  30, req: [],                       unlocks: 'Archer' },
-    masonry:   { name: 'Masonry',     cost:  35, req: ['pottery'],              unlocks: 'Walls' },
-    husbandry: { name: 'Husbandry',   cost:  40, req: ['archery'],              unlocks: 'Horseman' },
-    currency:  { name: 'Currency',    cost:  55, req: ['masonry'],              unlocks: 'Market' },
-    iron:      { name: 'Metalworking',cost:  70, req: ['husbandry','currency'], unlocks: '+2 atk to Warriors' }
+    pottery:     { name: 'Pottery',      cost:  20, req: [],                       unlocks: 'Granary' },
+    archery:     { name: 'Archery',      cost:  30, req: [],                       unlocks: 'Archer' },
+    masonry:     { name: 'Masonry',      cost:  35, req: ['pottery'],              unlocks: 'Walls' },
+    husbandry:   { name: 'Husbandry',    cost:  40, req: ['archery'],              unlocks: 'Horseman' },
+    currency:    { name: 'Currency',     cost:  55, req: ['masonry'],              unlocks: 'Market' },
+    iron:        { name: 'Metalworking', cost:  70, req: ['husbandry','currency'], unlocks: '+2 atk Warriors' },
+    engineering: { name: 'Engineering',  cost:  60, req: ['masonry','archery'],    unlocks: 'Catapult, Aqueduct' },
+    theology:    { name: 'Theology',     cost:  75, req: ['currency','pottery'],   unlocks: 'Temple' },
+    steel:       { name: 'Steel',        cost:  90, req: ['iron'],                 unlocks: 'Swordsman' }
   };
-  var TECH_ORDER = ['pottery','archery','masonry','husbandry','currency','iron'];
+  var TECH_ORDER = ['pottery','archery','masonry','husbandry','currency','iron','engineering','theology','steel'];
+
+  // Age thresholds — purely cosmetic + small gold bonus on advancement
+  var AGES = [
+    { name: 'Ancient',   minTechs: 0 },
+    { name: 'Classical', minTechs: 4 },
+    { name: 'Medieval',  minTechs: 7 }
+  ];
+  function getAge(civ) {
+    var count = 0;
+    for (var i = 0; i < TECH_ORDER.length; i++) if (civ.techs[TECH_ORDER[i]]) count++;
+    for (var a = AGES.length - 1; a >= 0; a--) {
+      if (count >= AGES[a].minTechs) return AGES[a];
+    }
+    return AGES[0];
+  }
 
   // Selectable factions. Each gives ONE small bonus.
   var FACTIONS = {
@@ -2100,6 +2122,90 @@
     p(12,7,1,1, c.K);
   }
 
+  function drawSwordsman(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Heavy helm (wider than warrior)
+    p(4,0,6,1, c.K);
+    p(3,1,8,1, c.K);
+    p(4,1,6,1, c.M);
+    p(5,0,4,1, c.m);                    // crest
+    // Face visor
+    p(4,2,6,1, c.K);
+    p(5,2,4,1, c.m);
+    p(5,3,4,1, c.S);
+    p(6,3,1,1, c.K); p(8,3,1,1, c.K);  // eyes
+    // Gorget
+    p(4,4,6,1, c.M);
+    // Shoulders / armor
+    p(3,5,8,1, c.K);
+    p(2,5,1,1, c.K); p(11,5,1,1, c.K);
+    p(3,6,8,1, c.M);
+    p(3,6,1,1, c.m); p(10,6,1,1, c.m);
+    // Chestplate
+    p(4,7,6,3, c.C);
+    p(4,7,6,1, c.D);
+    p(7,8,1,2, c.L);                    // highlight
+    p(3,7,1,3, c.K); p(10,7,1,3, c.K);
+    // Belt
+    p(4,10,6,1, c.B);
+    p(6,10,2,1, c.Y);                   // buckle
+    // Sword (right side — long blade)
+    p(12,1,1,1, c.W);                   // pommel
+    p(12,2,1,1, c.M); p(11,2,1,1, c.M); // cross-guard
+    p(12,3,1,7, c.M);                   // blade
+    p(12,3,1,1, c.W);                   // shine
+    p(12,10,1,1, c.m);                  // tip
+    // Shield (left side)
+    p(1,5,1,4, c.K);
+    p(0,6,1,3, c.K);
+    p(1,6,1,2, c.C);
+    p(1,8,1,1, c.D);
+    p(0,7,1,1, c.L);
+    // Legs
+    p(5,11,1,3, c.K); p(8,11,1,3, c.K);
+    p(6,11,2,3, c.M);                   // armored legs
+    p(5,13,1,1, c.K); p(8,13,1,1, c.K);
+  }
+
+  function drawCatapult(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Base frame (wooden cart)
+    p(1,10,12,2, c.B);
+    p(1,10,12,1, c.K);
+    p(1,12,12,1, c.K);
+    p(2,11,10,1, c.O);                  // wood planks
+    // Wheels
+    p(2,12,2,2, c.K);
+    p(3,13,1,1, c.B);
+    p(10,12,2,2, c.K);
+    p(11,13,1,1, c.B);
+    // Arm (upright throwing position)
+    p(7,3,1,7, c.O);                    // main arm
+    p(6,3,3,1, c.K);                    // top crossbar
+    p(7,2,1,1, c.K);                    // apex
+    // Sling / bucket at top
+    p(4,2,2,1, c.B);
+    p(3,1,2,1, c.K);                    // payload
+    p(3,1,1,1, c.m);                    // stone
+    p(4,1,1,1, c.M);
+    // Rope/string
+    p(6,4,1,1, c.B);
+    p(5,5,1,1, c.B);
+    // Torsion bundle at base
+    p(5,9,4,1, c.B);
+    p(5,9,4,1, c.K);
+    p(6,8,2,1, c.O);
+    // Crew figure (small, beside it)
+    p(11,6,2,1, c.S);                   // head
+    p(11,7,2,2, c.C);                   // body
+    p(11,9,2,1, c.K);
+    p(11,6,2,1, c.D);                   // shadow
+  }
+
   function drawCitySprite(cx, cy, size, city) {
     var civ = CIVS[city.civ];
     shadowBlob(cx, cy, size * 1.1);
@@ -2165,12 +2271,14 @@
   }
 
   var UNIT_DRAW = {
-    settler:  drawSettler,
-    worker:   drawWorker,
-    warrior:  drawWarrior,
-    archer:   drawArcher,
-    horseman: drawHorseman,
-    raider:   drawWarrior   // reuses warrior sprite; civ color makes it grey
+    settler:   drawSettler,
+    worker:    drawWorker,
+    warrior:   drawWarrior,
+    archer:    drawArcher,
+    horseman:  drawHorseman,
+    swordsman: drawSwordsman,
+    catapult:  drawCatapult,
+    raider:    drawWarrior   // reuses warrior sprite; civ color makes it grey
   };
 
   function drawCity(cx, cy, size, city) {
@@ -2434,6 +2542,17 @@
       ? TECHS[civ.currentTech].name
       : 'No research';
 
+    // Age indicator
+    var age = getAge(civ);
+    var ageEl = document.getElementById('hud-age');
+    if (ageEl) {
+      ageEl.textContent = age.name.toUpperCase();
+      var cell = ageEl.parentElement;
+      cell.classList.remove('classical', 'medieval');
+      if (age.name === 'Classical') cell.classList.add('classical');
+      if (age.name === 'Medieval') cell.classList.add('medieval');
+    }
+
     // CIV chip (top HUD)
     var civName = document.getElementById('hud-civ-name');
     var civCell = document.getElementById('hud-civ');
@@ -2560,13 +2679,16 @@
 
     // building bonuses
     if (city.buildings.granary) food += BUILDINGS.granary.food;
+    if (city.buildings.aqueduct) food += BUILDINGS.aqueduct.food;
     if (city.buildings.market) gold += BUILDINGS.market.gold;
 
     return { food: food, prod: prod, gold: gold };
   }
 
   function cityScience(city) {
-    return 1 + Math.floor(city.pop / 2);
+    var sci = 1 + Math.floor(city.pop / 2);
+    if (city.buildings && city.buildings.temple) sci += 3;
+    return sci;
   }
 
   function recomputeIncome(civId) {
@@ -2694,6 +2816,8 @@
     if (dBonus > 1.5) dBonus = 1.5;
 
     var aPower = aDef.atk + atkTechBonus(attacker);
+    // Siege bonus: catapults halve city defense bonuses
+    if (aDef.siege && dTile.city) dBonus = dBonus * 0.5;
     var dPower = dDef.def * (1 + dBonus);
     var ratio = aPower / (aPower + dPower);
 
@@ -2885,8 +3009,10 @@
       // Sometimes build a regular building if available and not yet built
       var regBldgs = available.filter(function (k) { return BUILDINGS[k] && !BUILDINGS[k].wonder && !city.buildings[k]; });
       if (regBldgs.length && rnd() < 0.20) return regBldgs[Math.floor(rnd() * regBldgs.length)];
+      if (available.indexOf('swordsman') >= 0) return 'swordsman';
       if (available.indexOf('horseman') >= 0) return 'horseman';
       if (available.indexOf('archer') >= 0) return 'archer';
+      if (available.indexOf('catapult') >= 0 && rnd() < 0.3) return 'catapult';
       return 'warrior';
     }
     return city.producing;
@@ -2918,10 +3044,21 @@
     civ.techProgress += civ.sciPerTurn;
     var def = TECHS[civ.currentTech];
     if (civ.techProgress >= def.cost) {
+      var ageBefore = getAge(civ);
       civ.techs[civ.currentTech] = true;
       civ.techProgress = 0;
       if (civ.id === 'player') logEvent('Researched ' + def.name, 'success');
       civ.currentTech = null;
+      // Check for age advancement
+      var ageAfter = getAge(civ);
+      if (ageAfter.name !== ageBefore.name) {
+        var ageGold = ageAfter.minTechs >= 7 ? 40 : 20;
+        civ.gold += ageGold;
+        if (civ.id === 'player') {
+          logEvent('Entered the ' + ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
+          showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
+        }
+      }
       // Every AI picks its next tech automatically; player picks from the menu.
       if (AI_SIDES.indexOf(civ.id) >= 0) civ.currentTech = pickAiTech(civ);
       // Check science victory
@@ -3553,8 +3690,23 @@
       var isB = !!BUILDINGS[k];
       var isWonder = isB && BUILDINGS[k].wonder;
       var iconChar = isWonder ? '✦' : (isB ? '▢' : UNITS[k].glyph);
-      var sub = isWonder ? (BUILDINGS[k].lore + ' · ' + u.cost + ' prod')
-                         : ((isB ? 'Building' : 'Unit') + ' · ' + u.cost + ' prod');
+      var sub;
+      if (isWonder) {
+        sub = BUILDINGS[k].lore + ' · ' + u.cost + ' prod';
+      } else if (isB) {
+        var parts = [];
+        if (BUILDINGS[k].food) parts.push('+' + BUILDINGS[k].food + ' food');
+        if (BUILDINGS[k].gold) parts.push('+' + BUILDINGS[k].gold + ' gold');
+        if (BUILDINGS[k].sci)  parts.push('+' + BUILDINGS[k].sci + ' sci');
+        if (BUILDINGS[k].def)  parts.push('+' + BUILDINGS[k].def + ' def');
+        sub = (parts.length ? parts.join(', ') : 'Building') + ' · ' + u.cost + ' prod';
+      } else {
+        var uDef = UNITS[k];
+        var uParts = [uDef.atk + '⚔ ' + uDef.def + '🛡 ' + uDef.move + '→'];
+        if (uDef.ranged) uParts.push('range ' + uDef.ranged);
+        if (uDef.siege) uParts.push('siege');
+        sub = uParts.join(' · ') + ' · ' + u.cost + ' prod';
+      }
       var row = document.createElement('button');
       row.className = 'action-row focusable' + (isWonder ? ' primary' : '');
       row.innerHTML = '<div class="action-icon">' + iconChar + '</div>' +
@@ -3589,7 +3741,20 @@
 
     var list = document.getElementById('tech-list');
     list.innerHTML = '';
+    // Techs grouped by age for section headers
+    var TECH_AGES = { pottery:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, steel:2 };
+    var AGE_LABELS = ['Ancient Age', 'Classical Age', 'Medieval Age'];
+    var lastAge = -1;
     TECH_ORDER.forEach(function (k) {
+      // Insert era header when crossing into a new age
+      var ta = TECH_AGES[k] || 0;
+      if (ta !== lastAge) {
+        lastAge = ta;
+        var hdr = document.createElement('div');
+        hdr.className = 'tech-age-header';
+        hdr.textContent = AGE_LABELS[ta];
+        list.appendChild(hdr);
+      }
       var def = TECHS[k];
       var done = !!civ.techs[k];
       var canResearch = def.req.every(function (r) { return civ.techs[r]; }) && !done;
