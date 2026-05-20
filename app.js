@@ -19,7 +19,20 @@
     hills:    { name: 'Hills',    food: 1, prod: 2, gold: 0, defBonus: 0.5, color: '#15120a', edge: '#3a2e16', glyph: '▴', fg: '#c0a060' },
     mountain: { name: 'Mountain', food: 0, prod: 0, gold: 0, impassable: true, color: '#100c12', edge: '#3a2e3e', glyph: '▲', fg: '#c2a8d0' },
     desert:   { name: 'Desert',   food: 0, prod: 1, gold: 1, color: '#241c08', edge: '#5c451a', glyph: '·', fg: '#d4a04e' },
-    water:    { name: 'Sea',      food: 1, prod: 0, gold: 1, impassable: true, color: '#03101a', edge: '#0e2e4a', glyph: '~', fg: '#3a92d0' }
+    water:    { name: 'Sea',      food: 1, prod: 0, gold: 1, impassable: true, color: '#03101a', edge: '#0e2e4a', glyph: '~', fg: '#3a92d0' },
+    volcano:  { name: 'Volcano',  food: 0, prod: 1, gold: 0, impassable: true, wonder: true, color: '#1a0a08', edge: '#5a1810', glyph: '',  fg: '#ff6a3a' },
+    geyser:   { name: 'Geyser',   food: 2, prod: 0, gold: 1, wonder: true, color: '#082030', edge: '#1a5c7a', glyph: '',  fg: '#7ce5ff' }
+  };
+
+  var RESOURCES = {
+    wheat:  { label: 'Wheat',  terrains: ['grass'],            yield: { food: 2 }, accent: '#ffd34d', dark: '#7a4f10' },
+    cattle: { label: 'Cattle', terrains: ['plains','grass'],   yield: { food: 1, prod: 1 }, accent: '#c08a55', dark: '#3a2410' },
+    fish:   { label: 'Fish',   terrains: ['water'],            yield: { food: 2, gold: 1 }, accent: '#5ad4e6', dark: '#1a4a5a' },
+    iron:   { label: 'Iron',   terrains: ['hills'],            yield: { prod: 2 }, accent: '#c8c8d4', dark: '#3a3a48' },
+    copper: { label: 'Copper', terrains: ['hills'],            yield: { prod: 1, gold: 1 }, accent: '#e08c4a', dark: '#5a2810' },
+    gold:   { label: 'Gold',   terrains: ['hills','desert'],   yield: { gold: 3 }, accent: '#ffd700', dark: '#7a5a00' },
+    gems:   { label: 'Gems',   terrains: ['hills'],            yield: { gold: 3 }, accent: '#b388ff', dark: '#3a1a5a' },
+    horses: { label: 'Horses', terrains: ['plains'],           yield: { food: 1, prod: 1 }, accent: '#d8a87a', dark: '#3a2010' }
   };
 
   var UNITS = {
@@ -227,22 +240,23 @@
       }
     }
 
-    // Smooth a pass — group like terrain
-    for (var pass = 0; pass < 2; pass++) {
-      var copy = JSON.parse(JSON.stringify(map));
-      for (var r = 0; r < MAP_H; r++) {
-        for (var c = 0; c < MAP_W; c++) {
-          var counts = {};
-          var ns = neighbors(c, r);
-          counts[copy[r][c].terrain] = 1;
-          for (var i = 0; i < ns.length; i++) {
-            var tt = copy[ns[i][1]][ns[i][0]].terrain;
-            counts[tt] = (counts[tt] || 0) + 1;
-          }
-          var best = copy[r][c].terrain, bestN = 0;
-          for (var k in counts) if (counts[k] > bestN) { best = k; bestN = counts[k]; }
-          map[r][c].terrain = best;
+    // Light smoothing — one pass only, and keep the original terrain unless
+    // a neighbor type clearly outnumbers it (>=3) so variety survives.
+    var copy = JSON.parse(JSON.stringify(map));
+    for (var r = 0; r < MAP_H; r++) {
+      for (var c = 0; c < MAP_W; c++) {
+        var counts = {};
+        var ns = neighbors(c, r);
+        for (var i = 0; i < ns.length; i++) {
+          var tt = copy[ns[i][1]][ns[i][0]].terrain;
+          counts[tt] = (counts[tt] || 0) + 1;
         }
+        var here = copy[r][c].terrain;
+        var best = here, bestN = (counts[here] || 0) + 1;
+        for (var k in counts) {
+          if (counts[k] > bestN && k !== here) { best = k; bestN = counts[k]; }
+        }
+        if (bestN >= 4) map[r][c].terrain = best;
       }
     }
 
@@ -255,17 +269,53 @@
       }
     }
 
-    // Sprinkle resources on grass/plains/hills
+    // Sprinkle resources across the map based on terrain compatibility
+    var resourceList = Object.keys(RESOURCES);
     for (var r = 0; r < MAP_H; r++) {
       for (var c = 0; c < MAP_W; c++) {
         var t = map[r][c];
-        if (t.terrain === 'grass' && rnd() < 0.08) t.resource = 'wheat';
-        else if (t.terrain === 'plains' && rnd() < 0.06) t.resource = 'horses';
-        else if (t.terrain === 'hills' && rnd() < 0.18) t.resource = 'iron';
+        if (t.resource) continue;
+        var candidates = resourceList.filter(function (k) {
+          return RESOURCES[k].terrains.indexOf(t.terrain) >= 0;
+        });
+        if (!candidates.length) continue;
+        // Per-terrain density: bias for richer biomes
+        var density = {
+          grass:   0.13, plains:  0.13, forest:  0.05,
+          hills:   0.30, mountain:0.00, desert:  0.10,
+          water:   0.10
+        }[t.terrain] || 0;
+        if (rnd() < density) {
+          t.resource = candidates[Math.floor(rnd() * candidates.length)];
+        }
       }
     }
 
+    // Place one Volcano and one Geyser in random valid interior spots
+    placeWonder(map, 'volcano', ['mountain','hills','plains']);
+    placeWonder(map, 'geyser',  ['grass','plains','forest']);
+
     return map;
+  }
+
+  function placeWonder(map, kind, prefer) {
+    for (var tries = 0; tries < 200; tries++) {
+      var c = rndInt(2, MAP_W - 3);
+      var r = rndInt(2, MAP_H - 3);
+      var t = map[r][c];
+      if (prefer.indexOf(t.terrain) < 0) continue;
+      // ensure no other wonder nearby
+      var ok = true;
+      for (var rr = Math.max(0, r-2); rr <= Math.min(MAP_H-1, r+2) && ok; rr++) {
+        for (var cc = Math.max(0, c-2); cc <= Math.min(MAP_W-1, c+2) && ok; cc++) {
+          if (TERRAIN[map[rr][cc].terrain].wonder) ok = false;
+        }
+      }
+      if (!ok) continue;
+      t.terrain = kind;
+      t.resource = null;
+      return;
+    }
   }
 
   function pickStart(map, awayFrom) {
@@ -692,6 +742,88 @@
         var y = (rng() - 0.5) * size * 0.9;
         dot(x, y, px*0.6, px*0.6, '#7a5d1c');
       }
+    } else if (terrain === 'volcano') {
+      // Large dark cone with glowing crater and smoke wisp
+      var cw = size * 0.85, ch = size * 0.95;
+      ctx.fillStyle = '#0a0608';
+      ctx.beginPath();
+      ctx.moveTo(cx - cw/2, cy + ch/2);
+      ctx.lineTo(cx, cy - ch/2 + size*0.05);
+      ctx.lineTo(cx + cw/2, cy + ch/2);
+      ctx.closePath();
+      ctx.fill();
+      // mid slope
+      ctx.fillStyle = '#3a1c1a';
+      ctx.beginPath();
+      ctx.moveTo(cx - cw/2 + px, cy + ch/2 - px);
+      ctx.lineTo(cx, cy - ch/2 + size*0.10);
+      ctx.lineTo(cx + cw/2 - px, cy + ch/2 - px);
+      ctx.closePath();
+      ctx.fill();
+      // lava streams
+      ctx.fillStyle = '#ff6a3a';
+      ctx.fillRect(cx - px*0.5, cy - size*0.32, px, size*0.35);
+      ctx.fillStyle = '#ffb04a';
+      ctx.fillRect(cx - px*0.3, cy - size*0.30, px*0.6, size*0.30);
+      // crater
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy - size*0.35, size*0.18, size*0.06, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#ff4a1a';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy - size*0.36, size*0.12, size*0.04, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#fff8a0';
+      ctx.beginPath();
+      ctx.ellipse(cx - size*0.02, cy - size*0.37, size*0.04, size*0.02, 0, 0, Math.PI*2);
+      ctx.fill();
+      // smoke
+      ctx.fillStyle = 'rgba(180,180,180,0.5)';
+      ctx.beginPath();
+      ctx.arc(cx - size*0.05, cy - size*0.50, size*0.07, 0, Math.PI*2);
+      ctx.arc(cx + size*0.06, cy - size*0.56, size*0.06, 0, Math.PI*2);
+      ctx.arc(cx - size*0.02, cy - size*0.62, size*0.05, 0, Math.PI*2);
+      ctx.fill();
+    } else if (terrain === 'geyser') {
+      // Grass base with vertical water/steam plume
+      ctx.fillStyle = '#0a1f12';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + size*0.30, size*0.45, size*0.12, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#1c5530';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + size*0.32, size*0.40, size*0.09, 0, 0, Math.PI*2);
+      ctx.fill();
+      // dark pool around base
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + size*0.15, size*0.20, size*0.07, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#1a5c7a';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + size*0.14, size*0.17, size*0.05, 0, 0, Math.PI*2);
+      ctx.fill();
+      // vertical jet (tapered cyan column)
+      ctx.fillStyle = '#7ce5ff';
+      ctx.fillRect(cx - size*0.06, cy - size*0.45, size*0.12, size*0.55);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(cx - size*0.03, cy - size*0.42, size*0.06, size*0.55);
+      // top spray (clouds)
+      ctx.fillStyle = 'rgba(180,224,255,0.65)';
+      ctx.beginPath();
+      ctx.arc(cx, cy - size*0.55, size*0.10, 0, Math.PI*2);
+      ctx.arc(cx - size*0.10, cy - size*0.50, size*0.07, 0, Math.PI*2);
+      ctx.arc(cx + size*0.11, cy - size*0.50, size*0.07, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy - size*0.56, size*0.05, 0, Math.PI*2);
+      ctx.fill();
+      // droplets
+      ctx.fillStyle = '#7ce5ff';
+      ctx.fillRect(cx - size*0.20, cy - size*0.25, px*0.6, px*0.6);
+      ctx.fillRect(cx + size*0.18, cy - size*0.20, px*0.6, px*0.6);
     } else if (terrain === 'water') {
       // wave lines
       ctx.strokeStyle = '#1c4a7a';
@@ -709,32 +841,166 @@
   }
 
   function drawResourceMarker(cx, cy, size, kind) {
-    var x = cx + size * 0.45;
-    var y = cy - size * 0.50;
-    var s = size * 0.16;
-    // pill background
-    ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.arc(x, y, s + 2, 0, Math.PI * 2);
-    ctx.fill();
-    if (kind === 'wheat') {
-      ctx.fillStyle = '#ffd34d';
-      ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#7a4f10';
-      for (var i = 0; i < 4; i++) {
-        ctx.fillRect(x - 1 + (i - 1.5) * 1.5, y - s + 2, 1, s + 2);
-      }
-    } else if (kind === 'iron') {
-      ctx.fillStyle = '#b8b8c2';
-      ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#5a5a66';
-      ctx.fillRect(x - s*0.5, y - s*0.2, s, s*0.4);
-    } else if (kind === 'horses') {
-      ctx.fillStyle = '#c08858';
-      ctx.beginPath(); ctx.arc(x, y, s, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#3a2410';
-      ctx.fillRect(x - s*0.6, y - s*0.1, s*1.2, s*0.25);
+    var res = RESOURCES[kind];
+    if (!res) return;
+    // Big icon centered slightly toward top of tile
+    var x = cx;
+    var y = cy - size * 0.28;
+    var u = Math.max(1.2, size / 22);   // pixel scale
+    function px(rx, ry, w, h, c) {
+      ctx.fillStyle = c;
+      ctx.fillRect(x + rx * u, y + ry * u, w * u, h * u);
     }
+    // Drop shadow under icon
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + size * 0.18, size * 0.22, size * 0.07, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    switch (kind) {
+      case 'wheat': drawWheatIcon(px, res); break;
+      case 'cattle': drawCattleIcon(px, res); break;
+      case 'fish': drawFishIcon(px, res); break;
+      case 'iron': drawIronIcon(px, res); break;
+      case 'copper': drawCopperIcon(px, res); break;
+      case 'gold': drawGoldIcon(px, res); break;
+      case 'gems': drawGemsIcon(px, res); break;
+      case 'horses': drawHorsesIcon(px, res); break;
+    }
+  }
+
+  function drawWheatIcon(px, res) {
+    // Bundle of wheat stalks
+    px(-1, -4, 1, 1, '#000');  px(0, -4, 1, 1, '#000');  px(1, -4, 1, 1, '#000');
+    px(-2, -3, 1, 1, '#000');  px(2, -3, 1, 1, '#000');
+    px(-1, -3, 1, 1, res.accent);  px(0, -3, 1, 1, '#fff8a0');  px(1, -3, 1, 1, res.accent);
+    px(-2, -2, 1, 1, '#000');  px(2, -2, 1, 1, '#000');
+    px(-1, -2, 1, 1, '#fff8a0');  px(0, -2, 1, 1, res.accent);  px(1, -2, 1, 1, '#fff8a0');
+    px(-1, -1, 1, 1, res.accent);  px(0, -1, 1, 1, res.accent);  px(1, -1, 1, 1, res.accent);
+    // stalks
+    px(-1, 0, 1, 3, res.dark);
+    px(0, 0, 1, 3, res.dark);
+    px(1, 0, 1, 3, res.dark);
+    // ground tie
+    px(-2, 2, 5, 1, '#000');
+    px(-1, 3, 3, 1, '#3a2410');
+  }
+
+  function drawCattleIcon(px, res) {
+    // Cow silhouette: body + head + horns + spots
+    px(-3, -1, 6, 1, '#000');             // top of body
+    px(-3, 0, 6, 3, res.dark);            // body
+    px(-2, 0, 5, 2, res.accent);          // belly highlight
+    px(-2, 1, 1, 1, '#fff');              // spot
+    px(1, 1, 1, 1, '#fff');               // spot
+    px(-3, 3, 6, 1, '#000');              // belly outline
+    // legs
+    px(-2, 3, 1, 2, '#000');  px(2, 3, 1, 2, '#000');
+    px(-2, 3, 1, 2, res.dark); px(2, 3, 1, 2, res.dark);
+    // head (right side)
+    px(3, -1, 2, 1, '#000');
+    px(3, 0, 2, 2, res.dark);
+    px(4, 0, 1, 1, '#fff');               // eye
+    // horns
+    px(3, -2, 1, 1, '#fff8a0'); px(4, -2, 1, 1, '#fff8a0');
+  }
+
+  function drawFishIcon(px, res) {
+    // Fish silhouette, facing right
+    px(-3, -1, 1, 1, '#000');             // tail tip top
+    px(-4, 0, 1, 2, '#000');              // tail
+    px(-3, 0, 1, 2, res.dark);
+    px(-3, 2, 1, 1, '#000');
+    px(-2, -1, 6, 1, '#000');             // body top
+    px(-2, 0, 6, 2, res.accent);
+    px(-2, 2, 6, 1, '#000');
+    px(0, 0, 2, 1, res.dark);             // back shadow
+    // eye
+    px(3, 0, 1, 1, '#fff');
+    px(3, 1, 1, 1, '#000');
+    // gill
+    px(1, 1, 1, 1, res.dark);
+  }
+
+  function drawIronIcon(px, res) {
+    // Cluster of metal chunks
+    px(-2, 0, 1, 1, '#000');
+    px(-1, -1, 3, 1, '#000');
+    px(-1, 0, 3, 2, res.accent);
+    px(0, 0, 1, 1, '#fff');                 // highlight
+    px(2, -1, 1, 1, '#000');
+    px(-2, 2, 1, 1, '#000');
+    px(-1, 2, 4, 1, '#000');
+    px(-1, 1, 4, 1, res.accent);
+    px(0, 2, 2, 1, res.dark);
+    px(1, 1, 1, 1, '#fff');
+  }
+
+  function drawCopperIcon(px, res) {
+    // Copper chunk — orange-metallic with sheen
+    px(-2, -1, 1, 1, '#000');
+    px(-1, -2, 3, 1, '#000');
+    px(2, -1, 1, 1, '#000');
+    px(-1, -1, 3, 1, res.accent);
+    px(-2, 0, 5, 2, res.accent);
+    px(-2, 0, 1, 1, '#000'); px(2, 0, 1, 1, '#000');
+    px(-1, 0, 1, 1, '#ffd0a0');             // sheen
+    px(0, 1, 1, 1, '#ffd0a0');              // sheen
+    px(-2, 2, 5, 1, '#000');
+    px(-1, 2, 3, 1, res.dark);
+    // tiny ore flecks
+    px(-3, 2, 1, 1, res.accent);
+    px(3, 2, 1, 1, res.accent);
+  }
+
+  function drawGoldIcon(px, res) {
+    // Glittering gold pile
+    px(-1, -2, 3, 1, '#000');
+    px(-1, -1, 3, 1, res.accent);
+    px(-2, 0, 5, 1, '#000');
+    px(-2, 1, 5, 1, res.accent);
+    px(-1, 1, 3, 1, '#fff8a0');
+    px(-3, 2, 7, 1, '#000');
+    px(-2, 2, 5, 1, res.accent);
+    px(-1, 2, 3, 1, '#fff8a0');
+    px(-3, 3, 7, 1, res.dark);
+    // sparkle
+    px(2, -3, 1, 1, '#fff');
+    px(-3, -1, 1, 1, '#fff');
+  }
+
+  function drawGemsIcon(px, res) {
+    // Faceted purple gem
+    px(0, -3, 1, 1, '#000');
+    px(-1, -2, 3, 1, '#000');
+    px(-2, -1, 5, 1, '#000');
+    px(-1, -1, 3, 1, '#fff');               // top facet bright
+    px(-2, 0, 5, 1, res.accent);
+    px(-1, 0, 1, 1, '#fff');
+    px(1, 0, 1, 1, res.dark);
+    px(-2, 1, 5, 1, res.accent);
+    px(-1, 1, 1, 1, res.dark);
+    px(-1, 2, 3, 1, '#000');
+    px(0, 2, 1, 1, res.dark);
+    px(0, 3, 1, 1, '#000');
+  }
+
+  function drawHorsesIcon(px, res) {
+    // Galloping horse silhouette
+    px(0, -2, 1, 1, '#000');                // ear
+    px(-1, -1, 3, 1, '#000');               // head top
+    px(-1, 0, 3, 1, res.accent);            // head
+    px(-2, 0, 1, 1, '#000');                // mane
+    px(0, 0, 1, 1, '#fff');                 // eye
+    px(-3, 1, 6, 1, '#000');                // back top
+    px(-3, 2, 6, 1, res.accent);            // body
+    px(-3, 2, 1, 1, '#000');                // tail end
+    px(-3, 3, 6, 1, '#000');                // body bottom
+    // legs
+    px(-2, 3, 1, 2, '#000');
+    px(2, 3, 1, 2, '#000');
+    px(-2, 3, 1, 2, res.dark);
+    px(2, 3, 1, 2, res.dark);
   }
 
   function drawImprovement(cx, cy, size, kind) {
@@ -1613,7 +1879,7 @@
 
     var ti = state.map[state.cursor.r][state.cursor.c];
     var label = TERRAIN[ti.terrain].name;
-    if (ti.resource) label += ' · ' + ti.resource;
+    if (ti.resource && RESOURCES[ti.resource]) label += ' · ' + RESOURCES[ti.resource].label;
     if (ti.improvement) label += ' · ' + ti.improvement;
     if (ti.unit && ti.visible.player) label += ' · ' + UNITS[ti.unit.type].name;
     if (ti.city) label += ' · ' + ti.city.name;
@@ -1638,18 +1904,33 @@
     var yields = [];
     for (var i = 0; i < ns.length; i++) {
       var t = tileAt(ns[i][0], ns[i][1]);
-      if (!t || TERRAIN[t.terrain].impassable) continue;
-      // Enemy city sitting on the tile blocks it
-      if (t.city && (t.city.c !== city.c || t.city.r !== city.r)) continue;
-      // Tile owned by another civilization's culture can't be worked
-      if (t.owner && t.owner !== city.civ) continue;
+      if (!t) continue;
       var ter = TERRAIN[t.terrain];
+      // Allow working impassable water (coastal fish); otherwise block impassable
+      if (ter.impassable && t.terrain !== 'water') continue;
+      // Enemy city on the tile blocks it
+      if (t.city && (t.city.c !== city.c || t.city.r !== city.r)) continue;
+      // Tile claimed by another civ's culture can't be worked
+      if (t.owner && t.owner !== city.civ) continue;
       var f = ter.food, p = ter.prod, g = ter.gold;
-      if (t.resource === 'wheat') f += 2;
-      if (t.resource === 'iron') p += 2;
-      if (t.resource === 'horses') p += 1;
+      // Resource bonus
+      var res = t.resource && RESOURCES[t.resource];
+      if (res) {
+        if (res.yield.food) f += res.yield.food;
+        if (res.yield.prod) p += res.yield.prod;
+        if (res.yield.gold) g += res.yield.gold;
+      }
+      // Improvement bonus
       if (t.improvement === 'farm') f += 1;
       if (t.improvement === 'mine') p += 2;
+      // Adjacent wonder bonuses
+      var wns = neighborsAll(ns[i][0], ns[i][1]);
+      for (var k = 0; k < wns.length; k++) {
+        if (!wns[k]) continue;
+        var nt = state.map[wns[k][1]][wns[k][0]];
+        if (nt.terrain === 'volcano') p += 1;
+        if (nt.terrain === 'geyser')  f += 1;
+      }
       yields.push({ tile: t, score: f * 3 + p * 2 + g, f: f, p: p, g: g });
     }
     yields.sort(function (a, b) { return b.score - a.score; });
