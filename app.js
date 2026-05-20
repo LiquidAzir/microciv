@@ -41,13 +41,25 @@
     worker:   { name: 'Worker',   cost: 20, hp: 8,  atk: 0, def: 1, move: 2, glyph: '⚒', tech: null,        civilian: true, canImprove: true },
     warrior:  { name: 'Warrior',  cost: 15, hp: 14, atk: 4, def: 3, move: 2, glyph: '⚔', tech: null },
     archer:   { name: 'Archer',   cost: 25, hp: 10, atk: 5, def: 2, move: 2, glyph: '➹', tech: 'archery',   ranged: 2 },
-    horseman: { name: 'Horseman', cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' }
+    horseman: { name: 'Horseman', cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' },
+    raider:   { name: 'Raider',   cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,        barb: true }
   };
 
   var BUILDINGS = {
     granary: { name: 'Granary', cost: 30, food: 2, tech: 'pottery'  },
     walls:   { name: 'Walls',   cost: 40, def: 4,  tech: 'masonry'  },
-    market:  { name: 'Market',  cost: 50, gold: 3, tech: 'currency' }
+    market:  { name: 'Market',  cost: 50, gold: 3, tech: 'currency' },
+    // World Wonders — each unique per game, first civ to finish locks it out
+    hanging_gardens:  { name: 'Hanging Gardens',  cost:  90, tech: 'pottery',   wonder: true, perCityFood: 2,
+                        lore: '+2 food in every city you own' },
+    oracle:           { name: 'Oracle',           cost:  80, tech: 'pottery',   wonder: true, oneShotScience: 50,
+                        lore: 'Instantly gain 50 research' },
+    great_wall:       { name: 'Great Wall',       cost: 110, tech: 'masonry',   wonder: true, cityDefMult: 0.5,
+                        lore: '+50% defense in every city you own' },
+    great_lighthouse: { name: 'Great Lighthouse', cost: 100, tech: 'currency',  wonder: true, perWaterGold: 1,
+                        lore: '+1 gold per water tile worked' },
+    forge:            { name: 'Forge',            cost: 110, tech: 'iron',      wonder: true, perHillProd: 1,
+                        lore: '+1 prod per hills tile worked' }
   };
 
   var TECHS = {
@@ -96,7 +108,8 @@
   // CIVS is the runtime per-side mapping; filled at newGame() from FACTIONS
   var CIVS = {
     player: { name: 'Solaris', color: '#00d4ff', edge: '#7ce5ff' },
-    ai:     { name: 'Umbra',   color: '#ff7a59', edge: '#ffb59a' }
+    ai:     { name: 'Umbra',   color: '#ff7a59', edge: '#ffb59a' },
+    barb:   { name: 'Raiders', color: '#7a7888', edge: '#b8b6c4' }
   };
 
   function applyFaction(sideId, factionId) {
@@ -211,6 +224,7 @@
       city: null,
       unit: null,
       improvement: null, // 'farm' | 'mine'
+      village: null,     // null or { reward: 'gold' | 'worker' | 'science' | 'pop' }
       owner: null,       // 'player' | 'ai' | null — territorial control
       visible: { player: false, ai: false },
       explored: { player: false, ai: false }
@@ -307,7 +321,34 @@
     placeWonder(map, 'volcano', ['mountain','hills','plains']);
     placeWonder(map, 'geyser',  ['grass','plains','forest']);
 
+    // Scatter ~8 tribal villages
+    placeVillages(map, 8);
+
     return map;
+  }
+
+  function placeVillages(map, n) {
+    var rewards = ['gold', 'worker', 'science', 'pop'];
+    for (var k = 0; k < n; k++) {
+      for (var tries = 0; tries < 100; tries++) {
+        var c = rndInt(1, MAP_W - 2);
+        var r = rndInt(1, MAP_H - 2);
+        var t = map[r][c];
+        var ter = TERRAIN[t.terrain];
+        if (ter.impassable || ter.wonder) continue;
+        if (t.village || t.resource) continue;
+        // Spread out — no two villages within 2 hexes
+        var tooClose = false;
+        for (var rr = Math.max(0, r-2); rr <= Math.min(MAP_H-1, r+2) && !tooClose; rr++) {
+          for (var cc = Math.max(0, c-2); cc <= Math.min(MAP_W-1, c+2) && !tooClose; cc++) {
+            if (map[rr][cc].village) tooClose = true;
+          }
+        }
+        if (tooClose) continue;
+        t.village = { reward: rewards[Math.floor(rnd() * rewards.length)] };
+        break;
+      }
+    }
   }
 
   function placeWonder(map, kind, prefer) {
@@ -376,7 +417,8 @@
       map: map,
       civs: {
         player: makeCiv('player', playerFaction),
-        ai:     makeCiv('ai', aiFaction)
+        ai:     makeCiv('ai', aiFaction),
+        barb:   makeBarbCiv()
       },
       cursor: { c: 0, r: 0 },
       camera: { x: 0, y: 0 },           // world pixel offset of top-left of view
@@ -385,7 +427,8 @@
       selected: null,                    // { c, r } of selected friendly unit
       victory: null,                     // 'player' | 'ai' | null
       log: [],
-      turnLog: []
+      turnLog: [],
+      wondersBuilt: {}                   // wonder id -> civ id who built it
     };
 
     var p = pickStart(map);
@@ -413,6 +456,23 @@
       name: CIVS[id].name,
       color: CIVS[id].color,
       gold: 10,
+      science: 0,
+      goldPerTurn: 0,
+      sciPerTurn: 0,
+      cities: [],
+      units: [],
+      techs: {},
+      currentTech: null,
+      techProgress: 0
+    };
+  }
+
+  function makeBarbCiv() {
+    return {
+      id: 'barb',
+      name: 'Raiders',
+      color: CIVS.barb.color,
+      gold: 0,
       science: 0,
       goldPerTurn: 0,
       sciPerTurn: 0,
@@ -483,6 +543,7 @@
       if (!s.map || !s.civs) return false;
       state = s;
       state.log = state.log || [];
+      if (!state.civs.barb) state.civs.barb = makeBarbCiv();
       // Re-apply faction so CIVS colors/names match the saved game
       ['player','ai'].forEach(function (id) {
         var fid = state.civs[id].faction || (id === 'player' ? 'solaris' : 'umbra');
@@ -494,11 +555,11 @@
       // restore unit refs on tiles
       for (var r = 0; r < MAP_H; r++)
         for (var c = 0; c < MAP_W; c++) state.map[r][c].unit = null;
-      ['player','ai'].forEach(function (id) {
+      ['player','ai','barb'].forEach(function (id) {
         state.civs[id].units.forEach(function (u) {
           var t = tileAt(u.c, u.r); if (t) t.unit = u;
         });
-        state.civs[id].cities.forEach(function (ct) {
+        (state.civs[id].cities || []).forEach(function (ct) {
           var t = tileAt(ct.c, ct.r); if (t) t.city = ct;
         });
       });
@@ -1287,6 +1348,11 @@
           ctx.fill();
         }
 
+        // Tribal village
+        if (t.village && t.explored.player) {
+          drawVillage(cx, cy, size);
+        }
+
         // City
         if (t.city) {
           drawCity(cx, cy, size, t.city);
@@ -1668,11 +1734,79 @@
     worker:   drawWorker,
     warrior:  drawWarrior,
     archer:   drawArcher,
-    horseman: drawHorseman
+    horseman: drawHorseman,
+    raider:   drawWarrior   // reuses warrior sprite; civ color makes it grey
   };
 
   function drawCity(cx, cy, size, city) {
     drawCitySprite(cx, cy, size, city);
+  }
+
+  function drawVillage(cx, cy, size) {
+    // Three small tents/huts around a campfire spot
+    var px = Math.max(1, size / 16);
+    var bx = cx, by = cy + size * 0.10;
+    // ground patch
+    ctx.fillStyle = 'rgba(60, 40, 20, 0.5)';
+    ctx.beginPath();
+    ctx.ellipse(bx, by + size * 0.10, size * 0.36, size * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    function tent(tx, ty, w, h, color, dark) {
+      // tent body
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.moveTo(tx - w/2 - 1, ty + h/2);
+      ctx.lineTo(tx, ty - h/2 - 1);
+      ctx.lineTo(tx + w/2 + 1, ty + h/2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(tx - w/2, ty + h/2);
+      ctx.lineTo(tx, ty - h/2);
+      ctx.lineTo(tx + w/2, ty + h/2);
+      ctx.closePath();
+      ctx.fill();
+      // shadow side
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.moveTo(tx, ty - h/2);
+      ctx.lineTo(tx + w/2, ty + h/2);
+      ctx.lineTo(tx, ty + h/2);
+      ctx.closePath();
+      ctx.fill();
+      // entrance flap
+      ctx.fillStyle = '#000';
+      ctx.fillRect(tx - 1, ty + h/4, 2, h/4);
+    }
+    // left tent
+    tent(bx - size * 0.18, by - size * 0.02, size * 0.18, size * 0.22, '#a06030', '#5a3818');
+    // right tent
+    tent(bx + size * 0.18, by + size * 0.04, size * 0.16, size * 0.20, '#8a4828', '#4a2410');
+    // center back tent (smaller)
+    tent(bx,                by - size * 0.12, size * 0.14, size * 0.18, '#b87340', '#5a3818');
+
+    // campfire — small orange flame with smoke
+    ctx.fillStyle = '#3a1a08';
+    ctx.fillRect(bx - 2, by + size * 0.08, 4, 2);
+    ctx.fillStyle = '#ffb050';
+    ctx.fillRect(bx - 1, by + size * 0.04, 2, 4);
+    ctx.fillStyle = '#fff8a0';
+    ctx.fillRect(bx - 0.5, by + size * 0.06, 1, 2);
+    ctx.fillStyle = 'rgba(220, 220, 220, 0.45)';
+    ctx.beginPath();
+    ctx.arc(bx - 1, by - size * 0.08, 2, 0, Math.PI * 2);
+    ctx.arc(bx + 1, by - size * 0.14, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // sparkle indicator (gift) — small star above
+    var sx = cx + size * 0.34, sy = cy - size * 0.45;
+    ctx.fillStyle = '#ffd34d';
+    ctx.fillRect(sx - 1, sy, 3, 1);
+    ctx.fillRect(sx, sy - 1, 1, 3);
+    ctx.fillStyle = '#fff8a0';
+    ctx.fillRect(sx, sy, 1, 1);
   }
 
   function drawUnit(cx, cy, size, unit) {
@@ -1957,6 +2091,9 @@
     if (fb.food) food += fb.food;
     if (fb.prod) prod += fb.prod;
     if (fb.gold) gold += fb.gold;
+    // Wonder: Hanging Gardens — +2 food in every city of its owner
+    var wb = state.wondersBuilt || {};
+    if (wb.hanging_gardens === city.civ) food += BUILDINGS.hanging_gardens.perCityFood;
     var ns = neighbors(city.c, city.r);
     ns.unshift([city.c, city.r]);
     // simulate "citizens" working pop best tiles
@@ -1982,6 +2119,9 @@
       // Improvement bonus
       if (t.improvement === 'farm') f += 1;
       if (t.improvement === 'mine') p += 2;
+      // World wonder per-tile bonuses (only if this city's civ owns the wonder)
+      if (wb.great_lighthouse === city.civ && t.terrain === 'water') g += BUILDINGS.great_lighthouse.perWaterGold;
+      if (wb.forge === city.civ && t.terrain === 'hills')              p += BUILDINGS.forge.perHillProd;
       // Adjacent wonder bonuses
       var wns = neighborsAll(ns[i][0], ns[i][1]);
       for (var k = 0; k < wns.length; k++) {
@@ -2046,7 +2186,72 @@
     unit.moves = Math.max(0, unit.moves - 1);
     unit.fortified = false;
     t.unit = unit;
+    // Tribal village reward on entry
+    if (t.village) claimVillage(unit, t);
     return true;
+  }
+
+  function claimVillage(unit, t) {
+    if (unit.civ === 'barb') { t.village = null; return; }   // raiders just trample
+    var reward = t.village.reward;
+    t.village = null;
+    var isPlayer = unit.civ === 'player';
+    var civ = state.civs[unit.civ];
+
+    function tryWorker() {
+      // Look for an empty walkable tile for the new worker
+      var ns = neighbors(unit.c, unit.r);
+      for (var i = 0; i < ns.length; i++) {
+        var nt = tileAt(ns[i][0], ns[i][1]);
+        if (nt && !TERRAIN[nt.terrain].impassable && !nt.unit && !nt.city) {
+          spawnUnit(unit.civ, 'worker', ns[i][0], ns[i][1]);
+          return true;
+        }
+      }
+      return false;
+    }
+    function nearestOwnCity() {
+      var best = null, bd = Infinity;
+      civ.cities.forEach(function (ct) {
+        var d = hexDist([unit.c, unit.r], [ct.c, ct.r]);
+        if (d < bd) { bd = d; best = ct; }
+      });
+      return best;
+    }
+
+    var label = '';
+    if (reward === 'gold') {
+      civ.gold += 30;
+      label = '+30 gold from village';
+    } else if (reward === 'science') {
+      if (civ.currentTech) {
+        civ.techProgress += 25;
+        label = '+25 research from village';
+      } else {
+        civ.gold += 30;
+        label = 'Village gave gold (no research set)';
+      }
+    } else if (reward === 'worker') {
+      if (tryWorker()) {
+        label = 'Tribal worker joined you';
+      } else {
+        civ.gold += 30;
+        label = 'No room for worker — got gold';
+      }
+    } else if (reward === 'pop') {
+      var home = nearestOwnCity();
+      if (home) {
+        home.pop += 1;
+        label = home.name + ' grew (+1 pop)';
+      } else {
+        civ.gold += 30;
+        label = 'No city — got gold instead';
+      }
+    }
+    if (isPlayer && label) {
+      showToast(label, 'success');
+      logEvent('Tribal village · ' + label, 'success');
+    }
   }
 
   function attack(attacker, defender) {
@@ -2058,6 +2263,8 @@
     if (defender.fortified) dBonus += 0.25;
     if (dTile.city && state.civs[dTile.city.civ].id === defender.civ) {
       dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
+      // Great Wall — +50% defense in every city the builder owns
+      if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
     }
     // Home-territory bonus: defender gets +10% on own owned tiles
     if (dTile.owner === defender.civ) dBonus += 0.10;
@@ -2182,8 +2389,26 @@
     if (cost > 0 && city.prod >= cost) {
       city.prod -= cost;
       if (isBuilding) {
-        city.buildings[p] = true;
-        if (city.civ === 'player') logEvent(city.name + ' built ' + BUILDINGS[p].name, 'success');
+        var bdef = BUILDINGS[p];
+        // World wonders are unique globally. If someone else built it first
+        // while this city was producing it, refund prod and reroll.
+        if (bdef.wonder) {
+          if (state.wondersBuilt[p]) {
+            // Race lost — refund a chunk of prod, pick something else
+            city.prod += Math.floor(cost * 0.5);
+            city.producing = pickNextProduction(city);
+            if (city.civ === 'player') logEvent('Lost the race for ' + bdef.name, 'error');
+          } else {
+            city.buildings[p] = true;
+            state.wondersBuilt[p] = city.civ;
+            applyWonderOneShot(city, p);
+            if (city.civ === 'player') logEvent(city.name + ' built ' + bdef.name + ' (wonder)', 'success');
+            else logEvent(CIVS[city.civ].name + ' built ' + bdef.name, 'error');
+          }
+        } else {
+          city.buildings[p] = true;
+          if (city.civ === 'player') logEvent(city.name + ' built ' + bdef.name, 'success');
+        }
       } else {
         var spawnTile = findSpawnTile(city);
         if (spawnTile) {
@@ -2191,10 +2416,17 @@
           if (city.civ === 'player') logEvent(city.name + ' trained ' + UNITS[p].name, 'success');
         }
       }
-      // Pick next production sensibly
       city.producing = pickNextProduction(city);
     }
+  }
 
+  function applyWonderOneShot(city, wid) {
+    var bdef = BUILDINGS[wid];
+    if (!bdef || !bdef.wonder) return;
+    var civ = state.civs[city.civ];
+    if (bdef.oneShotScience) {
+      civ.techProgress = (civ.techProgress || 0) + bdef.oneShotScience;
+    }
   }
 
   function findSpawnTile(city) {
@@ -2227,11 +2459,13 @@
     for (var k in UNITS) {
       var u = UNITS[k];
       if (u.tech && !civ.techs[u.tech]) continue;
+      if (u.barb) continue;             // raiders aren't trainable
       out.push(k);
     }
     for (var k in BUILDINGS) {
       var b = BUILDINGS[k];
       if (b.tech && !civ.techs[b.tech]) continue;
+      if (b.wonder && state.wondersBuilt && state.wondersBuilt[k]) continue;
       out.push(k);
     }
     return out;
@@ -2293,6 +2527,7 @@
     flashEndTurn();
     setTimeout(function () {
       aiTurn();
+      barbTurn();
 
       // AI end-of-turn
       var ai = state.civs.ai;
@@ -2306,6 +2541,7 @@
       state.currentCiv = 'player';
       pl.units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
       ai.units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
+      state.civs.barb.units.forEach(function (u) { u.moves = u.maxMoves; });
       recomputeBorders();
       recomputeVisibility('player');
       recomputeVisibility('ai');
@@ -2409,6 +2645,48 @@
     // Cities pick production (handled in processCity)
   }
 
+  // -------- Barbarians ----------------------------------------------------
+  function barbTurn() {
+    if (!state.civs.barb) return;
+    state.civs.barb.units.slice().forEach(function (u) {
+      if (u.hp <= 0) return;
+      barbMoveUnit(u);
+    });
+    // Spawn — only in the early game, only a few at a time, only on neutral land
+    if (state.turn <= 28 && state.civs.barb.units.length < 3 && state.turn % 3 === 0) {
+      trySpawnBarbarian();
+    }
+  }
+
+  function barbMoveUnit(u) {
+    // Attack adjacent if any
+    var adj = adjacentEnemy(u);
+    if (adj) { attack(u, adj.unit); return; }
+    // Step toward the closest player unit/city within 4 tiles, else wander
+    var target = findNearestEnemy(u, 4);
+    if (target) aiStepToward(u, target);
+    else aiWander(u);
+  }
+
+  function trySpawnBarbarian() {
+    for (var tries = 0; tries < 80; tries++) {
+      var edge = Math.floor(rnd() * 4);
+      var c, r;
+      if (edge === 0)      { c = rndInt(0, MAP_W - 1); r = rndInt(0, 1); }
+      else if (edge === 1) { c = rndInt(0, MAP_W - 1); r = rndInt(MAP_H - 2, MAP_H - 1); }
+      else if (edge === 2) { c = rndInt(0, 1); r = rndInt(0, MAP_H - 1); }
+      else                 { c = rndInt(MAP_W - 2, MAP_W - 1); r = rndInt(0, MAP_H - 1); }
+      var t = tileAt(c, r);
+      if (!t) continue;
+      var ter = TERRAIN[t.terrain];
+      if (ter.impassable) continue;
+      if (t.unit || t.city) continue;
+      if (t.owner) continue;     // not on any civ's culture — keeps spawns out of safe territory
+      spawnUnit('barb', 'raider', c, r);
+      return;
+    }
+  }
+
   function aiMoveUnit(u) {
     if (u.type === 'settler') {
       // Found city if good spot
@@ -2483,17 +2761,20 @@
     u.moves = 0;
   }
 
-  function findNearestEnemy(u) {
+  function findNearestEnemy(u, maxDist) {
     var best = null, bestD = Infinity;
-    var pl = state.civs.player;
-    pl.units.forEach(function (e) {
-      var d = hexDist([u.c, u.r], [e.c, e.r]);
-      if (d < bestD) { bestD = d; best = [e.c, e.r]; }
-    });
-    pl.cities.forEach(function (ct) {
-      var d = hexDist([u.c, u.r], [ct.c, ct.r]);
-      if (d < bestD) { bestD = d; best = [ct.c, ct.r]; }
-    });
+    for (var key in state.civs) {
+      if (key === u.civ) continue;
+      state.civs[key].units.forEach(function (e) {
+        var d = hexDist([u.c, u.r], [e.c, e.r]);
+        if (d < bestD) { bestD = d; best = [e.c, e.r]; }
+      });
+      (state.civs[key].cities || []).forEach(function (ct) {
+        var d = hexDist([u.c, u.r], [ct.c, ct.r]);
+        if (d < bestD) { bestD = d; best = [ct.c, ct.r]; }
+      });
+    }
+    if (maxDist != null && bestD > maxDist) return null;
     return best;
   }
 
@@ -2791,17 +3072,26 @@
     var avail = availableProducibles(civ);
     var list = document.getElementById('c-options');
     list.innerHTML = '';
+    // Sort: units first, then buildings, then wonders last
+    avail.sort(function (a, b) {
+      var ba = BUILDINGS[a], bb = BUILDINGS[b];
+      var wa = ba && ba.wonder ? 2 : (ba ? 1 : 0);
+      var wb = bb && bb.wonder ? 2 : (bb ? 1 : 0);
+      return wa - wb;
+    });
     avail.forEach(function (k) {
       var u = UNITS[k] || BUILDINGS[k];
       if (BUILDINGS[k] && city.buildings[k]) return; // already built
       if (k === city.producing) return;
       var isB = !!BUILDINGS[k];
-      var iconChar = isB ? '▢' : UNITS[k].glyph;
-      var sub = (isB ? 'Building' : 'Unit') + ' · ' + u.cost + ' prod';
+      var isWonder = isB && BUILDINGS[k].wonder;
+      var iconChar = isWonder ? '✦' : (isB ? '▢' : UNITS[k].glyph);
+      var sub = isWonder ? (BUILDINGS[k].lore + ' · ' + u.cost + ' prod')
+                         : ((isB ? 'Building' : 'Unit') + ' · ' + u.cost + ' prod');
       var row = document.createElement('button');
-      row.className = 'action-row focusable';
+      row.className = 'action-row focusable' + (isWonder ? ' primary' : '');
       row.innerHTML = '<div class="action-icon">' + iconChar + '</div>' +
-        '<div class="action-body"><div class="action-title">' + u.name + '</div>' +
+        '<div class="action-body"><div class="action-title">' + u.name + (isWonder ? ' ✦' : '') + '</div>' +
         '<div class="action-sub">' + sub + '</div></div>';
       row.addEventListener('click', function () {
         city.producing = k;
