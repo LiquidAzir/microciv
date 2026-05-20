@@ -530,7 +530,8 @@
         zoom: state.zoom,
         mode: state.mode,
         selected: state.selected,
-        victory: state.victory
+        victory: state.victory,
+        wondersBuilt: state.wondersBuilt
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
     } catch (e) { /* ignore quota */ }
@@ -543,7 +544,17 @@
       if (!s.map || !s.civs) return false;
       state = s;
       state.log = state.log || [];
+      state.turnLog = state.turnLog || [];
+      state.wondersBuilt = state.wondersBuilt || {};
       if (!state.civs.barb) state.civs.barb = makeBarbCiv();
+      // Backfill missing tile fields from older saves
+      for (var rr = 0; rr < MAP_H; rr++) {
+        for (var cc = 0; cc < MAP_W; cc++) {
+          var tl = state.map[rr][cc];
+          if (tl.village === undefined) tl.village = null;
+          if (tl.owner === undefined) tl.owner = null;
+        }
+      }
       // Re-apply faction so CIVS colors/names match the saved game
       ['player','ai'].forEach(function (id) {
         var fid = state.civs[id].faction || (id === 'player' ? 'solaris' : 'umbra');
@@ -1955,24 +1966,6 @@
     }
   }
 
-  function drawTerritoryTint(size, inset) {
-    // Faint civ-color wash over each owned tile for visibility at a glance
-    for (var r = 0; r < MAP_H; r++) {
-      for (var c = 0; c < MAP_W; c++) {
-        var t = state.map[r][c];
-        if (!t.owner || !t.explored.player) continue;
-        var p = pixelOf(c, r, size);
-        var cx = p.x - state.camera.x + size * SQRT3 / 2;
-        var cy = p.y - state.camera.y + size;
-        if (cx < -size || cy < -size || cx > VIEW_W + size || cy > VIEW_H + size) continue;
-        hexPath(cx, cy, inset);
-        var color = CIVS[t.owner].color;
-        ctx.fillStyle = withAlpha(color, 0.07);
-        ctx.fill();
-      }
-    }
-  }
-
   function withAlpha(hex, a) {
     var rgb = hexToRgb(hex);
     return 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + a + ')';
@@ -2029,13 +2022,10 @@
     pillVal.textContent = state.mode === 'cursor' ? 'CURSOR' : 'SCROLL';
     pill.classList.toggle('scroll', state.mode === 'scroll');
 
-    // ZOOM pill — visual dots
+    // ZOOM pill — three-dot indicator (zoom 0 = far, 1 = normal, 2 = close)
     var zPill = document.getElementById('zoom-pill');
     if (zPill) {
-      var dots = ['○○○', '●○○', '●●○', '●●●'][state.zoom + 1] || '●●○';
-      // map ZOOM_LEVELS index (0..2) to readable
-      var z = state.zoom;
-      var disp = z === 0 ? '○○●' : z === 1 ? '○●●' : '●●●';
+      var disp = state.zoom === 0 ? '○○●' : state.zoom === 1 ? '○●●' : '●●●';
       zPill.querySelector('.chip-val').textContent = disp;
     }
 
@@ -2261,13 +2251,15 @@
     var terr = TERRAIN[dTile.terrain];
     var dBonus = (terr.defBonus || 0);
     if (defender.fortified) dBonus += 0.25;
-    if (dTile.city && state.civs[dTile.city.civ].id === defender.civ) {
+    if (dTile.city && dTile.city.civ === defender.civ) {
       dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
       // Great Wall — +50% defense in every city the builder owns
       if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
     }
     // Home-territory bonus: defender gets +10% on own owned tiles
     if (dTile.owner === defender.civ) dBonus += 0.10;
+    // Cap so defense buffs never make a unit invincible
+    if (dBonus > 1.5) dBonus = 1.5;
 
     var aPower = aDef.atk + atkTechBonus(attacker);
     var dPower = dDef.def * (1 + dBonus);
@@ -2354,11 +2346,12 @@
     city.producing = 'warrior';
     state.civs[newOwnerId].cities.push(city);
     recomputeBorders();
+    recomputeVisibility(newOwnerId);            // new owner gets sight around captured city
     showToast('Captured ' + city.name + '!', newOwnerId === 'player' ? 'success' : 'error');
 
-    if (city.capital) {
-      var loser = oldOwner.cities.length === 0 ? oldOwner.id : null;
-      if (loser) declareVictory(newOwnerId, 'domination');
+    // Domination victory: a capital fell AND the loser has no cities left.
+    if (city.capital && oldOwner.cities.length === 0) {
+      declareVictory(newOwnerId, 'domination');
     }
   }
 
@@ -2394,9 +2387,9 @@
         // while this city was producing it, refund prod and reroll.
         if (bdef.wonder) {
           if (state.wondersBuilt[p]) {
-            // Race lost — refund a chunk of prod, pick something else
+            // Race lost — refund half cost, pick a default so we don't try this wonder again next turn
             city.prod += Math.floor(cost * 0.5);
-            city.producing = pickNextProduction(city);
+            city.producing = 'warrior';
             if (city.civ === 'player') logEvent('Lost the race for ' + bdef.name, 'error');
           } else {
             city.buildings[p] = true;
@@ -2443,10 +2436,14 @@
   function pickNextProduction(city) {
     var civ = state.civs[city.civ];
     if (civ.cities.length < 2 && hasTech(civ, null)) return 'settler';
-    // alternate warriors & helpers
     var available = availableProducibles(civ);
     if (city.civ === 'ai') {
-      // AI prefers military
+      // ~25% chance to chase an available wonder, otherwise lean military
+      var wonders = available.filter(function (k) { return BUILDINGS[k] && BUILDINGS[k].wonder; });
+      if (wonders.length && rnd() < 0.25) return wonders[Math.floor(rnd() * wonders.length)];
+      // Sometimes build a regular building if available and not yet built
+      var regBldgs = available.filter(function (k) { return BUILDINGS[k] && !BUILDINGS[k].wonder && !city.buildings[k]; });
+      if (regBldgs.length && rnd() < 0.20) return regBldgs[Math.floor(rnd() * regBldgs.length)];
       if (available.indexOf('horseman') >= 0) return 'horseman';
       if (available.indexOf('archer') >= 0) return 'archer';
       return 'warrior';
@@ -2481,9 +2478,8 @@
       civ.techs[civ.currentTech] = true;
       civ.techProgress = 0;
       if (civ.id === 'player') logEvent('Researched ' + def.name, 'success');
-      var done = civ.currentTech;
       civ.currentTech = null;
-      // Auto-pick next if AI
+      // Auto-pick next tech for AI; player picks from the menu.
       if (civ.id === 'ai') civ.currentTech = pickAiTech(civ);
       // Check science victory
       var allDone = true;
@@ -2522,8 +2518,9 @@
     pl.gold += pl.goldPerTurn;
     progressTech(pl);
 
-    // AI turn
+    // AI turn — lock input while the AI thinks/moves
     state.currentCiv = 'ai';
+    aiThinking = true;
     flashEndTurn();
     setTimeout(function () {
       aiTurn();
@@ -2546,7 +2543,6 @@
       recomputeVisibility('player');
       recomputeVisibility('ai');
       recomputeIncome('player');
-      recomputeIncome('ai');
       // heal idle units
       [pl, ai].forEach(function (civ) {
         civ.units.forEach(function (u) {
@@ -2555,6 +2551,7 @@
       });
       autoSelectNextUnit();
       showTurnSummary();
+      aiThinking = false;
       save();
       draw();
     }, 300);
@@ -2689,24 +2686,18 @@
 
   function aiMoveUnit(u) {
     if (u.type === 'settler') {
-      // Found city if good spot
+      // Found city if good spot — must be far from ALL existing cities (player + ai)
       var t = tileAt(u.c, u.r);
       if (t && !t.city && !TERRAIN[t.terrain].impassable) {
-        // need distance from existing cities
         var ok = true;
-        state.civs.ai.cities.forEach(function (ct) {
-          if (hexDist([u.c, u.r], [ct.c, ct.r]) < 4) ok = false;
+        ['player','ai'].forEach(function (id) {
+          state.civs[id].cities.forEach(function (ct) {
+            if (hexDist([u.c, u.r], [ct.c, ct.r]) < 4) ok = false;
+          });
         });
-        if (ok && state.civs.ai.cities.length > 0) {
-          foundCity(u);
-          return;
-        }
-        if (state.civs.ai.cities.length === 0) {
-          foundCity(u);
-          return;
-        }
+        if (state.civs.ai.cities.length === 0) { foundCity(u); return; }
+        if (ok) { foundCity(u); return; }
       }
-      // wander away
       aiWander(u);
       return;
     }
@@ -2817,6 +2808,26 @@
   // =====================================================================
   var keyHistory = []; // for combo detection (last 4 directional keys)
   var ACTION_KEYS = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
+  var pendingMoves = []; // deferred moves while we wait to see if a combo completes
+
+  function isAlternatingPrefix() {
+    if (keyHistory.length < 2) return false;
+    var last = keyHistory[keyHistory.length - 1].k;
+    var prev = keyHistory[keyHistory.length - 2].k;
+    if (last === prev) return false;
+    var vert = (last === 'up' || last === 'down') && (prev === 'up' || prev === 'down');
+    var horiz = (last === 'left' || last === 'right') && (prev === 'left' || prev === 'right');
+    return vert || horiz;
+  }
+
+  function flushPendingMoves() {
+    if (!pendingMoves.length) return;
+    pendingMoves.forEach(function (m) {
+      if (state.mode === 'cursor') moveCursor(m[0], m[1]);
+      else panInDirection(m[0], m[1]);
+    });
+    pendingMoves = [];
+  }
 
   function pushKey(k) {
     var simple = k.replace('Arrow', '').toLowerCase();
@@ -2863,6 +2874,8 @@
   }
 
   var walkAnimating = false;
+  var aiThinking = false;
+  function isBusy() { return walkAnimating || aiThinking; }
 
   function walkPath(unit, path, onDone) {
     if (walkAnimating) return;
@@ -2974,10 +2987,14 @@
         actions.push({ icon: '★', primary: true, title: 'Found City', sub: 'Plant a settlement here', do: function () { foundCity(u); closeModal(); draw(); } });
       }
       if (def.canImprove) {
-        var canImp = ['grass','plains','hills'].indexOf(t.terrain) >= 0 && !t.improvement;
-        var impName = t.terrain === 'hills' ? 'Mine · +2 prod' : 'Farm · +1 food';
-        actions.push({ icon: '⛏', primary: true, title: canImp ? 'Build ' + (t.terrain === 'hills' ? 'Mine' : 'Farm') : 'Build Improvement', sub: canImp ? impName : (t.improvement ? 'Already improved' : 'Not buildable here'), disabled: !canImp, do: function () {
-          t.improvement = t.terrain === 'hills' ? 'mine' : 'farm';
+        // Hills / desert -> mine (+2 prod). Grass / plains -> farm (+1 food).
+        var mineTerrain = (t.terrain === 'hills' || t.terrain === 'desert');
+        var farmTerrain = (t.terrain === 'grass' || t.terrain === 'plains');
+        var canImp = (mineTerrain || farmTerrain) && !t.improvement;
+        var impKind = mineTerrain ? 'mine' : 'farm';
+        var impName = impKind === 'mine' ? 'Mine · +2 prod' : 'Farm · +1 food';
+        actions.push({ icon: '⛏', primary: true, title: canImp ? 'Build ' + (impKind.charAt(0).toUpperCase() + impKind.slice(1)) : 'Build Improvement', sub: canImp ? impName : (t.improvement ? 'Already improved' : 'Not buildable here'), disabled: !canImp, do: function () {
+          t.improvement = impKind;
           u.moves = 0;
           showToast('Improvement built', 'success');
           closeModal();
@@ -3036,15 +3053,6 @@
     }
     return null;
   }
-  function dirLabel(u, n) {
-    var dc = n.c - u.c, dr = n.r - u.r;
-    if (dr === -1) return 'N';
-    if (dr === +1) return 'S';
-    if (dc === -1) return 'W';
-    if (dc === +1) return 'E';
-    return '';
-  }
-
   // =====================================================================
   // CITY SCREEN
   // =====================================================================
@@ -3233,6 +3241,12 @@
       return;
     }
 
+    // Block all gameplay input while AI is thinking or a unit is walking
+    if (isBusy()) {
+      if (ACTION_KEYS.indexOf(k) >= 0 || k === 'Enter' || k === 'Escape') e.preventDefault();
+      return;
+    }
+
     // Game keys
     if (ACTION_KEYS.indexOf(k) >= 0) {
       e.preventDefault();
@@ -3240,6 +3254,7 @@
 
       // Combo: ↑↓↑↓ toggles mode
       if (matchCombo(['up','down','up','down']) || matchCombo(['down','up','down','up'])) {
+        pendingMoves = [];        // discard suppressed moves — they were part of the combo
         toggleMode();
         consumeCombo();
         draw();
@@ -3247,41 +3262,43 @@
       }
       // Combo: ←→←→ cycles zoom
       if (matchCombo(['left','right','left','right']) || matchCombo(['right','left','right','left'])) {
+        pendingMoves = [];
         cycleZoom();
         consumeCombo();
         draw();
         return;
       }
 
-      // Otherwise, move cursor or pan
       var dc = 0, dr = 0;
       if (k === 'ArrowUp') dr = -1;
       else if (k === 'ArrowDown') dr = +1;
       else if (k === 'ArrowLeft') dc = -1;
       else if (k === 'ArrowRight') dc = +1;
 
-      if (state.mode === 'cursor') {
-        moveCursor(dc, dr);
-        // Auto-follow if a friendly unit moved
-        if (state.selected) {
-          var su = tileAt(state.selected.c, state.selected.r);
-          if (su && su.unit && hexDist([su.unit.c, su.unit.r], [state.cursor.c, state.cursor.r]) === 1) {
-            // Don't auto-move; let user press Enter to confirm.
-          }
-        }
-      } else {
-        panInDirection(dc, dr);
+      // If this press extends an alternating same-axis pattern, defer the move —
+      // it might be the 2nd, 3rd or 4th key of a combo.
+      if (isAlternatingPrefix()) {
+        pendingMoves.push([dc, dr]);
+        draw();
+        return;
       }
+
+      // Different axis / fresh tap — flush any deferred moves first, then apply this one.
+      flushPendingMoves();
+      if (state.mode === 'cursor') moveCursor(dc, dr);
+      else panInDirection(dc, dr);
       draw();
       return;
     }
 
     if (k === 'Enter') {
       e.preventDefault();
+      flushPendingMoves();      // any deferred reversal moves commit before action
       activate();
       draw();
     } else if (k === 'Escape') {
       e.preventDefault();
+      flushPendingMoves();
       cycleNextUnit();
       draw();
     } else if (k === 'm' || k === 'M') {
