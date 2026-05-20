@@ -59,11 +59,6 @@
           && (t.resource === 'cattle' || t.resource === 'horses');
       }
     },
-    fishing: {
-      name: 'Fishing Boats',
-      yield: { food: 1, gold: 1 },
-      suitable: function (t) { return t.terrain === 'water' && t.resource === 'fish'; }
-    },
     lumber: {
       name: 'Lumber Mill',
       yield: { prod: 1, gold: 1 },
@@ -95,7 +90,7 @@
     }
   };
   // Order = priority. First matching wins.
-  var IMPROVEMENT_ORDER = ['pasture', 'fishing', 'lumber', 'mine', 'quarry', 'farm'];
+  var IMPROVEMENT_ORDER = ['pasture', 'lumber', 'mine', 'quarry', 'farm'];
 
   function pickImprovement(t) {
     if (!t || t.improvement) return null;
@@ -312,7 +307,7 @@
       resource: null,
       city: null,
       unit: null,
-      improvement: null, // 'farm' | 'mine' | 'pasture' | 'lumber' | 'quarry' | 'fishing'
+      improvement: null, // 'farm' | 'mine' | 'pasture' | 'lumber' | 'quarry'
       village: null,     // null or { reward: 'gold' | 'worker' | 'science' | 'pop' }
       river: false,      // tile sits on a river — +1 food worked, fresh water for cities
       owner: null,       // 'player' | 'ai' | 'ai2' | null
@@ -722,6 +717,8 @@
           if (tl.river === undefined) tl.river = false;
           if (!tl.visible.ai2) tl.visible.ai2 = false;
           if (!tl.explored.ai2) tl.explored.ai2 = false;
+          // Remove fishing improvement from old saves (no longer buildable)
+          if (tl.improvement === 'fishing') tl.improvement = null;
         }
       }
       // Older saves may have only one AI — synth a second one from the remaining faction.
@@ -1376,7 +1373,6 @@
     else if (kind === 'pasture') drawPastureImprovement(cx, cy, size);
     else if (kind === 'lumber') drawLumberImprovement(cx, cy, size);
     else if (kind === 'quarry') drawQuarryImprovement(cx, cy, size);
-    else if (kind === 'fishing') drawFishingImprovement(cx, cy, size);
   }
 
   function drawPastureImprovement(cx, cy, size) {
@@ -1525,56 +1521,6 @@
     ctx.stroke();
     ctx.fillStyle = '#aeaeb6';
     ctx.fillRect(bx + 2 * bs + 8, y0 + h - size * 0.20, 5, 2);
-    ctx.lineWidth = 1;
-  }
-
-  function drawFishingImprovement(cx, cy, size) {
-    // Small boat on the water tile
-    var bw = size * 0.55, bh = size * 0.16;
-    var bx = cx - bw / 2, by = cy + size * 0.08;
-    // hull
-    ctx.fillStyle = '#1a0a08';
-    ctx.beginPath();
-    ctx.moveTo(bx, by);
-    ctx.lineTo(bx + bw, by);
-    ctx.lineTo(bx + bw - bh * 1.2, by + bh);
-    ctx.lineTo(bx + bh * 1.2, by + bh);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#7a4a1c';
-    ctx.beginPath();
-    ctx.moveTo(bx + 2, by + 2);
-    ctx.lineTo(bx + bw - 2, by + 2);
-    ctx.lineTo(bx + bw - bh * 1.2 - 2, by + bh - 1);
-    ctx.lineTo(bx + bh * 1.2 + 2, by + bh - 1);
-    ctx.closePath();
-    ctx.fill();
-    // mast
-    ctx.fillStyle = '#3a2410';
-    ctx.fillRect(bx + bw / 2 - 1, by - size * 0.28, 2, size * 0.30);
-    // triangular sail
-    ctx.fillStyle = '#f4f4f4';
-    ctx.beginPath();
-    ctx.moveTo(bx + bw / 2 + 1, by - size * 0.28);
-    ctx.lineTo(bx + bw / 2 + 1 + size * 0.20, by - size * 0.05);
-    ctx.lineTo(bx + bw / 2 + 1, by - size * 0.02);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#c0c0c8';
-    ctx.beginPath();
-    ctx.moveTo(bx + bw / 2 + 1, by - size * 0.20);
-    ctx.lineTo(bx + bw / 2 + 1 + size * 0.10, by - size * 0.08);
-    ctx.lineTo(bx + bw / 2 + 1, by - size * 0.07);
-    ctx.closePath();
-    ctx.fill();
-    // wake / ripples in front and behind
-    ctx.strokeStyle = '#7ce5ff';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(bx + bw * 1.1, by + bh / 2, size * 0.10, -0.5, 0.5);
-    ctx.moveTo(bx - size * 0.06, by + bh + 2);
-    ctx.lineTo(bx + bh, by + bh + 2);
-    ctx.stroke();
     ctx.lineWidth = 1;
   }
 
@@ -3038,11 +2984,15 @@
     recomputeIncome(oldOwnerId);
     showToast('Captured ' + city.name + '!', newOwnerId === 'player' ? 'success' : 'error');
 
-    // Domination victory: every rival civ is wiped out (no cities anywhere).
-    var soleSurvivor = CIV_SIDES.every(function (id) {
-      return id === newOwnerId || state.civs[id].cities.length === 0;
+    // Domination victory: capturing civ now owns every capital on the map.
+    var allCapitals = true;
+    CIV_SIDES.forEach(function (id) {
+      if (id === newOwnerId) return;
+      // Check if this rival still holds their own capital
+      var hasCapital = state.civs[id].cities.some(function (ct) { return ct.capital; });
+      if (hasCapital) allCapitals = false;
     });
-    if (soleSurvivor) declareVictory(newOwnerId, 'domination');
+    if (allCapitals) declareVictory(newOwnerId, 'domination');
   }
 
   function processCity(city) {
@@ -3398,6 +3348,37 @@
     }
   }
 
+  // AI workers: if standing on an improvable owned tile, build; else walk toward one
+  function aiWorkerAction(u) {
+    var t = tileAt(u.c, u.r);
+    // Build on current tile if possible and we own it
+    if (t && t.owner === u.civ && !t.improvement && !t.city) {
+      var imp = pickImprovement(t);
+      if (imp) {
+        t.improvement = imp;
+        u.moves = 0;
+        return;
+      }
+    }
+    // Search owned tiles within 4 hexes for the nearest improvable one
+    var bestTile = null, bestDist = Infinity;
+    for (var rr = Math.max(0, u.r - 4); rr <= Math.min(MAP_H - 1, u.r + 4); rr++) {
+      for (var cc = Math.max(0, u.c - 4); cc <= Math.min(MAP_W - 1, u.c + 4); cc++) {
+        var nt = tileAt(cc, rr);
+        if (!nt || nt.owner !== u.civ || nt.improvement || nt.city) continue;
+        if (TERRAIN[nt.terrain].impassable) continue;
+        if (!pickImprovement(nt)) continue;
+        var d = hexDist([u.c, u.r], [cc, rr]);
+        if (d < bestDist) { bestDist = d; bestTile = [cc, rr]; }
+      }
+    }
+    if (bestTile) {
+      aiStepToward(u, bestTile);
+    } else {
+      aiWander(u);
+    }
+  }
+
   function aiMoveUnit(u) {
     if (u.type === 'settler') {
       // Found city if good spot — must be far from ALL existing cities of every civ
@@ -3415,7 +3396,7 @@
       aiWander(u);
       return;
     }
-    if (u.type === 'worker') { aiWander(u); return; }
+    if (u.type === 'worker') { aiWorkerAction(u); return; }
 
     // Ranged units: try to fire at visible targets before moving
     if (aiTryRangedAttack(u)) return;
@@ -3455,12 +3436,12 @@
       if (UNITS[u.type].ranged) {
         var d = hexDist([u.c, u.r], target);
         if (d > UNITS[u.type].ranged) {
-          aiStepToward(u, target);
-          // After moving, try to ranged attack again
-          aiTryRangedAttack(u);
-        } else {
+          aiStepTowardRange(u, target, UNITS[u.type].ranged);
+          // After closing distance, try to fire
           aiTryRangedAttack(u);
         }
+        // Already in range (or just got there) — fire if we haven't already
+        if (u.moves > 0) aiTryRangedAttack(u);
       } else {
         aiStepToward(u, target);
       }
@@ -3526,6 +3507,29 @@
       var moved = moveUnit(u, step[0], step[1]);
       if (!moved) break;
       // If we just attacked or arrived, may be at 0 moves
+    }
+  }
+
+  // Like aiStepToward, but stops walking once we're within `range` hex distance
+  function aiStepTowardRange(u, target, range) {
+    while (u.moves > 0) {
+      if (hexDist([u.c, u.r], target) <= range) break;  // in firing range, stop
+      var ns = neighbors(u.c, u.r).filter(function (n) {
+        var t = tileAt(n[0], n[1]);
+        if (!t) return false;
+        if (TERRAIN[t.terrain].impassable) return false;
+        if (t.unit && t.unit.civ === u.civ) return false;
+        return true;
+      });
+      if (ns.length === 0) break;
+      ns.sort(function (a, b) {
+        return hexDist(a, target) - hexDist(b, target);
+      });
+      var step = ns[0];
+      // Don't walk INTO the target tile (stay back for ranged fire)
+      if (step[0] === target[0] && step[1] === target[1]) break;
+      var moved = moveUnit(u, step[0], step[1]);
+      if (!moved) break;
     }
   }
 
@@ -3828,6 +3832,7 @@
     document.getElementById('c-prod').textContent = '+' + y.prod;
     document.getElementById('c-sci').textContent = '+' + cityScience(city);
     var def = (city.buildings.walls ? 4 : 0) + (city.pop);
+    if (state.wondersBuilt && state.wondersBuilt.great_wall === city.civ) def = Math.round(def * 1.5);
     document.getElementById('c-def').textContent = def;
 
     // Current production
