@@ -46,10 +46,54 @@
   };
   var TECH_ORDER = ['pottery','archery','masonry','husbandry','currency','iron'];
 
+  // Selectable factions. Each gives ONE small bonus.
+  var FACTIONS = {
+    solaris: {
+      name: 'Solaris',
+      title: 'Children of the Sun',
+      color: '#00d4ff', edge: '#7ce5ff',
+      bonus: { food: 1 },
+      lore: '+1 food in every city. Abundant harvests power faster growth.'
+    },
+    umbra: {
+      name: 'Umbra',
+      title: 'Shadowborn',
+      color: '#ff7a59', edge: '#ffb59a',
+      bonus: { atk: 1 },
+      lore: '+1 attack on military units. Every soldier hits harder.'
+    },
+    tellus: {
+      name: 'Tellus',
+      title: 'Earthen Founders',
+      color: '#b388ff', edge: '#d4b8ff',
+      bonus: { gold: 1 },
+      lore: '+1 gold in every city. Coffers fill faster for upkeep and trade.'
+    }
+  };
+  var FACTION_ORDER = ['solaris', 'umbra', 'tellus'];
+
+  // City name pools per faction
+  var CITY_NAMES = {
+    solaris: ['Helios','Aurora','Vega','Lyra','Sirius','Polaris','Orion','Caelum'],
+    umbra:   ['Nox','Erebus','Thanos','Vesper','Nyx','Tartarus','Mortis','Pyre'],
+    tellus:  ['Terra','Gaia','Atlas','Cybele','Demeter','Pomona','Faunus','Vertumnus']
+  };
+
+  // CIVS is the runtime per-side mapping; filled at newGame() from FACTIONS
   var CIVS = {
     player: { name: 'Solaris', color: '#00d4ff', edge: '#7ce5ff' },
     ai:     { name: 'Umbra',   color: '#ff7a59', edge: '#ffb59a' }
   };
+
+  function applyFaction(sideId, factionId) {
+    var f = FACTIONS[factionId];
+    CIVS[sideId].name = f.name;
+    CIVS[sideId].color = f.color;
+    CIVS[sideId].edge = f.edge;
+  }
+  function factionOf(sideId) {
+    return FACTIONS[state.civs[sideId].faction] || FACTIONS.solaris;
+  }
 
   // =====================================================================
   // STATE
@@ -217,8 +261,16 @@
   // =====================================================================
   // NEW GAME / SAVE / LOAD
   // =====================================================================
-  function newGame(seed) {
+  function newGame(seed, playerFaction) {
     seed = seed || (Date.now() & 0x7fffffff);
+    playerFaction = playerFaction || 'solaris';
+    if (!FACTIONS[playerFaction]) playerFaction = 'solaris';
+    var others = FACTION_ORDER.filter(function (f) { return f !== playerFaction; });
+    var aiFaction = others[Math.floor(Math.random() * others.length)];
+
+    applyFaction('player', playerFaction);
+    applyFaction('ai', aiFaction);
+
     var map = generateMap(seed);
 
     state = {
@@ -227,8 +279,8 @@
       currentCiv: 'player',
       map: map,
       civs: {
-        player: makeCiv('player'),
-        ai:     makeCiv('ai')
+        player: makeCiv('player', playerFaction),
+        ai:     makeCiv('ai', aiFaction)
       },
       cursor: { c: 0, r: 0 },
       camera: { x: 0, y: 0 },           // world pixel offset of top-left of view
@@ -257,9 +309,10 @@
     save();
   }
 
-  function makeCiv(id) {
+  function makeCiv(id, factionId) {
     return {
       id: id,
+      faction: factionId || 'solaris',
       name: CIVS[id].name,
       color: CIVS[id].color,
       gold: 10,
@@ -333,6 +386,14 @@
       if (!s.map || !s.civs) return false;
       state = s;
       state.log = state.log || [];
+      // Re-apply faction so CIVS colors/names match the saved game
+      ['player','ai'].forEach(function (id) {
+        var fid = state.civs[id].faction || (id === 'player' ? 'solaris' : 'umbra');
+        state.civs[id].faction = fid;
+        applyFaction(id, fid);
+        state.civs[id].name = CIVS[id].name;
+        state.civs[id].color = CIVS[id].color;
+      });
       // restore unit refs on tiles
       for (var r = 0; r < MAP_H; r++)
         for (var c = 0; c < MAP_W; c++) state.map[r][c].unit = null;
@@ -1352,6 +1413,12 @@
       ? TECHS[civ.currentTech].name
       : 'No research';
 
+    // CIV chip (top HUD)
+    var civName = document.getElementById('hud-civ-name');
+    var civCell = document.getElementById('hud-civ');
+    if (civName) civName.textContent = (CIVS.player.name || '—').toUpperCase();
+    if (civCell) civCell.style.setProperty('--civ-color', CIVS.player.color || '#00d4ff');
+
     // MODE pill
     var pill = document.getElementById('mode-pill');
     var pillVal = pill.querySelector('.chip-val');
@@ -1411,6 +1478,10 @@
   // =====================================================================
   function workableYields(city) {
     var food = 2, prod = 1, gold = 2;  // base city tile
+    var fb = (FACTIONS[state.civs[city.civ].faction] || {}).bonus || {};
+    if (fb.food) food += fb.food;
+    if (fb.prod) prod += fb.prod;
+    if (fb.gold) gold += fb.gold;
     var ns = neighbors(city.c, city.r);
     ns.unshift([city.c, city.r]);
     // simulate "citizens" working pop best tiles
@@ -1526,8 +1597,11 @@
   }
 
   function atkTechBonus(unit) {
-    if (state.civs[unit.civ].techs.iron && unit.type === 'warrior') return 2;
-    return 0;
+    var bonus = 0;
+    if (state.civs[unit.civ].techs.iron && unit.type === 'warrior') bonus += 2;
+    var f = FACTIONS[state.civs[unit.civ].faction];
+    if (f && f.bonus && f.bonus.atk && !UNITS[unit.type].civilian) bonus += f.bonus.atk;
+    return bonus;
   }
 
   function killUnit(unit) {
@@ -1547,9 +1621,7 @@
     if (t.city) { showToast('City already here'); return; }
     if (TERRAIN[t.terrain].impassable) { showToast('Cannot found here'); return; }
     var civ = state.civs[unit.civ];
-    var nameList = unit.civ === 'player'
-      ? ['Helios','Aurora','Vega','Lyra','Sirius','Polaris','Orion','Caelum']
-      : ['Nox','Erebus','Thanos','Vesper','Nyx','Tartarus','Mortis','Pyre'];
+    var nameList = CITY_NAMES[civ.faction] || CITY_NAMES.solaris;
     var name = nameList[civ.cities.length % nameList.length];
     var isCapital = civ.cities.length === 0;
     var city = {
@@ -2442,7 +2514,15 @@
   }
 
   function moveModalFocus(k) {
-    var modal = document.getElementById(openModal) || document.getElementById('title');
+    var modal = document.getElementById(openModal);
+    if (!modal) {
+      // Find whichever non-game screen is currently visible
+      var ids = ['civ-select', 'title', 'end-screen', 'help-screen'];
+      for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (el && !el.classList.contains('hidden')) { modal = el; break; }
+      }
+    }
     if (!modal) return;
     var foc = Array.from(modal.querySelectorAll('.focusable:not([disabled])'));
     if (foc.length === 0) return;
@@ -2464,7 +2544,7 @@
   // SCREEN NAVIGATION
   // =====================================================================
   function showScreen(id) {
-    ['title','game','action-menu','city-screen','tech-screen','help-screen','end-screen'].forEach(function (s) {
+    ['title','civ-select','game','action-menu','city-screen','tech-screen','help-screen','end-screen'].forEach(function (s) {
       var el = document.getElementById(s);
       if (el) el.classList.add('hidden');
     });
@@ -2474,12 +2554,38 @@
       openModal = null;
       draw();
     } else {
-      openModal = (id === 'title') ? null : id;
+      // 'title' and 'civ-select' are full screens, not modals
+      openModal = (id === 'title' || id === 'civ-select') ? null : id;
+      if (id === 'civ-select') renderCivCards();
       setTimeout(function () {
         var f = t.querySelector('.focusable:not([disabled])');
         if (f) f.focus();
       }, 10);
     }
+  }
+
+  function renderCivCards() {
+    var host = document.getElementById('civ-cards');
+    if (!host) return;
+    host.innerHTML = '';
+    FACTION_ORDER.forEach(function (id) {
+      var f = FACTIONS[id];
+      var btn = document.createElement('button');
+      btn.className = 'civ-card focusable';
+      btn.tabIndex = 0;
+      btn.style.setProperty('--civ-color', f.color);
+      btn.style.setProperty('--civ-glow', f.color + '66');
+      btn.dataset.action = 'pick-civ';
+      btn.dataset.civ = id;
+      btn.innerHTML =
+        '<div class="civ-emblem">⬢</div>' +
+        '<div class="civ-body">' +
+          '<div class="civ-name">' + f.name + '</div>' +
+          '<div class="civ-title">' + f.title + '</div>' +
+          '<div class="civ-bonus">' + f.lore + '</div>' +
+        '</div>';
+      host.appendChild(btn);
+    });
   }
 
   function backToTitle() {
@@ -2515,6 +2621,15 @@
     if (!el) return;
     var action = el.dataset.action;
     switch (action) {
+      case 'show-civ-select':
+        showScreen('civ-select');
+        break;
+      case 'pick-civ':
+        var fac = el.dataset.civ;
+        clearSave();
+        newGame(null, fac);
+        showScreen('game');
+        break;
       case 'new-game':
         clearSave();
         newGame();
@@ -2533,8 +2648,7 @@
         break;
       case 'restart':
         clearSave();
-        newGame();
-        showScreen('game');
+        showScreen('civ-select');
         break;
       case 'back-to-title':
         backToTitle();

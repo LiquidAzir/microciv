@@ -20,18 +20,28 @@
         <h1 class="title-name">MicroCiv</h1>
         <p class="title-sub">4X · For The Display</p>
         <div class="title-actions">
-          <button class="nav-item primary focusable" data-action="new-game">New Game</button>
+          <button class="nav-item primary focusable" data-action="show-civ-select">New Game</button>
           <button class="nav-item focusable" data-action="continue-game" id="continue-btn">Continue</button>
           <button class="nav-item focusable" data-action="show-help">How to Play</button>
         </div>
       </div>
     </div>
 
+    <div id="civ-select" class="screen hidden">
+      <header class="header">
+        <button class="back-btn focusable" data-action="back-to-title">&#8592;</button>
+        <h1>Choose Your People</h1>
+      </header>
+      <div class="civ-cards" id="civ-cards"></div>
+      <div class="civ-hint">arrows pick · pinch confirms</div>
+    </div>
+
     <div id="game" class="screen hidden">
       <canvas id="map" width="600" height="540"></canvas>
       <div id="hud-top" class="hud-top">
         <span class="hud-cell turn"><span class="hud-lbl">TURN</span><span id="hud-turn">1</span></span>
-        <span class="hud-cell"><span class="hud-ico g">⬢</span><span id="hud-gold">0</span></span>
+        <span class="hud-cell hud-civ" id="hud-civ"><span class="hud-ico c">⬢</span><span id="hud-civ-name">—</span></span>
+        <span class="hud-cell"><span class="hud-ico g">●</span><span id="hud-gold">0</span></span>
         <span class="hud-cell"><span class="hud-ico s">◆</span><span id="hud-sci">0</span></span>
         <span class="hud-cell hud-tech"><span id="hud-tech-name">—</span></span>
       </div>
