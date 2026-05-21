@@ -5255,6 +5255,13 @@
     // If a modal is open, route keys to focus manager
     if (isModalOpen()) {
       if (k === 'Escape') { e.preventDefault(); closeModal(); return; }
+      // Help screen: arrow up/down scrolls the body before moving focus to the
+      // top "back" button or bottom "Got it" button.
+      if (openModal === 'help-screen' && (k === 'ArrowUp' || k === 'ArrowDown')) {
+        e.preventDefault();
+        scrollHelp(k);
+        return;
+      }
       if (ACTION_KEYS.indexOf(k) >= 0) { e.preventDefault(); moveModalFocus(k); return; }
       if (k === 'Enter') {
         e.preventDefault();
@@ -5348,6 +5355,34 @@
     } else if (k === 't' || k === 'T') {
       e.preventDefault();
       openTech();
+    }
+  }
+
+  function scrollHelp(k) {
+    var body = document.querySelector('#help-screen .help-body');
+    if (!body) return;
+    var step = Math.max(40, Math.floor(body.clientHeight * 0.55));
+    var atTop = body.scrollTop <= 0;
+    var atBottom = (body.scrollTop + body.clientHeight) >= (body.scrollHeight - 1);
+    var focusables = Array.from(document.querySelectorAll('#help-screen .focusable:not([disabled])'));
+    var backBtn = focusables[0];               // ← (top)
+    var gotIt   = focusables[focusables.length - 1];   // Got it (bottom)
+
+    if (k === 'ArrowDown') {
+      if (!atBottom) {
+        body.scrollTop += step;
+        if (document.activeElement !== gotIt && document.activeElement !== backBtn) backBtn && backBtn.focus();
+      } else if (gotIt) {
+        gotIt.focus();
+      }
+    } else {
+      // ArrowUp
+      if (!atTop) {
+        body.scrollTop -= step;
+        if (document.activeElement !== gotIt && document.activeElement !== backBtn) backBtn && backBtn.focus();
+      } else if (backBtn) {
+        backBtn.focus();
+      }
     }
   }
 
