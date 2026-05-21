@@ -849,7 +849,8 @@
         wondersBuilt: state.wondersBuilt,
         stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
         diplomacy: state.diplomacy,
-        pendingPeace: state.pendingPeace || null
+        pendingPeace: state.pendingPeace || null,
+        freetech: state.freetech || false
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
     } catch (e) { /* ignore quota */ }
@@ -2178,7 +2179,7 @@
           var yt = state.map[yr][yc];
           if (!yt.explored.player) continue;
           var td = TERRAIN[yt.terrain];
-          if (td.impassable && !td.wonder) continue;
+          if (td.impassable) continue;
           var yp = pixelOf(yc, yr, size);
           var yx = yp.x - state.camera.x + size * SQRT3 / 2;
           var yy = yp.y - state.camera.y + size;
@@ -2186,6 +2187,7 @@
           var f = td.food, pr = td.prod, g = td.gold;
           if (yt.resource) { var ry = RESOURCES[yt.resource].yield; f += (ry.food||0); pr += (ry.prod||0); g += (ry.gold||0); }
           if (yt.improvement) { var iy = IMPROVEMENTS[yt.improvement].yield; f += (iy.food||0); pr += (iy.prod||0); g += (iy.gold||0); }
+          if (yt.river) f += 1;
           var parts = [];
           if (f > 0) parts.push({ txt: f + 'f', col: '#4ade80' });
           if (pr > 0) parts.push({ txt: pr + 'p', col: '#f59e0b' });
@@ -3140,7 +3142,7 @@
       var y = p.y - state.camera.y + size2;
       hexPath(x, y, inset);
       var t = tileAt(c, r);
-      var enemy = (t && t.unit && t.unit.civ !== unit.civ) || (t && t.city && t.city.civ !== unit.civ);
+      var enemy = (t && t.unit && t.unit.civ !== unit.civ && atWar(unit.civ, t.unit.civ)) || (t && t.city && t.city.civ !== unit.civ && atWar(unit.civ, t.city.civ));
       var fillA = (enemy ? 0.32 : 0.16) * alpha;
       ctx.fillStyle = enemy ? 'rgba(255, 68, 102, ' + fillA + ')' : 'rgba(0, 255, 136, ' + fillA + ')';
       ctx.fill();
@@ -3929,6 +3931,8 @@
       var gpType = rnd() < 0.5 ? 'great_scientist' : 'great_engineer';
       spawnGreatPerson(civId, gpType);
     }
+    // Recompute threshold after culture spawn may have incremented counter
+    threshold = GP_THRESHOLD + civ.greatPeopleSpawned * 25;
     // Military → Great General
     if (civ.greatPoints.military >= threshold) {
       civ.greatPoints.military -= threshold;
@@ -3961,11 +3965,22 @@
       civ.generalBonus = { turnsLeft: 8, atk: 2 };
     } else if (type === 'great_scientist') {
       // Free tech
+      var ageBefore = getAge(civ);
       var techPicked = pickAiTech(civ);
       if (techPicked) {
         civ.techs[techPicked] = true;
         if (civ.currentTech === techPicked) { civ.currentTech = null; civ.techProgress = 0; }
         logEvent(CIVS[civId].name + ' used a Great Scientist', 'error');
+        // Age advancement
+        var ageAfter = getAge(civ);
+        if (ageAfter.name !== ageBefore.name) {
+          var ageGold = ageAfter.minTechs >= 10 ? 60 : ageAfter.minTechs >= 7 ? 40 : 20;
+          civ.gold += ageGold;
+        }
+        // Science victory check
+        var allDone = true;
+        for (var ti = 0; ti < TECH_ORDER.length; ti++) { if (!civ.techs[TECH_ORDER[ti]]) { allDone = false; break; } }
+        if (allDone) { declareVictory(civId, 'science'); return; }
         civ.currentTech = pickAiTech(civ);
       }
     } else if (type === 'great_engineer') {
@@ -3987,11 +4002,11 @@
       showToast('Army inspired! +2 ATK for 8 turns', 'success');
       logEvent('Great General: +2 ATK for 8 turns', 'success');
     } else if (unit.type === 'great_scientist') {
-      // Open tech screen — first pick is free (instant)
+      // Consume scientist, open tech screen with free pick flag
       state.freetech = true;
       killUnit(unit);
       openTech();
-      return;  // don't kill yet — handled after tech pick
+      return;
     } else if (unit.type === 'great_engineer') {
       // Rush production in the city on this tile
       var t = tileAt(unit.c, unit.r);
@@ -3999,6 +4014,7 @@
         var ct = t.city;
         var p = ct.producing;
         var cost = UNITS[p] ? UNITS[p].cost : (BUILDINGS[p] ? BUILDINGS[p].cost : 0);
+        if (cost <= 0) { showToast('Nothing to rush', 'error'); return; }
         ct.prod = cost;  // will complete next processCity
         showToast('Production rushed in ' + ct.name + '!', 'success');
         logEvent('Great Engineer rushed ' + ct.name + ' production', 'success');
@@ -4014,6 +4030,7 @@
   // AI DIPLOMACY
   // =====================================================================
   function aiDiplomacyCheck() {
+    if (state.victory) return;
     AI_SIDES.forEach(function (aiId) {
       var aiCiv = state.civs[aiId];
       if (!aiCiv || aiCiv.cities.length === 0) return;
@@ -4243,7 +4260,7 @@
       var nearby = tilesInRange(ct.c, ct.r, 3);
       for (var i = 0; i < nearby.length; i++) {
         var t = tileAt(nearby[i][0], nearby[i][1]);
-        if (t && t.unit && t.unit.civ !== 'player' && t.unit.civ !== 'barb' && t.visible.player) {
+        if (t && t.unit && t.unit.civ !== 'player' && t.unit.civ !== 'barb' && t.visible.player && atWar('player', t.unit.civ)) {
           logEvent('Enemy ' + UNITS[t.unit.type].name + ' spotted near ' + ct.name + '!', 'error');
           return; // one alert per city per turn
         }
@@ -4787,7 +4804,7 @@
           var suDef = UNITS[su.type];
           if (suDef.ranged) {
             var ct = tileAt(state.cursor.c, state.cursor.r);
-            if (ct && ct.unit && ct.unit.civ !== 'player' &&
+            if (ct && ct.unit && ct.unit.civ !== 'player' && atWar('player', ct.unit.civ) &&
                 hexDist([su.c, su.r], [state.cursor.c, state.cursor.r]) <= suDef.ranged) {
               rangedAttack(su, ct.unit);
               recomputeVisibility('player');
@@ -5121,6 +5138,7 @@
           var ageBefore = getAge(civ);
           civ.techs[k] = true;
           state.freetech = false;
+          if (civ.currentTech === k) { civ.currentTech = null; civ.techProgress = 0; }
           showToast(def.name + ' discovered free!', 'success');
           sfxBuild();
           // Age advancement check
