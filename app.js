@@ -4948,6 +4948,9 @@
       }
     });
 
+    // Tile yield overlay toggle
+    actions.push({ icon: '⬡', title: showYieldOverlay ? 'Hide Yields' : 'Show Yields', sub: 'Food / prod / gold per tile', do: function () { showYieldOverlay = !showYieldOverlay; showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF'); closeModal(); draw(); } });
+
     var endIcon = '▶';
     var endSub = hasMovesLeft ? Math.max(0, civPl.units.filter(function (u) { return u.moves > 0 && !u.fortified; }).length) + ' unit(s) still have moves' : 'All units acted — ready';
     actions.push({ icon: endIcon, primary: !hasMovesLeft, danger: hasMovesLeft, title: 'End Turn', sub: endSub, do: function () { closeModal(); endTurn(); } });
@@ -5327,11 +5330,6 @@
     } else if (k === 't' || k === 'T') {
       e.preventDefault();
       openTech();
-    } else if (k === 'y' || k === 'Y') {
-      e.preventDefault();
-      showYieldOverlay = !showYieldOverlay;
-      showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF');
-      draw();
     }
   }
 
