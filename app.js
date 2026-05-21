@@ -727,17 +727,16 @@
 
   function spawnStarter(civId, pos) {
     spawnUnit(civId, 'settler', pos[0], pos[1]);
-    // Find up to 3 valid neighboring spots for starter units
+    // Find valid neighboring spots for starter units
     var ns = neighbors(pos[0], pos[1]).filter(function (n) {
       var t = state.map[n[1]][n[0]];
       return !TERRAIN[t.terrain].impassable && !t.unit;
     });
     if (ns.length > 0) spawnUnit(civId, 'warrior', ns[0][0], ns[0][1]);
-    if (ns.length > 1) spawnUnit(civId, 'worker',  ns[1][0], ns[1][1]);
     // Hard difficulty: AI gets an extra warrior
     var diff = DIFFICULTIES[state.difficulty || 'normal'] || DIFFICULTIES.normal;
-    if (diff.aiExtraWarrior && civId !== 'player' && ns.length > 2) {
-      spawnUnit(civId, 'warrior', ns[2][0], ns[2][1]);
+    if (diff.aiExtraWarrior && civId !== 'player' && ns.length > 1) {
+      spawnUnit(civId, 'warrior', ns[1][0], ns[1][1]);
     }
   }
 
@@ -757,7 +756,8 @@
       kills: 0,
       promoAtk: 0,
       promoDef: 0,
-      promoHp: 0
+      promoHp: 0,
+      goto: null           // multi-turn move destination { c, r }
     };
     var t = tileAt(c, r);
     if (t) t.unit = u;
@@ -2774,6 +2774,14 @@
       ctx.arc(cx + size * 0.45, cy + size * 0.45, 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
+    // Queued move indicator
+    if (unit.goto && unit.civ === 'player') {
+      ctx.fillStyle = '#00d4ff';
+      ctx.font = Math.max(6, Math.round(size * 0.18)) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('▸', cx + size * 0.45, cy - size * 0.45);
+    }
     if (unit.fortified) {
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 1.5;
@@ -3771,6 +3779,9 @@
       CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
 
+      // Multi-turn movement: continue queued moves
+      playerAutoMove();
+
       // Auto-improve: player workers with auto flag act automatically
       state.civs.player.units.forEach(function (u) {
         if (u.auto && u.type === 'worker' && u.moves > 0) {
@@ -3788,6 +3799,41 @@
       save();
       draw();
     }, 300);
+  }
+
+  function playerAutoMove() {
+    state.civs.player.units.forEach(function (u) {
+      if (!u.goto || u.moves <= 0) return;
+      // Already arrived
+      if (u.c === u.goto.c && u.r === u.goto.r) { u.goto = null; return; }
+      // Stop if enemies adjacent — let player decide
+      var adj = adjacentEnemy(u);
+      if (adj) { u.goto = null; return; }
+      // Step toward destination
+      var startDist = hexDist([u.c, u.r], [u.goto.c, u.goto.r]);
+      while (u.moves > 0) {
+        if (u.c === u.goto.c && u.r === u.goto.r) { u.goto = null; break; }
+        var ns = neighbors(u.c, u.r).filter(function (n) {
+          var t = tileAt(n[0], n[1]);
+          if (!canEnterTile(u, t)) return false;
+          if (t.unit) return false;   // don't walk into anyone
+          return true;
+        });
+        if (ns.length === 0) { u.goto = null; break; }
+        ns.sort(function (a, b) {
+          return hexDist(a, [u.goto.c, u.goto.r]) - hexDist(b, [u.goto.c, u.goto.r]);
+        });
+        var step = ns[0];
+        // If closest neighbor is not actually closer, we're stuck
+        if (hexDist(step, [u.goto.c, u.goto.r]) >= hexDist([u.c, u.r], [u.goto.c, u.goto.r])) {
+          u.goto = null; break;
+        }
+        moveUnit(u, step[0], step[1]);
+        // Check for enemies after each step
+        var adjNow = adjacentEnemy(u);
+        if (adjNow) { u.goto = null; break; }
+      }
+    });
   }
 
   function checkEnemySpotted() {
@@ -4351,9 +4397,41 @@
           var reach = computeReachable(su);
           var key = state.cursor.c + ',' + state.cursor.r;
           if (key in reach && reach[key].cost > 0) {
+            su.goto = null;  // direct move — clear any queued destination
             var path = pathTo(reach, state.cursor.c, state.cursor.r);
             walkPath(su, path);
             return;
+          }
+
+          // Multi-turn move: destination beyond this turn's reach
+          var destT = tileAt(state.cursor.c, state.cursor.r);
+          if (destT && destT.explored.player && !destT.unit) {
+            // Check tile is theoretically enterable
+            var canReach = canEnterTile(su, destT);
+            if (canReach) {
+              su.goto = { c: state.cursor.c, r: state.cursor.r };
+              // Walk as far as possible this turn toward the destination
+              var bestKey = null, bestDist = Infinity;
+              for (var rk in reach) {
+                if (reach[rk].cost === 0) continue;
+                var parts = rk.split(',');
+                var rc = +parts[0], rr = +parts[1];
+                var rt = tileAt(rc, rr);
+                if (rt && rt.unit && rt.unit !== su) continue;
+                var d = hexDist([rc, rr], [state.cursor.c, state.cursor.r]);
+                if (d < bestDist) { bestDist = d; bestKey = rk; }
+              }
+              if (bestKey) {
+                var bParts = bestKey.split(',');
+                var walkPath2 = pathTo(reach, +bParts[0], +bParts[1]);
+                var terrName = TERRAIN[destT.terrain].name;
+                showToast('Moving toward ' + terrName + '...', 'info');
+                walkPath(su, walkPath2);
+              } else {
+                showToast('Moving next turn...', 'info');
+              }
+              return;
+            }
           }
         }
         // Unreachable target — treat the pinch as a fresh activation
@@ -4408,7 +4486,7 @@
       title = UNITS[u.type].name;
 
       if (def.canFound) {
-        actions.push({ icon: '★', primary: true, title: 'Found City', sub: 'Plant a settlement here', do: function () { foundCity(u); closeModal(); draw(); } });
+        actions.push({ icon: '★', primary: true, title: 'Found City', sub: 'Plant a settlement here', do: function () { u.goto = null; foundCity(u); closeModal(); draw(); } });
       }
       if (def.canImprove) {
         var impKind = pickImprovement(t);
@@ -4435,8 +4513,8 @@
       if (def.canImprove) {
         actions.push({ icon: '⚙', title: u.auto ? 'Manual Control' : 'Auto-Improve', sub: u.auto ? 'Take back direct control' : 'Worker builds automatically each turn', do: function () { u.auto = !u.auto; u.moves = 0; showToast(u.auto ? 'Auto-improve ON' : 'Manual control', 'success'); closeModal(); draw(); } });
       }
-      actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
-      actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
+      actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.goto = null; u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
+      actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.goto = null; u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
     } else if (isCity) {
       title = t.city.name;
       actions.push({ icon: '🏛', primary: true, title: 'Manage ' + t.city.name, sub: 'Production, food, science', do: function () { closeModal(); openCity(t.city); } });
