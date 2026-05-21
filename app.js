@@ -58,8 +58,20 @@
     catapult:  { name: 'Catapult',  cost: 40, hp: 8,  atk: 7, def: 1, move: 2, glyph: '⊕', tech: 'engineering', ranged: 2, siege: true },
     musketman: { name: 'Musketman', cost: 50, hp: 20, atk: 9, def: 4, move: 2, glyph: '⚡', tech: 'gunpowder',  ranged: 2 },
     galley:    { name: 'Galley',    cost: 30, hp: 14, atk: 5, def: 3, move: 3, glyph: '⛵', tech: 'sailing',     naval: true },
-    raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true }
+    raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true },
+    great_general:   { name: 'Great General',   cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚑', tech: null, civilian: true, great: true },
+    great_scientist: { name: 'Great Scientist', cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚗', tech: null, civilian: true, great: true },
+    great_engineer:  { name: 'Great Engineer',  cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚙', tech: null, civilian: true, great: true }
   };
+
+  // Unit upgrade paths: type -> { to, tech, cost }
+  var UPGRADES = {
+    warrior:  { to: 'swordsman',  tech: 'steel',     cost: 30 },
+    archer:   { to: 'musketman',  tech: 'gunpowder',  cost: 35 },
+    horseman: { to: 'swordsman',  tech: 'steel',      cost: 25 }
+  };
+
+  var GP_THRESHOLD = 50;  // base great person points needed
 
   // Worker-built tile improvements. Each one has a context check and a yield.
   // Priority order in pickImprovement matters — specific improvements pick first.
@@ -256,6 +268,46 @@
   function sfxBuild()   { playTone(660, 0.08, 'sine', 0.06); setTimeout(function () { playTone(880, 0.1, 'sine', 0.06); }, 80); }
   function sfxTurnStart() { playTone(523, 0.08, 'sine', 0.05); setTimeout(function () { playTone(659, 0.1, 'sine', 0.05); }, 100); }
   function sfxSelect()  { playTone(520, 0.04, 'square', 0.04); }
+
+  // =====================================================================
+  // TILE YIELD OVERLAY
+  // =====================================================================
+  var showYieldOverlay = false;
+
+  // =====================================================================
+  // DIPLOMACY HELPERS
+  // =====================================================================
+  function dipKey(a, b) {
+    return a < b ? a + '_' + b : b + '_' + a;
+  }
+  function atWar(a, b) {
+    if (a === b) return false;
+    if (a === 'barb' || b === 'barb') return true;  // barbarians always hostile
+    if (!state || !state.diplomacy) return true;
+    var rel = state.diplomacy[dipKey(a, b)];
+    return rel !== 'peace';
+  }
+  function makePeace(a, b) {
+    if (!state.diplomacy) return;
+    state.diplomacy[dipKey(a, b)] = 'peace';
+    var aName = CIVS[a] ? CIVS[a].name : a;
+    var bName = CIVS[b] ? CIVS[b].name : b;
+    if (a === 'player' || b === 'player') {
+      showToast('Peace with ' + (a === 'player' ? bName : aName) + '!', 'success');
+      logEvent('Peace treaty with ' + (a === 'player' ? bName : aName), 'success');
+    }
+  }
+  function declareWarOn(a, b) {
+    if (!state.diplomacy) return;
+    state.diplomacy[dipKey(a, b)] = 'war';
+    var aName = CIVS[a] ? CIVS[a].name : a;
+    var bName = CIVS[b] ? CIVS[b].name : b;
+    if (a === 'player' || b === 'player') {
+      var enemy = a === 'player' ? bName : aName;
+      showToast('War declared on ' + enemy + '!', 'error');
+      logEvent('War with ' + enemy + '!', 'error');
+    }
+  }
 
   // =====================================================================
   // STATE
@@ -665,7 +717,14 @@
       log: [],
       turnLog: [],
       wondersBuilt: {},                  // wonder id -> civ id who built it
-      stats: { unitsKilled: 0, unitsLost: 0 }
+      stats: { unitsKilled: 0, unitsLost: 0 },
+      diplomacy: {
+        ai_player: 'war',
+        ai2_player: 'war',
+        ai_ai2: 'war'
+      },
+      pendingPeace: null,                // { from: civId } when AI offers peace
+      freetech: false                     // great scientist free tech pick
     };
 
     var p  = pickStart(map);
@@ -704,7 +763,10 @@
       units: [],
       techs: {},
       currentTech: null,
-      techProgress: 0
+      techProgress: 0,
+      greatPoints: { culture: 0, military: 0 },
+      greatPeopleSpawned: 0,
+      generalBonus: null
     };
   }
 
@@ -785,7 +847,9 @@
         selected: state.selected,
         victory: state.victory,
         wondersBuilt: state.wondersBuilt,
-        stats: state.stats || { unitsKilled: 0, unitsLost: 0 }
+        stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
+        diplomacy: state.diplomacy,
+        pendingPeace: state.pendingPeace || null
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
     } catch (e) { /* ignore quota */ }
@@ -802,6 +866,12 @@
       state.wondersBuilt = state.wondersBuilt || {};
       state.stats = state.stats || { unitsKilled: 0, unitsLost: 0 };
       state.difficulty = state.difficulty || 'normal';
+      // Diplomacy backfill
+      if (!state.diplomacy) {
+        state.diplomacy = { ai_player: 'war', ai2_player: 'war', ai_ai2: 'war' };
+      }
+      if (state.pendingPeace === undefined) state.pendingPeace = null;
+      if (state.freetech === undefined) state.freetech = false;
       // Restore map dimensions from save (or default to 14x14 for old saves)
       MAP_W = state.mapW || 14;
       MAP_H = state.mapH || 14;
@@ -839,6 +909,13 @@
         (state.civs[id].cities || []).forEach(function (ct) {
           if (ct.capital && !ct.originalCiv) ct.originalCiv = ct.civ;
         });
+      });
+      // Backfill great people fields from older saves
+      CIV_SIDES.forEach(function (id) {
+        var cv = state.civs[id];
+        if (!cv.greatPoints) cv.greatPoints = { culture: 0, military: 0 };
+        if (cv.greatPeopleSpawned === undefined) cv.greatPeopleSpawned = 0;
+        if (cv.generalBonus === undefined) cv.generalBonus = null;
       });
       // Backfill unit promo/kills fields from older saves
       CIV_SIDES.concat(['barb']).forEach(function (id) {
@@ -2089,6 +2166,45 @@
       }
     }
 
+    // --- Tile yield overlay (toggle with Y key) ---
+    if (showYieldOverlay) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      var ySize = Math.max(8, Math.round(size * 0.22));
+      ctx.font = 'bold ' + ySize + 'px monospace';
+      for (var yr = 0; yr < MAP_H; yr++) {
+        for (var yc = 0; yc < MAP_W; yc++) {
+          var yt = state.map[yr][yc];
+          if (!yt.explored.player) continue;
+          var td = TERRAIN[yt.terrain];
+          if (td.impassable && !td.wonder) continue;
+          var yp = pixelOf(yc, yr, size);
+          var yx = yp.x - state.camera.x + size * SQRT3 / 2;
+          var yy = yp.y - state.camera.y + size;
+          if (yx < -size * 2 || yy < -size * 2 || yx > VIEW_W + size * 2 || yy > VIEW_H + size * 2) continue;
+          var f = td.food, pr = td.prod, g = td.gold;
+          if (yt.resource) { var ry = RESOURCES[yt.resource].yield; f += (ry.food||0); pr += (ry.prod||0); g += (ry.gold||0); }
+          if (yt.improvement) { var iy = IMPROVEMENTS[yt.improvement].yield; f += (iy.food||0); pr += (iy.prod||0); g += (iy.gold||0); }
+          var parts = [];
+          if (f > 0) parts.push({ txt: f + 'f', col: '#4ade80' });
+          if (pr > 0) parts.push({ txt: pr + 'p', col: '#f59e0b' });
+          if (g > 0) parts.push({ txt: g + 'g', col: '#fbbf24' });
+          if (parts.length === 0) continue;
+          // Dark background pill
+          var pillW = parts.length * ySize * 1.4 + 4;
+          ctx.fillStyle = 'rgba(0,0,0,0.65)';
+          ctx.fillRect(yx - pillW / 2, yy - ySize * 0.7, pillW, ySize * 1.4);
+          var sx = yx - (parts.length - 1) * ySize * 0.7;
+          for (var pi = 0; pi < parts.length; pi++) {
+            ctx.fillStyle = parts[pi].col;
+            ctx.fillText(parts[pi].txt, sx + pi * ySize * 1.4, yy);
+          }
+        }
+      }
+      ctx.restore();
+    }
+
     // Movement range — selected unit (full) or hover preview (faint)
     if (state.selected) {
       var su = tileAt(state.selected.c, state.selected.r);
@@ -2635,8 +2751,42 @@
     catapult:  drawCatapult,
     musketman: drawMusketman,
     galley:    drawGalley,
-    raider:    drawWarrior   // reuses warrior sprite; civ color makes it grey
+    raider:    drawWarrior,  // reuses warrior sprite; civ color makes it grey
+    great_general:   drawGreatPerson,
+    great_scientist: drawGreatPerson,
+    great_engineer:  drawGreatPerson
   };
+
+  function drawGreatPerson(cx, cy, size, civ) {
+    // Robed figure with civ-colored vestments
+    var px = Math.max(1, size / 16);
+    // Robe body
+    ctx.fillStyle = civ.color;
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.14, cy - size * 0.08);
+    ctx.lineTo(cx + size * 0.14, cy - size * 0.08);
+    ctx.lineTo(cx + size * 0.20, cy + size * 0.28);
+    ctx.lineTo(cx - size * 0.20, cy + size * 0.28);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = px;
+    ctx.stroke();
+    // Head
+    ctx.fillStyle = '#e8c090';
+    ctx.beginPath();
+    ctx.arc(cx, cy - size * 0.18, size * 0.10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = px;
+    ctx.stroke();
+    // Halo
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = px * 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy - size * 0.18, size * 0.15, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   function drawCity(cx, cy, size, city) {
     drawCitySprite(cx, cy, size, city);
@@ -2724,6 +2874,18 @@
     ctx.beginPath();
     ctx.ellipse(cx, cy + size * 0.08, size * 0.46, size * 0.40, 0, 0, Math.PI * 2);
     ctx.stroke();
+
+    // Golden glow for great people
+    if (UNITS[unit.type] && UNITS[unit.type].great) {
+      ctx.save();
+      ctx.shadowColor = '#ffd700';
+      ctx.shadowBlur = size * 0.5;
+      ctx.fillStyle = 'rgba(255,215,0,0.18)';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, size * 0.5, size * 0.44, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     var fn = UNIT_DRAW[unit.type] || drawWarrior;
     fn(cx, cy, size, civ);
@@ -2819,8 +2981,11 @@
         if (!(key in visited) || visited[key].cost > cost) {
           visited[key] = { cost: cost, parent: cc + ',' + cr };
           // Stop expansion at enemy unit / enemy city (those are end-of-path attack targets)
-          var enemyUnit = t.unit && t.unit.civ !== unit.civ;
-          var enemyCity = t.city && t.city.civ !== unit.civ;
+          var enemyUnit = t.unit && t.unit.civ !== unit.civ && atWar(unit.civ, t.unit.civ);
+          var enemyCity = t.city && t.city.civ !== unit.civ && atWar(unit.civ, t.city.civ);
+          // Block on units at peace (can't walk through them)
+          var peaceUnit = t.unit && t.unit.civ !== unit.civ && !atWar(unit.civ, t.unit.civ);
+          if (peaceUnit) continue;
           if (!enemyUnit && !enemyCity) frontier.push([nc, nr, cost]);
         }
       }
@@ -2841,6 +3006,7 @@
         var t = tileAt(cc, rr);
         if (!t || !t.unit) continue;
         if (t.unit.civ === unit.civ) continue;
+        if (!atWar(unit.civ, t.unit.civ)) continue;
         targets.push({ c: cc, r: rr, unit: t.unit });
       }
     }
@@ -2850,6 +3016,7 @@
   function rangedAttack(attacker, defender) {
     var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
     if (aDef.atk === 0) { showToast('Cannot attack'); return false; }
+    if (!atWar(attacker.civ, defender.civ)) { showToast('At peace'); return false; }
     var dTile = tileAt(defender.c, defender.r);
     var terr = TERRAIN[dTile.terrain];
     var dBonus = (terr.defBonus || 0);
@@ -3196,12 +3363,13 @@
     if (t.unit && t.unit.civ === unit.civ) { showToast('Friendly unit there'); return false; }
     if (unit.moves <= 0) { showToast('No moves left'); return false; }
 
-    // Combat if enemy
+    // Combat if enemy (only if at war)
     if (t.unit && t.unit.civ !== unit.civ) {
+      if (!atWar(unit.civ, t.unit.civ)) { showToast('At peace'); return false; }
       return attack(unit, t.unit);
     }
-    // Capture enemy city if no defender (only military units can capture)
-    if (t.city && t.city.civ !== unit.civ) {
+    // Capture enemy city if no defender (only military units can capture, only at war)
+    if (t.city && t.city.civ !== unit.civ && atWar(unit.civ, t.city.civ)) {
       var capture = !t.unit;
       if (!capture) return attack(unit, t.unit);
       if (!UNITS[unit.type].civilian) {
@@ -3287,6 +3455,7 @@
   function attack(attacker, defender) {
     var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
     if (aDef.atk === 0) { showToast('Cannot attack'); return false; }
+    if (!atWar(attacker.civ, defender.civ)) { showToast('At peace'); return false; }
     var dTile = tileAt(defender.c, defender.r);
     var terr = TERRAIN[dTile.terrain];
     var dBonus = (terr.defBonus || 0);
@@ -3358,6 +3527,9 @@
     if (f && f.bonus && f.bonus.atk && !UNITS[unit.type].civilian) bonus += f.bonus.atk;
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
+    // Great General bonus
+    var gb = state.civs[unit.civ].generalBonus;
+    if (gb && gb.turnsLeft > 0 && !UNITS[unit.type].civilian) bonus += gb.atk;
     // Difficulty AI attack bonus
     if (unit.civ !== 'player') {
       var diff = DIFFICULTIES[state.difficulty || 'normal'] || DIFFICULTIES.normal;
@@ -3368,6 +3540,9 @@
 
   function checkPromotion(unit) {
     if (!unit || unit.hp <= 0 || UNITS[unit.type].civilian) return;
+    // Military XP for great general
+    var civ = state.civs[unit.civ];
+    if (civ && civ.greatPoints) civ.greatPoints.military += 5;
     var kills = unit.kills || 0;
     var totalPromos = (unit.promoAtk || 0) + (unit.promoDef || 0) + (unit.promoHp || 0);
     var earned = Math.floor(kills / 2);
@@ -3534,7 +3709,7 @@
     var targets = [];
     for (var i = 0; i < ns.length; i++) {
       var t = tileAt(ns[i][0], ns[i][1]);
-      if (t && t.unit && t.unit.civ !== city.civ && t.unit.civ !== 'barb') {
+      if (t && t.unit && t.unit.civ !== city.civ && atWar(city.civ, t.unit.civ)) {
         targets.push(t.unit);
       }
     }
@@ -3645,6 +3820,7 @@
       var u = UNITS[k];
       if (u.tech && !civ.techs[u.tech]) continue;
       if (u.barb) continue;             // raiders aren't trainable
+      if (u.great) continue;            // great people aren't trainable
       if (u.naval && city && !isCoastalCity(city)) continue; // naval only at coastal cities
       out.push(k);
     }
@@ -3710,6 +3886,207 @@
     return null;
   }
 
+  // =====================================================================
+  // UNIT UPGRADES
+  // =====================================================================
+  function canUpgrade(unit) {
+    var up = UPGRADES[unit.type];
+    if (!up) return null;
+    var civ = state.civs[unit.civ];
+    if (!civ.techs[up.tech]) return null;
+    if (civ.gold < up.cost) return null;
+    return up;
+  }
+  function upgradeUnit(unit) {
+    var up = UPGRADES[unit.type];
+    if (!up) return;
+    var civ = state.civs[unit.civ];
+    if (!civ.techs[up.tech] || civ.gold < up.cost) return;
+    civ.gold -= up.cost;
+    var newDef = UNITS[up.to];
+    var hpRatio = unit.hp / unit.maxHp;
+    unit.type = up.to;
+    unit.maxHp = newDef.hp + (unit.promoHp || 0) * 2;
+    unit.hp = Math.max(1, Math.round(unit.maxHp * hpRatio));
+    unit.maxMoves = newDef.move;
+    unit.moves = 0;
+    sfxBuild();
+    showToast(newDef.name + ' upgraded!', 'success');
+  }
+
+  // =====================================================================
+  // GREAT PEOPLE
+  // =====================================================================
+  function checkGreatPeople(civId) {
+    var civ = state.civs[civId];
+    if (!civ.greatPoints) return;
+    var threshold = GP_THRESHOLD + civ.greatPeopleSpawned * 25;
+
+    // Culture → Great Scientist or Great Engineer
+    if (civ.greatPoints.culture >= threshold) {
+      civ.greatPoints.culture -= threshold;
+      civ.greatPeopleSpawned++;
+      var gpType = rnd() < 0.5 ? 'great_scientist' : 'great_engineer';
+      spawnGreatPerson(civId, gpType);
+    }
+    // Military → Great General
+    if (civ.greatPoints.military >= threshold) {
+      civ.greatPoints.military -= threshold;
+      civ.greatPeopleSpawned++;
+      spawnGreatPerson(civId, 'great_general');
+    }
+  }
+
+  function spawnGreatPerson(civId, type) {
+    var civ = state.civs[civId];
+    // AI auto-activates immediately
+    if (AI_SIDES.indexOf(civId) >= 0) {
+      activateGreatPersonAI(civId, type);
+      return;
+    }
+    // Player: spawn on map near capital/first city
+    var home = civ.cities[0];
+    if (!home) return;
+    var spot = findSpawnTile(home, type);
+    if (!spot) return;
+    spawnUnit(civId, type, spot[0], spot[1]);
+    sfxBuild();
+    showToast(UNITS[type].name + ' has been born!', 'success');
+    logEvent(UNITS[type].name + ' appeared near ' + home.name, 'success');
+  }
+
+  function activateGreatPersonAI(civId, type) {
+    var civ = state.civs[civId];
+    if (type === 'great_general') {
+      civ.generalBonus = { turnsLeft: 8, atk: 2 };
+    } else if (type === 'great_scientist') {
+      // Free tech
+      var techPicked = pickAiTech(civ);
+      if (techPicked) {
+        civ.techs[techPicked] = true;
+        if (civ.currentTech === techPicked) { civ.currentTech = null; civ.techProgress = 0; }
+        logEvent(CIVS[civId].name + ' used a Great Scientist', 'error');
+        civ.currentTech = pickAiTech(civ);
+      }
+    } else if (type === 'great_engineer') {
+      // Rush production in biggest city
+      var best = null;
+      civ.cities.forEach(function (ct) { if (!best || ct.pop > best.pop) best = ct; });
+      if (best) {
+        var p = best.producing;
+        var cost = UNITS[p] ? UNITS[p].cost : (BUILDINGS[p] ? BUILDINGS[p].cost : 0);
+        best.prod = cost;  // will complete next processCity
+      }
+    }
+  }
+
+  function activateGreatPerson(unit) {
+    var civ = state.civs[unit.civ];
+    if (unit.type === 'great_general') {
+      civ.generalBonus = { turnsLeft: 8, atk: 2 };
+      showToast('Army inspired! +2 ATK for 8 turns', 'success');
+      logEvent('Great General: +2 ATK for 8 turns', 'success');
+    } else if (unit.type === 'great_scientist') {
+      // Open tech screen — first pick is free (instant)
+      state.freetech = true;
+      killUnit(unit);
+      openTech();
+      return;  // don't kill yet — handled after tech pick
+    } else if (unit.type === 'great_engineer') {
+      // Rush production in the city on this tile
+      var t = tileAt(unit.c, unit.r);
+      if (t && t.city && t.city.civ === unit.civ) {
+        var ct = t.city;
+        var p = ct.producing;
+        var cost = UNITS[p] ? UNITS[p].cost : (BUILDINGS[p] ? BUILDINGS[p].cost : 0);
+        ct.prod = cost;  // will complete next processCity
+        showToast('Production rushed in ' + ct.name + '!', 'success');
+        logEvent('Great Engineer rushed ' + ct.name + ' production', 'success');
+      } else {
+        showToast('Must be in your city', 'error');
+        return;
+      }
+    }
+    killUnit(unit);
+  }
+
+  // =====================================================================
+  // AI DIPLOMACY
+  // =====================================================================
+  function aiDiplomacyCheck() {
+    AI_SIDES.forEach(function (aiId) {
+      var aiCiv = state.civs[aiId];
+      if (!aiCiv || aiCiv.cities.length === 0) return;
+      var aiMil = aiCiv.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+
+      // Check vs player
+      if (atWar(aiId, 'player')) {
+        var plMil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+        // Offer peace if significantly weaker
+        if (aiMil < plMil * 0.5 && aiCiv.cities.length <= state.civs.player.cities.length && state.turn >= 8) {
+          if (!state.pendingPeace && rnd() < 0.3) {
+            state.pendingPeace = { from: aiId };
+          }
+        }
+      } else {
+        // At peace — maybe declare war if strong enough and enough turns passed
+        var plMil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+        if (aiMil >= plMil * 1.5 && aiMil >= 4 && state.turn >= 15 && rnd() < 0.15) {
+          declareWarOn(aiId, 'player');
+        }
+      }
+
+      // AI vs AI diplomacy
+      AI_SIDES.forEach(function (otherId) {
+        if (otherId === aiId) return;
+        var otherCiv = state.civs[otherId];
+        if (!otherCiv || otherCiv.cities.length === 0) return;
+        var otherMil = otherCiv.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+        if (atWar(aiId, otherId)) {
+          // Peace if both weak
+          if (aiMil <= 2 && otherMil <= 2 && rnd() < 0.2) {
+            makePeace(aiId, otherId);
+          }
+        } else {
+          // War if strong
+          if (aiMil >= otherMil * 1.5 && aiMil >= 4 && state.turn >= 12 && rnd() < 0.1) {
+            declareWarOn(aiId, otherId);
+          }
+        }
+      });
+    });
+  }
+
+  function showPeaceOffer() {
+    if (!state.pendingPeace) return;
+    var fromId = state.pendingPeace.from;
+    var fromName = CIVS[fromId] ? CIVS[fromId].name : 'Enemy';
+    var actions = [];
+    actions.push({
+      icon: '☮', primary: true, title: 'Accept Peace',
+      sub: 'End the war with ' + fromName,
+      do: function () { makePeace('player', fromId); state.pendingPeace = null; closeModal(); draw(); }
+    });
+    actions.push({
+      icon: '⚔', title: 'Reject', danger: true,
+      sub: 'Continue the war',
+      do: function () { state.pendingPeace = null; closeModal(); draw(); }
+    });
+    var list = document.getElementById('action-list');
+    list.innerHTML = '';
+    actions.forEach(function (a) {
+      var row = document.createElement('button');
+      row.className = 'action-row focusable' + (a.primary ? ' primary' : '') + (a.danger ? ' danger' : '');
+      row.innerHTML = '<div class="action-icon">' + a.icon + '</div>' +
+        '<div class="action-body"><div class="action-title">' + a.title + '</div>' +
+        '<div class="action-sub">' + a.sub + '</div></div>';
+      row.addEventListener('click', a.do);
+      list.appendChild(row);
+    });
+    document.getElementById('action-title').textContent = fromName + ' Offers Peace';
+    showModal('action-menu');
+  }
+
   function declareVictory(civId, kind) {
     state.victory = civId;
     showEndScreen(civId, kind);
@@ -3728,12 +4105,16 @@
     pl.cities.forEach(processCity);
     pl.gold += pl.goldPerTurn;
     progressTech(pl);
+    // Great people culture points from temples
+    pl.cities.forEach(function (ct) { if (ct.buildings && ct.buildings.temple) pl.greatPoints.culture += 3; });
+    checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
     state.currentCiv = 'ai';
     aiThinking = true;
     flashEndTurn();
     setTimeout(function () {
+      aiDiplomacyCheck();
       aiTurn();
       barbTurn();
 
@@ -3745,6 +4126,22 @@
         c.cities.forEach(processCity);
         c.gold += c.goldPerTurn;
         progressTech(c);
+        // Great people culture points for AI
+        c.cities.forEach(function (ct) { if (ct.buildings && ct.buildings.temple) c.greatPoints.culture += 3; });
+        checkGreatPeople(id);
+        // AI auto-upgrades
+        c.units.slice().forEach(function (u) {
+          if (canUpgrade(u)) upgradeUnit(u);
+        });
+      });
+
+      // Decay general bonuses for all civs
+      CIV_SIDES.forEach(function (id) {
+        var gb = state.civs[id].generalBonus;
+        if (gb) {
+          gb.turnsLeft--;
+          if (gb.turnsLeft <= 0) state.civs[id].generalBonus = null;
+        }
       });
 
       // Check player elimination — no cities and no settlers means defeat
@@ -3793,6 +4190,10 @@
       checkEnemySpotted();
 
       sfxTurnStart();
+      // Show peace offer from AI if pending
+      if (state.pendingPeace) {
+        setTimeout(function () { showPeaceOffer(); }, 400);
+      }
       autoSelectNextUnit();
       showTurnSummary();
       aiThinking = false;
@@ -4086,7 +4487,7 @@
       var ns = neighbors(ct.c, ct.r);
       for (var i = 0; i < ns.length; i++) {
         var nt = tileAt(ns[i][0], ns[i][1]);
-        if (nt && nt.unit && nt.unit.civ !== u.civ && !UNITS[nt.unit.type].civilian) {
+        if (nt && nt.unit && nt.unit.civ !== u.civ && atWar(u.civ, nt.unit.civ) && !UNITS[nt.unit.type].civilian) {
           if (!threatenedCity || hexDist([u.c, u.r], [ct.c, ct.r]) < hexDist([u.c, u.r], [threatenedCity.c, threatenedCity.r])) {
             threatenedCity = ct;
           }
@@ -4123,6 +4524,7 @@
     var bestTarget = null, bestPri = Infinity;
     CIV_SIDES.forEach(function (id) {
       if (id === u.civ) return;
+      if (!atWar(u.civ, id)) return;
       // Enemy cities — prioritize undefended and capitals
       state.civs[id].cities.forEach(function (ct) {
         var ctTile = tileAt(ct.c, ct.r);
@@ -4187,6 +4589,7 @@
     var best = null, bestD = Infinity;
     for (var key in state.civs) {
       if (key === u.civ) continue;
+      if (!atWar(u.civ, key)) continue;
       state.civs[key].units.forEach(function (e) {
         var d = hexDist([u.c, u.r], [e.c, e.r]);
         if (d < bestD) { bestD = d; best = [e.c, e.r]; }
@@ -4513,6 +4916,18 @@
       if (def.canImprove) {
         actions.push({ icon: '⚙', title: u.auto ? 'Manual Control' : 'Auto-Improve', sub: u.auto ? 'Take back direct control' : 'Worker builds automatically each turn', do: function () { u.auto = !u.auto; u.moves = 0; showToast(u.auto ? 'Auto-improve ON' : 'Manual control', 'success'); closeModal(); draw(); } });
       }
+      // Great person activation
+      if (def.great) {
+        var gpLabel = u.type === 'great_general' ? 'Inspire Army (+2 ATK, 8 turns)' :
+                      u.type === 'great_scientist' ? 'Free Technology' :
+                      'Rush City Production';
+        actions.push({ icon: '✦', primary: true, title: 'Activate', sub: gpLabel, do: function () { closeModal(); activateGreatPerson(u); draw(); } });
+      }
+      // Unit upgrade
+      var upInfo = canUpgrade(u);
+      if (upInfo) {
+        actions.push({ icon: '⬆', primary: true, title: 'Upgrade → ' + UNITS[upInfo.to].name, sub: upInfo.cost + ' gold', do: function () { upgradeUnit(u); closeModal(); draw(); } });
+      }
       actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.goto = null; u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
       actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.goto = null; u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
     } else if (isCity) {
@@ -4522,6 +4937,16 @@
 
     // Global actions (always at bottom)
     actions.push({ icon: '◆', title: 'Research', sub: civPl.currentTech ? TECHS[civPl.currentTech].name + ' · ' + civPl.techProgress + '/' + TECHS[civPl.currentTech].cost : 'Choose research', do: function () { closeModal(); openTech(); } });
+
+    // Diplomacy — declare war on AIs at peace
+    ['ai', 'ai2'].forEach(function (aiId) {
+      if (!state.civs[aiId]) return;
+      var dk = dipKey('player', aiId);
+      if (state.diplomacy[dk] === 'peace') {
+        var aiName = state.civs[aiId].name;
+        actions.push({ icon: '⚔', danger: true, title: 'Declare War on ' + aiName, sub: 'Break the peace treaty', do: function () { declareWarOn('player', aiId); closeModal(); draw(); } });
+      }
+    });
 
     var endIcon = '▶';
     var endSub = hasMovesLeft ? Math.max(0, civPl.units.filter(function (u) { return u.moves > 0 && !u.fortified; }).length) + ' unit(s) still have moves' : 'All units acted — ready';
@@ -4561,7 +4986,7 @@
     var ns = neighbors(u.c, u.r);
     for (var i = 0; i < ns.length; i++) {
       var t = tileAt(ns[i][0], ns[i][1]);
-      if (t && t.unit && t.unit.civ !== u.civ) return { c: ns[i][0], r: ns[i][1], unit: t.unit };
+      if (t && t.unit && t.unit.civ !== u.civ && atWar(u.civ, t.unit.civ)) return { c: ns[i][0], r: ns[i][1], unit: t.unit };
     }
     return null;
   }
@@ -4654,7 +5079,7 @@
         '<span style="color:#888;font-size:11px">Unlocks: ' + def.unlocks + '</span>' +
         '<div class="bar s" style="margin-top:6px"><i style="width:' + pct + '%"></i></div>';
     } else {
-      cur.textContent = 'No research. Pick one:';
+      cur.textContent = state.freetech ? 'Great Scientist — pick a free tech:' : 'No research. Pick one:';
     }
 
     var list = document.getElementById('tech-list');
@@ -4688,6 +5113,29 @@
         '<div class="action-sub">' + status + ' · ' + def.unlocks + '</div></div>';
       row.addEventListener('click', function () {
         if (!canResearch || k === civ.currentTech) return;
+        if (state.freetech) {
+          // Great Scientist — instantly complete this tech
+          var ageBefore = getAge(civ);
+          civ.techs[k] = true;
+          state.freetech = false;
+          showToast(def.name + ' discovered free!', 'success');
+          sfxBuild();
+          // Age advancement check
+          var ageAfter = getAge(civ);
+          if (ageAfter.name !== ageBefore.name) {
+            var ageGold = ageAfter.minTechs >= 10 ? 60 : ageAfter.minTechs >= 7 ? 40 : 20;
+            civ.gold += ageGold;
+            showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
+          }
+          // Science victory check
+          var allDone = true;
+          for (var ti = 0; ti < TECH_ORDER.length; ti++) { if (!civ.techs[TECH_ORDER[ti]]) { allDone = false; break; } }
+          if (allDone) { closeModal(); showEndScreen('player', 'science'); return; }
+          closeModal();
+          updateHud();
+          draw();
+          return;
+        }
         civ.currentTech = k;
         civ.techProgress = 0;
         showToast('Researching ' + def.name);
@@ -4879,6 +5327,11 @@
     } else if (k === 't' || k === 'T') {
       e.preventDefault();
       openTech();
+    } else if (k === 'y' || k === 'Y') {
+      e.preventDefault();
+      showYieldOverlay = !showYieldOverlay;
+      showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF');
+      draw();
     }
   }
 
