@@ -6,6 +6,18 @@
   // =====================================================================
   var STORAGE_KEY = 'mdg_microciv_v1';
   var MAP_W = 14, MAP_H = 14;
+  var MAP_SIZES = {
+    small:  { w: 10, h: 10, label: 'Small',  desc: 'Faster games, tight quarters' },
+    normal: { w: 14, h: 14, label: 'Normal', desc: 'Standard experience' },
+    large:  { w: 18, h: 18, label: 'Large',  desc: 'Epic sprawl, longer games' }
+  };
+  var DIFFICULTIES = {
+    easy:   { label: 'Easy',   desc: 'Relaxed AI, late aggression', aiAtkBonus: -1, aiAggroTurn: 20, aiExtraWarrior: false },
+    normal: { label: 'Normal', desc: 'Balanced challenge',         aiAtkBonus: 0,  aiAggroTurn: 10, aiExtraWarrior: false },
+    hard:   { label: 'Hard',   desc: 'Aggressive AI, tough fights', aiAtkBonus: 1,  aiAggroTurn: 8,  aiExtraWarrior: true }
+  };
+  var selectedMapSize = 'normal';
+  var selectedDifficulty = 'normal';
   var ZOOM_LEVELS = [26, 44, 64];       // hex radius in px — far / normal / close
   var ZOOM_NAMES  = ['FAR', 'NORMAL', 'CLOSE'];
   var DEFAULT_ZOOM = 1;
@@ -212,6 +224,38 @@
   function factionOf(sideId) {
     return FACTIONS[state.civs[sideId].faction] || FACTIONS.solaris;
   }
+
+  // =====================================================================
+  // SOUND EFFECTS (Web Audio)
+  // =====================================================================
+  var audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    }
+    return audioCtx;
+  }
+  function playTone(freq, dur, type, vol) {
+    var ac = getAudioCtx();
+    if (!ac) return;
+    try {
+      var osc = ac.createOscillator();
+      var gain = ac.createGain();
+      osc.type = type || 'square';
+      osc.frequency.value = freq;
+      gain.gain.value = vol || 0.08;
+      gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+      osc.connect(gain);
+      gain.connect(ac.destination);
+      osc.start(ac.currentTime);
+      osc.stop(ac.currentTime + dur);
+    } catch (e) {}
+  }
+  function sfxMove()   { playTone(440, 0.06, 'square', 0.05); }
+  function sfxAttack()  { playTone(180, 0.12, 'sawtooth', 0.10); setTimeout(function () { playTone(120, 0.15, 'square', 0.06); }, 40); }
+  function sfxBuild()   { playTone(660, 0.08, 'sine', 0.06); setTimeout(function () { playTone(880, 0.1, 'sine', 0.06); }, 80); }
+  function sfxTurnStart() { playTone(523, 0.08, 'sine', 0.05); setTimeout(function () { playTone(659, 0.1, 'sine', 0.05); }, 100); }
+  function sfxSelect()  { playTone(520, 0.04, 'square', 0.04); }
 
   // =====================================================================
   // STATE
@@ -429,11 +473,13 @@
     placeWonder(map, 'volcano', ['mountain','hills','plains']);
     placeWonder(map, 'geyser',  ['grass','plains','forest']);
 
-    // Carve 2 rivers from high terrain toward water/edge
-    placeRivers(map, 2);
+    // Carve rivers — scale with map size
+    var riverCount = MAP_W <= 10 ? 1 : (MAP_W >= 18 ? 3 : 2);
+    placeRivers(map, riverCount);
 
-    // Scatter ~8 tribal villages
-    placeVillages(map, 8);
+    // Scatter tribal villages — scale with map area
+    var villageCount = Math.max(3, Math.round(MAP_W * MAP_H / 25));
+    placeVillages(map, villageCount);
 
     return map;
   }
@@ -548,7 +594,9 @@
     if (awayFrom && awayFrom.length) {
       existing = (typeof awayFrom[0] === 'number') ? [awayFrom] : awayFrom;
     }
-    var minDist = 8;
+    // Scale minimum distance with map size
+    var minDist = Math.max(4, Math.floor(Math.min(MAP_W, MAP_H) * 0.55));
+    var fallbackDist = Math.max(3, minDist - 2);
     for (var tries = 0; tries < 600; tries++) {
       var c = rndInt(2, MAP_W - 3);
       var r = rndInt(2, MAP_H - 3);
@@ -565,7 +613,7 @@
         if (!TERRAIN[map[ns[j][1]][ns[j][0]].terrain].impassable) ok++;
       }
       if (ok >= 4) return [c, r];
-      if (tries > 300) minDist = 6;
+      if (tries > 300) minDist = fallbackDist;
     }
     return [Math.floor(MAP_W / 2), Math.floor(MAP_H / 2)];
   }
@@ -583,6 +631,11 @@
     var aiFaction  = others[0];
     var ai2Faction = others[1];
 
+    // Apply map size
+    var mSize = MAP_SIZES[selectedMapSize] || MAP_SIZES.normal;
+    MAP_W = mSize.w;
+    MAP_H = mSize.h;
+
     applyFaction('player', playerFaction);
     applyFaction('ai',  aiFaction);
     applyFaction('ai2', ai2Faction);
@@ -594,6 +647,9 @@
       turn: 1,
       currentCiv: 'player',
       map: map,
+      mapW: MAP_W,
+      mapH: MAP_H,
+      difficulty: selectedDifficulty,
       civs: {
         player: makeCiv('player', playerFaction),
         ai:     makeCiv('ai',  aiFaction),
@@ -608,7 +664,8 @@
       victory: null,                     // 'player' | 'ai' | null
       log: [],
       turnLog: [],
-      wondersBuilt: {}                   // wonder id -> civ id who built it
+      wondersBuilt: {},                  // wonder id -> civ id who built it
+      stats: { unitsKilled: 0, unitsLost: 0 }
     };
 
     var p  = pickStart(map);
@@ -670,13 +727,18 @@
 
   function spawnStarter(civId, pos) {
     spawnUnit(civId, 'settler', pos[0], pos[1]);
-    // Find up to 2 valid neighboring spots for starter warriors
+    // Find up to 3 valid neighboring spots for starter units
     var ns = neighbors(pos[0], pos[1]).filter(function (n) {
       var t = state.map[n[1]][n[0]];
       return !TERRAIN[t.terrain].impassable && !t.unit;
     });
     if (ns.length > 0) spawnUnit(civId, 'warrior', ns[0][0], ns[0][1]);
     if (ns.length > 1) spawnUnit(civId, 'worker',  ns[1][0], ns[1][1]);
+    // Hard difficulty: AI gets an extra warrior
+    var diff = DIFFICULTIES[state.difficulty || 'normal'] || DIFFICULTIES.normal;
+    if (diff.aiExtraWarrior && civId !== 'player' && ns.length > 2) {
+      spawnUnit(civId, 'warrior', ns[2][0], ns[2][1]);
+    }
   }
 
   function spawnUnit(civId, type, c, r) {
@@ -691,7 +753,11 @@
       moves: def.move,
       maxMoves: def.move,
       fortified: false,
-      hasActed: false
+      hasActed: false,
+      kills: 0,
+      promoAtk: 0,
+      promoDef: 0,
+      promoHp: 0
     };
     var t = tileAt(c, r);
     if (t) t.unit = u;
@@ -708,6 +774,9 @@
         turn: state.turn,
         currentCiv: state.currentCiv,
         map: state.map,
+        mapW: MAP_W,
+        mapH: MAP_H,
+        difficulty: state.difficulty || 'normal',
         civs: state.civs,
         cursor: state.cursor,
         camera: state.camera,
@@ -715,7 +784,8 @@
         mode: state.mode,
         selected: state.selected,
         victory: state.victory,
-        wondersBuilt: state.wondersBuilt
+        wondersBuilt: state.wondersBuilt,
+        stats: state.stats || { unitsKilled: 0, unitsLost: 0 }
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
     } catch (e) { /* ignore quota */ }
@@ -730,6 +800,11 @@
       state.log = state.log || [];
       state.turnLog = state.turnLog || [];
       state.wondersBuilt = state.wondersBuilt || {};
+      state.stats = state.stats || { unitsKilled: 0, unitsLost: 0 };
+      state.difficulty = state.difficulty || 'normal';
+      // Restore map dimensions from save (or default to 14x14 for old saves)
+      MAP_W = state.mapW || 14;
+      MAP_H = state.mapH || 14;
       if (!state.civs.barb) state.civs.barb = makeBarbCiv();
       // Backfill missing tile fields from older saves
       for (var rr = 0; rr < MAP_H; rr++) {
@@ -763,6 +838,15 @@
       CIV_SIDES.forEach(function (id) {
         (state.civs[id].cities || []).forEach(function (ct) {
           if (ct.capital && !ct.originalCiv) ct.originalCiv = ct.civ;
+        });
+      });
+      // Backfill unit promo/kills fields from older saves
+      CIV_SIDES.concat(['barb']).forEach(function (id) {
+        (state.civs[id].units || []).forEach(function (u) {
+          if (u.kills === undefined) u.kills = 0;
+          if (u.promoAtk === undefined) u.promoAtk = 0;
+          if (u.promoDef === undefined) u.promoDef = 0;
+          if (u.promoHp === undefined) u.promoHp = 0;
         });
       });
       // restore unit refs on tiles
@@ -2668,6 +2752,21 @@
       ctx.setLineDash([]);
     }
 
+    // Promotion stars
+    var totalPromos = (unit.promoAtk || 0) + (unit.promoDef || 0) + (unit.promoHp || 0);
+    if (totalPromos > 0) {
+      var starSize = Math.max(4, size * 0.12);
+      for (var si = 0; si < Math.min(totalPromos, 5); si++) {
+        var sx = cx - (totalPromos * starSize * 0.6) / 2 + si * starSize * 0.6 + starSize * 0.3;
+        var sy = cy + size * 0.52;
+        ctx.fillStyle = '#ffd700';
+        ctx.font = Math.round(starSize) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('★', sx, sy);
+      }
+    }
+
     // Exhausted dot
     if (unit.civ === 'player' && unit.moves === 0 && !unit.fortified) {
       ctx.fillStyle = 'rgba(140,140,160,0.85)';
@@ -2757,7 +2856,7 @@
     var aPower = aDef.atk + atkTechBonus(attacker);
     // Siege bonus: catapults halve city defense bonuses
     if (aDef.siege && dTile.city) dBonus = dBonus * 0.5;
-    var dPower = dDef.def * (1 + dBonus);
+    var dPower = (dDef.def + (defender.promoDef || 0)) * (1 + dBonus);
     var ratio = aPower / (aPower + dPower);
 
     // Ranged: full damage to defender, NO counter-damage to attacker
@@ -2766,14 +2865,19 @@
     defender.hp -= dmgToDef;
     attacker.moves = 0;
 
-    // Ranged combat animation
+    // Ranged combat animation + sound
     addRangedFx(defender.c, defender.r, dmgToDef);
+    if (attacker.civ === 'player' || defender.civ === 'player') sfxAttack();
 
     var msg = aDef.name + ' → ' + dmgToDef + ' dmg (ranged)';
     showToast(msg, attacker.civ === 'player' ? 'success' : 'error');
 
     if (defender.hp <= 0) {
+      attacker.kills = (attacker.kills || 0) + 1;
+      if (attacker.civ === 'player') state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+      if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
+      checkPromotion(attacker);
       // Ranged attacker does NOT move into the vacated tile
     }
     return true;
@@ -3103,6 +3207,7 @@
     unit.moves = Math.max(0, unit.moves - 1);
     unit.fortified = false;
     t.unit = unit;
+    if (unit.civ === 'player') sfxMove();
     // Tribal village reward on entry
     if (t.village) claimVillage(unit, t);
     return true;
@@ -3191,7 +3296,7 @@
     var aPower = aDef.atk + atkTechBonus(attacker);
     // Siege bonus: catapults halve city defense bonuses
     if (aDef.siege && dTile.city) dBonus = dBonus * 0.5;
-    var dPower = dDef.def * (1 + dBonus);
+    var dPower = (dDef.def + (defender.promoDef || 0)) * (1 + dBonus);
     var ratio = aPower / (aPower + dPower);
 
     var dmgToDef = Math.round(12 * ratio + rndInt(0, 3));
@@ -3201,14 +3306,20 @@
     attacker.hp -= dmgToAtk;
     attacker.moves = 0;
 
-    // Combat animations
+    // Combat animations + sound
     addCombatFx(defender.c, defender.r, dmgToDef, dmgToAtk, attacker.c, attacker.r);
+    if (attacker.civ === 'player' || defender.civ === 'player') sfxAttack();
 
     var msg = aDef.name + ' ' + dmgToDef + ' / took ' + dmgToAtk;
     showToast(msg, attacker.civ === 'player' ? 'success' : 'error');
 
     if (defender.hp <= 0) {
+      // Kill tracking & promotions
+      attacker.kills = (attacker.kills || 0) + 1;
+      if (attacker.civ === 'player') state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+      if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
+      checkPromotion(attacker);
       // Only move in and capture if the attacker survived
       if (attacker.hp > 0) {
         var oldT = tileAt(attacker.c, attacker.r);
@@ -3219,7 +3330,16 @@
         newT.unit = attacker;
       }
     }
-    if (attacker.hp <= 0) killUnit(attacker);
+    if (attacker.hp <= 0) {
+      if (defender.civ !== 'player' && attacker.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
+      // Defender gets kill credit if attacker dies from counter-damage
+      if (defender.hp > 0) {
+        defender.kills = (defender.kills || 0) + 1;
+        if (defender.civ === 'player') state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+        checkPromotion(defender);
+      }
+      killUnit(attacker);
+    }
     return true;
   }
 
@@ -3228,7 +3348,36 @@
     if (state.civs[unit.civ].techs.iron && unit.type === 'warrior') bonus += 2;
     var f = FACTIONS[state.civs[unit.civ].faction];
     if (f && f.bonus && f.bonus.atk && !UNITS[unit.type].civilian) bonus += f.bonus.atk;
+    // Unit promotion attack bonus
+    bonus += (unit.promoAtk || 0);
+    // Difficulty AI attack bonus
+    if (unit.civ !== 'player') {
+      var diff = DIFFICULTIES[state.difficulty || 'normal'] || DIFFICULTIES.normal;
+      bonus += diff.aiAtkBonus;
+    }
     return bonus;
+  }
+
+  function checkPromotion(unit) {
+    if (!unit || unit.hp <= 0 || UNITS[unit.type].civilian) return;
+    var kills = unit.kills || 0;
+    var totalPromos = (unit.promoAtk || 0) + (unit.promoDef || 0) + (unit.promoHp || 0);
+    var earned = Math.floor(kills / 2);
+    if (earned <= totalPromos) return;
+    // Auto-promote cycling: HP → ATK → DEF
+    var cycle = totalPromos % 3;
+    if (cycle === 0) {
+      unit.promoHp = (unit.promoHp || 0) + 1;
+      unit.maxHp += 2;
+      unit.hp = Math.min(unit.hp + 2, unit.maxHp);
+      if (unit.civ === 'player') { sfxBuild(); showToast(UNITS[unit.type].name + ' promoted! +2 HP', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +2 HP', 'success'); }
+    } else if (cycle === 1) {
+      unit.promoAtk = (unit.promoAtk || 0) + 1;
+      if (unit.civ === 'player') { sfxBuild(); showToast(UNITS[unit.type].name + ' promoted! +1 ATK', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 ATK', 'success'); }
+    } else {
+      unit.promoDef = (unit.promoDef || 0) + 1;
+      if (unit.civ === 'player') { sfxBuild(); showToast(UNITS[unit.type].name + ' promoted! +1 DEF', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 DEF', 'success'); }
+    }
   }
 
   function killUnit(unit) {
@@ -3358,7 +3507,16 @@
           if (city.civ === 'player') logEvent(city.name + ' trained ' + UNITS[p].name, 'success');
         }
       }
-      city.producing = pickNextProduction(city);
+      // Production completion notification + sound
+      if (city.civ === 'player') {
+        sfxBuild();
+        var nextProd = pickNextProduction(city);
+        var nextName = UNITS[nextProd] ? UNITS[nextProd].name : (BUILDINGS[nextProd] ? BUILDINGS[nextProd].name : nextProd);
+        logEvent(city.name + ' now producing ' + nextName, 'info');
+        city.producing = nextProd;
+      } else {
+        city.producing = pickNextProduction(city);
+      }
     }
   }
 
@@ -3402,6 +3560,8 @@
     }
 
     if (target.hp <= 0) {
+      if (isPlayerCity) state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+      if (isPlayerTarget) state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(target);
       if (isPlayerCity) logEvent('City bombardment killed ' + UNITS[target.type].name + '!', 'success');
     }
@@ -3466,6 +3626,8 @@
       if (available.indexOf('galley') >= 0 && isCoastalCity(city) && rnd() < 0.2) return 'galley';
       return 'warrior';
     }
+    // Player: if current production is a completed building, switch to warrior
+    if (BUILDINGS[city.producing] && city.buildings[city.producing]) return 'warrior';
     return city.producing;
   }
 
@@ -3608,12 +3770,38 @@
       recomputeBorders();
       CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
+
+      // Auto-improve: player workers with auto flag act automatically
+      state.civs.player.units.forEach(function (u) {
+        if (u.auto && u.type === 'worker' && u.moves > 0) {
+          aiWorkerAction(u);
+        }
+      });
+
+      // Enemy spotted alerts — check for visible enemy units near player cities
+      checkEnemySpotted();
+
+      sfxTurnStart();
       autoSelectNextUnit();
       showTurnSummary();
       aiThinking = false;
       save();
       draw();
     }, 300);
+  }
+
+  function checkEnemySpotted() {
+    var pl = state.civs.player;
+    pl.cities.forEach(function (ct) {
+      var nearby = tilesInRange(ct.c, ct.r, 3);
+      for (var i = 0; i < nearby.length; i++) {
+        var t = tileAt(nearby[i][0], nearby[i][1]);
+        if (t && t.unit && t.unit.civ !== 'player' && t.unit.civ !== 'barb' && t.visible.player) {
+          logEvent('Enemy ' + UNITS[t.unit.type].name + ' spotted near ' + ct.name + '!', 'error');
+          return; // one alert per city per turn
+        }
+      }
+    });
   }
 
   function logEvent(msg, kind) {
@@ -3871,7 +4059,8 @@
     }
 
     // ---- Build-up phase: early game, stay home ----
-    var aggressive = state.turn >= 10 && myMil >= 3;
+    var diff = DIFFICULTIES[state.difficulty || 'normal'] || DIFFICULTIES.normal;
+    var aggressive = state.turn >= diff.aiAggroTurn && myMil >= 3;
     if (!aggressive) {
       if (homeCt && hexDist([u.c, u.r], [homeCt.c, homeCt.r]) > 2) {
         aiStepToward(u, [homeCt.c, homeCt.r]);
@@ -4179,6 +4368,7 @@
       var reach2 = computeReachable(u);
       var maxC = 0;
       for (var k in reach2) if (reach2[k].cost > maxC) maxC = reach2[k].cost;
+      sfxSelect();
       showToast(UNITS[u.type].name + ' · ' + u.moves + ' moves');
       return;
     }
@@ -4241,6 +4431,9 @@
             draw();
           }
         });
+      }
+      if (def.canImprove) {
+        actions.push({ icon: '⚙', title: u.auto ? 'Manual Control' : 'Auto-Improve', sub: u.auto ? 'Take back direct control' : 'Worker builds automatically each turn', do: function () { u.auto = !u.auto; u.moves = 0; showToast(u.auto ? 'Auto-improve ON' : 'Manual control', 'success'); closeModal(); draw(); } });
       }
       actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
       actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
@@ -4437,18 +4630,36 @@
     if (winner === 'player') {
       title.textContent = 'Victory';
       title.style.color = '#00ff88';
-      detail.textContent = (kind === 'domination' ? 'You captured every rival capital.' : 'You researched every technology.');
+      detail.innerHTML = (kind === 'domination' ? 'You captured every rival capital.' : 'You researched every technology.');
     } else {
       title.textContent = 'Defeat';
       title.style.color = '#ff4466';
       var winName = CIVS[winner] ? CIVS[winner].name : 'Enemy';
       if (kind === 'domination') {
         var plHasCities = state.civs.player.cities.length > 0;
-        detail.textContent = plHasCities ? winName + ' captured all rival capitals.' : winName + ' conquered your civilization.';
+        detail.innerHTML = plHasCities ? winName + ' captured all rival capitals.' : winName + ' conquered your civilization.';
       } else {
-        detail.textContent = winName + ' completed all research first.';
+        detail.innerHTML = winName + ' completed all research first.';
       }
     }
+    // Score summary
+    var pl = state.civs.player;
+    var techCount = 0;
+    for (var i = 0; i < TECH_ORDER.length; i++) if (pl.techs[TECH_ORDER[i]]) techCount++;
+    var stats = state.stats || {};
+    var diffLabel = DIFFICULTIES[state.difficulty || 'normal'] ? DIFFICULTIES[state.difficulty || 'normal'].label : 'Normal';
+    var mapLabel = '';
+    if (MAP_W <= 10) mapLabel = 'Small';
+    else if (MAP_W >= 18) mapLabel = 'Large';
+    else mapLabel = 'Normal';
+    detail.innerHTML += '<div class="end-stats">' +
+      '<div class="stat-row"><span>Turns</span><span>' + state.turn + '</span></div>' +
+      '<div class="stat-row"><span>Cities</span><span>' + pl.cities.length + '</span></div>' +
+      '<div class="stat-row"><span>Techs</span><span>' + techCount + '/' + TECH_ORDER.length + '</span></div>' +
+      '<div class="stat-row"><span>Kills</span><span>' + (stats.unitsKilled || 0) + '</span></div>' +
+      '<div class="stat-row"><span>Lost</span><span>' + (stats.unitsLost || 0) + '</span></div>' +
+      '<div class="stat-row"><span>Map / Difficulty</span><span>' + mapLabel + ' / ' + diffLabel + '</span></div>' +
+      '</div>';
     showModal('end-screen');
   }
 
@@ -4666,6 +4877,42 @@
         '</div>';
       host.appendChild(btn);
     });
+
+    // --- Map size selector ---
+    var mapRow = document.createElement('div');
+    mapRow.className = 'setup-row';
+    mapRow.innerHTML = '<div class="setup-label">Map Size</div>';
+    var mapBtns = document.createElement('div');
+    mapBtns.className = 'setup-options';
+    ['small', 'normal', 'large'].forEach(function (key) {
+      var ms = MAP_SIZES[key];
+      var btn = document.createElement('button');
+      btn.className = 'setup-btn focusable' + (selectedMapSize === key ? ' active' : '');
+      btn.dataset.action = 'pick-mapsize';
+      btn.dataset.mapsize = key;
+      btn.innerHTML = '<b>' + ms.label + '</b><span class="setup-desc">' + ms.desc + '</span>';
+      mapBtns.appendChild(btn);
+    });
+    mapRow.appendChild(mapBtns);
+    host.appendChild(mapRow);
+
+    // --- Difficulty selector ---
+    var diffRow = document.createElement('div');
+    diffRow.className = 'setup-row';
+    diffRow.innerHTML = '<div class="setup-label">Difficulty</div>';
+    var diffBtns = document.createElement('div');
+    diffBtns.className = 'setup-options';
+    ['easy', 'normal', 'hard'].forEach(function (key) {
+      var d = DIFFICULTIES[key];
+      var btn = document.createElement('button');
+      btn.className = 'setup-btn focusable' + (selectedDifficulty === key ? ' active' : '');
+      btn.dataset.action = 'pick-difficulty';
+      btn.dataset.difficulty = key;
+      btn.innerHTML = '<b>' + d.label + '</b><span class="setup-desc">' + d.desc + '</span>';
+      diffBtns.appendChild(btn);
+    });
+    diffRow.appendChild(diffBtns);
+    host.appendChild(diffRow);
   }
 
   function backToTitle() {
@@ -4709,6 +4956,14 @@
         clearSave();
         newGame(null, fac);
         showScreen('game');
+        break;
+      case 'pick-mapsize':
+        selectedMapSize = el.dataset.mapsize;
+        renderCivCards();
+        break;
+      case 'pick-difficulty':
+        selectedDifficulty = el.dataset.difficulty;
+        renderCivCards();
         break;
       case 'new-game':
         clearSave();

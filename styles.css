@@ -245,6 +245,59 @@ html, body {
   text-align: center;
 }
 
+/* --- Game Setup Options (map size, difficulty) --- */
+.setup-row {
+  padding: 6px 14px;
+}
+.setup-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  margin-bottom: 4px;
+  font-family: var(--font-num);
+}
+.setup-options {
+  display: flex;
+  gap: 6px;
+}
+.setup-btn {
+  flex: 1;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 6px 6px 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+  cursor: pointer;
+  font-family: var(--font-ui);
+}
+.setup-btn b {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  margin-bottom: 1px;
+}
+.setup-desc {
+  display: block;
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1.2;
+}
+.setup-btn.active {
+  border-color: var(--cyan);
+  background: rgba(0,212,255,0.10);
+}
+.setup-btn.active b {
+  color: var(--cyan);
+}
+.setup-btn:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 8px var(--focus-glow);
+}
+
 /* ====================================================================
    FOCUS / BUTTONS
    ==================================================================== */
@@ -883,6 +936,23 @@ html, body {
   margin: 8px 0;
   line-height: 1.5;
 }
+.end-stats {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--card);
+  border-radius: var(--r-sm);
+  text-align: left;
+}
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-row span:first-child { color: var(--muted); }
+.stat-row span:last-child { color: var(--text); font-family: var(--font-num); }
 
 /* ====================================================================
    PROGRESS BAR
