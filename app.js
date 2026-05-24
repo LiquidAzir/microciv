@@ -172,6 +172,11 @@
   };
   var TECH_ORDER = ['pottery','writing','sailing','archery','masonry','husbandry','currency','iron','engineering','theology','philosophy','education','steel','gunpowder','banking'];
 
+  // Victory thresholds (used by culture + economic checks)
+  var CULTURE_VICTORY_WONDERS = 4;     // own this many World Wonders → culture victory
+  var ECONOMIC_VICTORY_GOLD   = 1500;  // hold this much gold...
+  var ECONOMIC_VICTORY_TURNS  = 5;     // ...for this many consecutive turns → economic victory
+
   // Age thresholds — purely cosmetic + small gold bonus on advancement
   var AGES = [
     { name: 'Ancient',   minTechs: 0 },
@@ -777,7 +782,8 @@
       techProgress: 0,
       greatPoints: { culture: 0, military: 0 },
       greatPeopleSpawned: 0,
-      generalBonus: null
+      generalBonus: null,
+      economicCountdown: 0
     };
   }
 
@@ -928,6 +934,7 @@
         if (!cv.greatPoints) cv.greatPoints = { culture: 0, military: 0 };
         if (cv.greatPeopleSpawned === undefined) cv.greatPeopleSpawned = 0;
         if (cv.generalBonus === undefined) cv.generalBonus = null;
+        if (cv.economicCountdown === undefined) cv.economicCountdown = 0;
       });
       // Backfill unit promo/kills fields from older saves
       CIV_SIDES.concat(['barb']).forEach(function (id) {
@@ -4149,6 +4156,39 @@
     showEndScreen(civId, kind);
   }
 
+  // Returns how many World Wonders the given civ owns right now.
+  function wondersOwnedBy(civId) {
+    var n = 0;
+    if (!state.wondersBuilt) return 0;
+    for (var k in state.wondersBuilt) if (state.wondersBuilt[k] === civId) n++;
+    return n;
+  }
+
+  // Per-turn check for culture + economic victories.
+  // Called after each civ's end-of-turn so its updated gold/wonders count.
+  function checkProgressVictories() {
+    if (state.victory) return;
+    for (var i = 0; i < CIV_SIDES.length; i++) {
+      var id = CIV_SIDES[i];
+      var civ = state.civs[id];
+      // Eliminated civs (no cities, no settler) can't win — skip them
+      if (civ.cities.length === 0 && !civ.units.some(function (u) { return u.type === 'settler'; })) continue;
+      // Culture victory: own enough World Wonders
+      if (wondersOwnedBy(id) >= CULTURE_VICTORY_WONDERS) {
+        return declareVictory(id, 'culture');
+      }
+      // Economic victory: hold the threshold for N consecutive turns
+      if (civ.gold >= ECONOMIC_VICTORY_GOLD) {
+        civ.economicCountdown = (civ.economicCountdown || 0) + 1;
+        if (civ.economicCountdown >= ECONOMIC_VICTORY_TURNS) {
+          return declareVictory(id, 'economic');
+        }
+      } else {
+        civ.economicCountdown = 0;
+      }
+    }
+  }
+
   // =====================================================================
   // TURN
   // =====================================================================
@@ -4213,6 +4253,9 @@
           declareVictory(winner, 'domination');
         }
       }
+
+      // Culture + economic victory checks (every civ, every turn)
+      checkProgressVictories();
 
       // Roll into the next turn
       state.turn += 1;
@@ -5219,19 +5262,30 @@
   function showEndScreen(winner, kind) {
     var title = document.getElementById('end-title');
     var detail = document.getElementById('end-detail');
+    var VICTORY_MSG_WIN = {
+      domination: 'You captured every rival capital.',
+      science:    'You researched every technology.',
+      culture:    'You completed ' + CULTURE_VICTORY_WONDERS + ' World Wonders.',
+      economic:   'You held ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.'
+    };
+    var VICTORY_MSG_LOSS = {
+      domination: ' captured all rival capitals.',
+      science:    ' completed all research first.',
+      culture:    ' completed ' + CULTURE_VICTORY_WONDERS + ' World Wonders first.',
+      economic:   ' amassed ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.'
+    };
     if (winner === 'player') {
       title.textContent = 'Victory';
       title.style.color = '#00ff88';
-      detail.innerHTML = (kind === 'domination' ? 'You captured every rival capital.' : 'You researched every technology.');
+      detail.innerHTML = VICTORY_MSG_WIN[kind] || 'You won.';
     } else {
       title.textContent = 'Defeat';
       title.style.color = '#ff4466';
       var winName = CIVS[winner] ? CIVS[winner].name : 'Enemy';
-      if (kind === 'domination') {
-        var plHasCities = state.civs.player.cities.length > 0;
-        detail.innerHTML = plHasCities ? winName + ' captured all rival capitals.' : winName + ' conquered your civilization.';
+      if (kind === 'domination' && state.civs.player.cities.length === 0) {
+        detail.innerHTML = winName + ' conquered your civilization.';
       } else {
-        detail.innerHTML = winName + ' completed all research first.';
+        detail.innerHTML = winName + (VICTORY_MSG_LOSS[kind] || ' won.');
       }
     }
     // Score summary
