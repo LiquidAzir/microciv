@@ -14,3 +14,11 @@ _*.json
 *.log
 node_modules/
 dist/
+
+# Store submission artifacts (icons, screenshots, scratch scripts)
+store/node_modules/
+store/*.png
+store/package*.json
+store/icon.py
+store/shoot.js
+store/verify-*.js

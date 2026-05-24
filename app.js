@@ -231,17 +231,31 @@
     umbra:   ['Nox','Erebus','Thanos','Vesper','Nyx','Tartarus','Mortis','Pyre'],
     tellus:  ['Terra','Gaia','Atlas','Cybele','Demeter','Pomona','Faunus','Vertumnus']
   };
+  // City-state name pool — neutral cosmopolitan flavour
+  var CITY_STATE_NAMES = ['Carthage','Samarkand','Geneva','Lhasa','Petra','Almaty','Antium','Byblos','Kabul','Ragusa'];
 
   // CIVS is the runtime per-side mapping; filled at newGame() from FACTIONS
   var CIVS = {
-    player: { name: 'Solaris', color: '#00d4ff', edge: '#7ce5ff' },
-    ai:     { name: 'Umbra',   color: '#ff7a59', edge: '#ffb59a' },
-    ai2:    { name: 'Tellus',  color: '#b388ff', edge: '#d4b8ff' },
-    barb:   { name: 'Raiders', color: '#7a7888', edge: '#b8b6c4' }
+    player: { name: 'Solaris',    color: '#00d4ff', edge: '#7ce5ff' },
+    ai:     { name: 'Umbra',      color: '#ff7a59', edge: '#ffb59a' },
+    ai2:    { name: 'Tellus',     color: '#b388ff', edge: '#d4b8ff' },
+    barb:   { name: 'Raiders',    color: '#7a7888', edge: '#b8b6c4' },
+    cs:     { name: 'City-State', color: '#ffd34d', edge: '#fff0a8' }
   };
   // Non-barbarian civilization side IDs. Loops over real civs iterate this.
   var CIV_SIDES = ['player', 'ai', 'ai2'];
   var AI_SIDES  = ['ai', 'ai2'];
+
+  // City-state perk kinds — see processCityStatePerks
+  var CS_KINDS = {
+    mercantile:   { name: 'Mercantile',   icon: '●', goldPerTurn: 2,  desc: '+2 gold per turn while allied.' },
+    scientific:   { name: 'Scientific',   icon: '◆', sciPerTurn: 2,   desc: '+2 science per turn while allied.' },
+    militaristic: { name: 'Militaristic', icon: '⚔', militaryAtk: 1,  desc: '+1 attack on your military units while allied.' }
+  };
+  var CS_KIND_ORDER = ['mercantile','scientific','militaristic'];
+  var CS_BEFRIEND_COST = 50;
+  var CS_BRIBE_COST    = 75;   // when bribing away from current ally
+  var CS_LOOT_GOLD     = 100;  // one-time loot when conquering
 
   function applyFaction(sideId, factionId) {
     var f = FACTIONS[factionId];
@@ -722,7 +736,8 @@
         player: makeCiv('player', playerFaction),
         ai:     makeCiv('ai',  aiFaction),
         ai2:    makeCiv('ai2', ai2Faction),
-        barb:   makeBarbCiv()
+        barb:   makeBarbCiv(),
+        cs:     makeCsCiv()
       },
       cursor: { c: 0, r: 0 },
       camera: { x: 0, y: 0 },           // world pixel offset of top-left of view
@@ -737,7 +752,10 @@
       diplomacy: {
         ai_player: 'war',
         ai2_player: 'war',
-        ai_ai2: 'war'
+        ai_ai2: 'war',
+        ai_cs:     'peace',   // dipKey sorts alphabetically: ai < cs < player
+        ai2_cs:    'peace',
+        cs_player: 'peace'
       },
       pendingPeace: null,                // { from: civId } when AI offers peace
       freetech: false                     // great scientist free tech pick
@@ -757,12 +775,80 @@
     state.civs.ai.currentTech     = 'archery';
     state.civs.ai2.currentTech    = 'pottery';
 
+    // City-states: 2 on small/normal, 3 on large
+    spawnCityStates(MAP_W >= 18 ? 3 : 2, [p, a, a2]);
+
     recomputeVisibility('player');
     recomputeVisibility('ai');
     recomputeVisibility('ai2');
     recomputeBorders();
     centerCameraOn(state.cursor.c, state.cursor.r);
     save();
+  }
+
+  // Place city-states on the map. Picks land tiles at least 5 hexes from any
+  // capital and 4 from any other city-state. Each gets a random kind and a
+  // single Warrior defender on its tile.
+  function spawnCityStates(count, civStarts) {
+    var placed = [];
+    var nameBag = CITY_STATE_NAMES.slice();
+    // shuffle name bag
+    for (var i = nameBag.length - 1; i > 0; i--) {
+      var j = Math.floor(rnd() * (i + 1));
+      var tmp = nameBag[i]; nameBag[i] = nameBag[j]; nameBag[j] = tmp;
+    }
+    // candidate tiles: passable, no unit/city, away from civ capitals + each other
+    var candidates = [];
+    for (var r = 0; r < MAP_H; r++) {
+      for (var c = 0; c < MAP_W; c++) {
+        var t = tileAt(c, r);
+        if (!t || t.unit || t.city) continue;
+        if (TERRAIN[t.terrain].impassable) continue;
+        var ok = true;
+        for (var k = 0; k < civStarts.length; k++) {
+          if (hexDist([c, r], civStarts[k]) < 5) { ok = false; break; }
+        }
+        if (!ok) continue;
+        candidates.push([c, r]);
+      }
+    }
+    // shuffle candidates
+    for (var i2 = candidates.length - 1; i2 > 0; i2--) {
+      var jj = Math.floor(rnd() * (i2 + 1));
+      var tmp2 = candidates[i2]; candidates[i2] = candidates[jj]; candidates[jj] = tmp2;
+    }
+    while (placed.length < count && candidates.length) {
+      var pick = candidates.shift();
+      var farEnough = placed.every(function (q) { return hexDist(pick, q) >= 4; });
+      if (!farEnough) continue;
+      var t2 = tileAt(pick[0], pick[1]);
+      var kind = CS_KIND_ORDER[Math.floor(rnd() * CS_KIND_ORDER.length)];
+      var name = nameBag.length ? nameBag.shift() : 'Citadel';
+      var city = {
+        civ: 'cs',
+        name: name,
+        c: pick[0], r: pick[1],
+        pop: 1,
+        food: 0,
+        foodCap: 999,            // city-states don't grow
+        prod: 0,
+        buildings: {},
+        producing: null,
+        queue: [],
+        capital: false,
+        originalCiv: null,
+        onRiver: !!t2.river,
+        foundedTurn: 0,
+        kind: kind,              // 'mercantile' | 'scientific' | 'militaristic'
+        ally: null,              // civId or null
+        isCityState: true
+      };
+      state.civs.cs.cities.push(city);
+      t2.city = city;
+      // Defender warrior at the city tile
+      spawnUnit('cs', 'warrior', pick[0], pick[1]);
+      placed.push(pick);
+    }
   }
 
   function makeCiv(id, factionId) {
@@ -784,6 +870,25 @@
       greatPeopleSpawned: 0,
       generalBonus: null,
       economicCountdown: 0
+    };
+  }
+
+  function makeCsCiv() {
+    // Non-aggressive 'side' that owns city-states. Defenders fight back if attacked,
+    // but cs never expands, researches, or takes a planning turn.
+    return {
+      id: 'cs',
+      name: CIVS.cs.name,
+      color: CIVS.cs.color,
+      gold: 0,
+      science: 0,
+      goldPerTurn: 0,
+      sciPerTurn: 0,
+      cities: [],
+      units: [],
+      techs: {},
+      currentTech: null,
+      techProgress: 0
     };
   }
 
@@ -888,12 +993,16 @@
       if (!state.diplomacy) {
         state.diplomacy = { ai_player: 'war', ai2_player: 'war', ai_ai2: 'war' };
       }
+      if (state.diplomacy.cs_player === undefined) state.diplomacy.cs_player = 'peace';
+      if (state.diplomacy.ai_cs === undefined)     state.diplomacy.ai_cs     = 'peace';
+      if (state.diplomacy.ai2_cs === undefined)    state.diplomacy.ai2_cs    = 'peace';
       if (state.pendingPeace === undefined) state.pendingPeace = null;
       if (state.freetech === undefined) state.freetech = false;
       // Restore map dimensions from save (or default to 14x14 for old saves)
       MAP_W = state.mapW || 14;
       MAP_H = state.mapH || 14;
       if (!state.civs.barb) state.civs.barb = makeBarbCiv();
+      if (!state.civs.cs)   state.civs.cs   = makeCsCiv();
       // Backfill missing tile fields from older saves
       for (var rr = 0; rr < MAP_H; rr++) {
         for (var cc = 0; cc < MAP_W; cc++) {
@@ -938,7 +1047,7 @@
         if (cv.economicCountdown === undefined) cv.economicCountdown = 0;
       });
       // Backfill unit promo/kills fields from older saves
-      CIV_SIDES.concat(['barb']).forEach(function (id) {
+      CIV_SIDES.concat(['barb','cs']).forEach(function (id) {
         (state.civs[id].units || []).forEach(function (u) {
           if (u.kills === undefined) u.kills = 0;
           if (u.promoAtk === undefined) u.promoAtk = 0;
@@ -949,7 +1058,7 @@
       // restore unit refs on tiles
       for (var r = 0; r < MAP_H; r++)
         for (var c = 0; c < MAP_W; c++) state.map[r][c].unit = null;
-      CIV_SIDES.concat(['barb']).forEach(function (id) {
+      CIV_SIDES.concat(['barb','cs']).forEach(function (id) {
         (state.civs[id].units || []).forEach(function (u) {
           var t = tileAt(u.c, u.r); if (t) t.unit = u;
         });
@@ -980,6 +1089,9 @@
     CIV_SIDES.forEach(function (id) {
       (state.civs[id].cities || []).forEach(function (ct) { all.push(ct); });
     });
+    // City-states also claim their hex (always pop 1 = range 1) so neighbours can't
+    // build improvements on the city-state tile.
+    if (state.civs.cs) state.civs.cs.cities.forEach(function (ct) { all.push(ct); });
 
     // Each tile is claimed by the closest city within that city's culture range.
     // Ties broken by city age (older city wins — found order = array order).
@@ -3379,8 +3491,28 @@
     // Upkeep: military units cost 1/turn, civilians free
     var upkeep = civ.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
     gpt -= upkeep;
+    // City-state allies contribute mercantile / scientific perks
+    if (state.civs.cs) {
+      state.civs.cs.cities.forEach(function (csc) {
+        if (csc.ally !== civId) return;
+        var k = CS_KINDS[csc.kind];
+        if (!k) return;
+        if (k.goldPerTurn) gpt += k.goldPerTurn;
+        if (k.sciPerTurn)  spt += k.sciPerTurn;
+      });
+    }
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
+  }
+
+  // Returns the militaristic CS-ally attack bonus for civId (0 if none allied).
+  function csMilitaryBonus(civId) {
+    if (!state.civs.cs) return 0;
+    var n = 0;
+    state.civs.cs.cities.forEach(function (csc) {
+      if (csc.ally === civId && csc.kind === 'militaristic') n += CS_KINDS.militaristic.militaryAtk;
+    });
+    return n;
   }
 
   function moveUnit(unit, c, r) {
@@ -3552,6 +3684,8 @@
     if (state.civs[unit.civ].techs.iron && unit.type === 'warrior') bonus += 2;
     var f = FACTIONS[state.civs[unit.civ].faction];
     if (f && f.bonus && f.bonus.atk && !UNITS[unit.type].civilian) bonus += f.bonus.atk;
+    // Militaristic city-state ally bonus
+    if (!UNITS[unit.type].civilian) bonus += csMilitaryBonus(unit.civ);
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
     // Great General bonus
@@ -3653,9 +3787,28 @@
     }
     var idx = oldOwner.cities.indexOf(city);
     if (idx >= 0) oldOwner.cities.splice(idx, 1);
+    var wasCityState = oldOwnerId === 'cs';
     city.civ = newOwnerId;
     city.pop = Math.max(1, city.pop - 1);
     city.producing = 'warrior';
+    if (wasCityState) {
+      // Strip city-state flavour — it's now a normal city
+      city.kind = null;
+      city.ally = null;
+      city.isCityState = false;
+      city.foodCap = 10;            // unlock growth from the static 999 cap
+      city.foundedTurn = state.turn;
+      // Loot + log
+      state.civs[newOwnerId].gold += CS_LOOT_GOLD;
+      if (newOwnerId === 'player') {
+        showToast('Sacked ' + city.name + ' (+' + CS_LOOT_GOLD + 'g)', 'success');
+        logEvent('Conquered city-state ' + city.name + ' (+' + CS_LOOT_GOLD + ' gold)', 'success');
+      } else {
+        logEvent(CIVS[newOwnerId].name + ' conquered ' + city.name, 'info');
+      }
+      // Any allies of this city-state lose the perk
+      // (csc was sole reference; nothing else to clear besides csc.ally above)
+    }
     state.civs[newOwnerId].cities.push(city);
     // Transfer any wonders the city contains — the conqueror inherits the bonus,
     // the old owner loses it on their remaining cities.
@@ -4284,7 +4437,7 @@
       state.turn += 1;
       state.currentCiv = 'player';
       // Heal BEFORE moves reset — fortified +2 HP, idle (full moves) +1, moved = nothing
-      CIV_SIDES.forEach(function (id) {
+      CIV_SIDES.concat(['cs']).forEach(function (id) {
         state.civs[id].units.forEach(function (u) {
           if (u.hp >= u.maxHp) return;
           if (u.fortified) u.hp = Math.min(u.maxHp, u.hp + 2);
@@ -4295,6 +4448,7 @@
         state.civs[id].units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
       });
       state.civs.barb.units.forEach(function (u) { u.moves = u.maxMoves; });
+      state.civs.cs.units.forEach(function (u) { u.moves = u.maxMoves; });
       recomputeBorders();
       CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
@@ -4459,6 +4613,29 @@
       });
     });
     // City production picked in processCity / pickNextProduction
+    aiCityStateDiplomacy();
+  }
+
+  // AIs occasionally bribe city-states. Skips ones the AI is at war with.
+  function aiCityStateDiplomacy() {
+    if (!state.civs.cs || state.civs.cs.cities.length === 0) return;
+    AI_SIDES.forEach(function (aiId) {
+      if (atWar(aiId, 'cs')) return;
+      var aiCiv = state.civs[aiId];
+      state.civs.cs.cities.forEach(function (csc) {
+        if (csc.ally === aiId) return;
+        var cost = csc.ally ? CS_BRIBE_COST : CS_BEFRIEND_COST;
+        // Modest chance each turn so allegiance shifts but isn't chaotic
+        if (rnd() > 0.08) return;
+        if (aiCiv.gold < cost + 40) return;     // keep a buffer of ~40g
+        aiCiv.gold -= cost;
+        csc.ally = aiId;
+        recomputeIncome(aiId);
+        if (csc.ally === aiId && (aiId === 'ai' || aiId === 'ai2')) {
+          logEvent(CIVS[aiId].name + ' allied with ' + csc.name, 'info');
+        }
+      });
+    });
   }
 
   // -------- Barbarians ----------------------------------------------------
@@ -5061,6 +5238,71 @@
     } else if (isCity) {
       title = t.city.name;
       actions.push({ icon: '🏛', primary: true, title: 'Manage ' + t.city.name, sub: 'Production, food, science', do: function () { closeModal(); openCity(t.city); } });
+    } else if (t.city && t.city.civ === 'cs') {
+      // City-state interaction (only when at peace; if at war, regular combat applies)
+      title = t.city.name + ' (City-State)';
+      var csc = t.city;
+      var kindDef = CS_KINDS[csc.kind] || CS_KINDS.mercantile;
+      var atPeace = !atWar('player', 'cs');
+      if (atPeace) {
+        if (csc.ally === 'player') {
+          actions.push({ icon: kindDef.icon, primary: true, title: 'Allied — ' + kindDef.name, sub: kindDef.desc, disabled: true, do: function () {} });
+        } else if (csc.ally) {
+          var bribeCost = CS_BRIBE_COST;
+          var bribeName = CIVS[csc.ally] ? CIVS[csc.ally].name : csc.ally;
+          actions.push({
+            icon: kindDef.icon,
+            primary: true,
+            title: 'Bribe (' + bribeCost + 'g)',
+            sub: 'Steal alliance from ' + bribeName + ' · ' + kindDef.desc,
+            disabled: civPl.gold < bribeCost,
+            do: function () {
+              civPl.gold -= bribeCost;
+              csc.ally = 'player';
+              recomputeIncome('player');
+              showToast('Allied with ' + csc.name, 'success');
+              logEvent('Allied with ' + csc.name + ' (' + kindDef.name + ')', 'success');
+              closeModal();
+              draw();
+            }
+          });
+        } else {
+          actions.push({
+            icon: kindDef.icon,
+            primary: true,
+            title: 'Befriend (' + CS_BEFRIEND_COST + 'g)',
+            sub: kindDef.desc,
+            disabled: civPl.gold < CS_BEFRIEND_COST,
+            do: function () {
+              civPl.gold -= CS_BEFRIEND_COST;
+              csc.ally = 'player';
+              recomputeIncome('player');
+              showToast('Allied with ' + csc.name, 'success');
+              logEvent('Allied with ' + csc.name + ' (' + kindDef.name + ')', 'success');
+              closeModal();
+              draw();
+            }
+          });
+        }
+        actions.push({
+          icon: '⚔',
+          danger: true,
+          title: 'Declare War',
+          sub: 'Your forces can attack the city',
+          do: function () {
+            state.diplomacy[dipKey('player','cs')] = 'war';
+            if (csc.ally === 'player') csc.ally = null;
+            showToast('Declared war on ' + csc.name, 'error');
+            logEvent('Declared war on ' + csc.name, 'error');
+            recomputeIncome('player');
+            closeModal();
+            draw();
+          }
+        });
+      } else {
+        // At war — show status; combat happens via adjacent-unit attack
+        actions.push({ icon: '⚔', title: 'At War', sub: 'Walk a military unit in to attack', disabled: true, do: function () {} });
+      }
     }
 
     // Global actions (always at bottom)
