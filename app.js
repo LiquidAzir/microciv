@@ -187,6 +187,12 @@
     }
     return AGES[0];
   }
+  // Gold bonus on age advancement — Modern > Medieval > Classical > Ancient
+  function ageAdvanceGold(age) {
+    if (age.minTechs >= AGES[3].minTechs) return 60;
+    if (age.minTechs >= AGES[2].minTechs) return 40;
+    return 20;
+  }
 
   // Selectable factions. Each gives ONE small bonus.
   var FACTIONS = {
@@ -3623,12 +3629,35 @@
   function captureCity(city, newOwnerId) {
     var oldOwner = state.civs[city.civ];
     var oldOwnerId = oldOwner.id;
+    // Barbarian raiders pillage and burn — they don't keep cities.
+    if (newOwnerId === 'barb') {
+      var idx0 = oldOwner.cities.indexOf(city);
+      if (idx0 >= 0) oldOwner.cities.splice(idx0, 1);
+      var t0 = tileAt(city.c, city.r);
+      if (t0) t0.city = null;
+      if (oldOwnerId === 'player') logEvent(city.name + ' was razed by raiders!', 'error');
+      showToast(city.name + ' razed by raiders!', 'error');
+      recomputeBorders();
+      recomputeVisibility(oldOwnerId);
+      recomputeIncome(oldOwnerId);
+      return;
+    }
     var idx = oldOwner.cities.indexOf(city);
     if (idx >= 0) oldOwner.cities.splice(idx, 1);
     city.civ = newOwnerId;
     city.pop = Math.max(1, city.pop - 1);
     city.producing = 'warrior';
     state.civs[newOwnerId].cities.push(city);
+    // Transfer any wonders the city contains — the conqueror inherits the bonus,
+    // the old owner loses it on their remaining cities.
+    if (city.buildings) {
+      for (var bk in city.buildings) {
+        if (!BUILDINGS[bk] || !BUILDINGS[bk].wonder) continue;
+        if (state.wondersBuilt && state.wondersBuilt[bk] === oldOwnerId) {
+          state.wondersBuilt[bk] = newOwnerId;
+        }
+      }
+    }
     recomputeBorders();
     recomputeVisibility(newOwnerId);
     recomputeVisibility(oldOwnerId);            // old owner loses sight around the lost city
@@ -3863,7 +3892,7 @@
       // Check for age advancement
       var ageAfter = getAge(civ);
       if (ageAfter.name !== ageBefore.name) {
-        var ageGold = ageAfter.minTechs >= 12 ? 60 : ageAfter.minTechs >= 8 ? 40 : 20;
+        var ageGold = ageAdvanceGold(ageAfter);
         civ.gold += ageGold;
         if (civ.id === 'player') {
           logEvent('Entered the ' + ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
@@ -3985,7 +4014,7 @@
         // Age advancement
         var ageAfter = getAge(civ);
         if (ageAfter.name !== ageBefore.name) {
-          var ageGold = ageAfter.minTechs >= 12 ? 60 : ageAfter.minTechs >= 8 ? 40 : 20;
+          var ageGold = ageAdvanceGold(ageAfter);
           civ.gold += ageGold;
         }
         // Science victory check
@@ -5160,7 +5189,7 @@
           // Age advancement check
           var ageAfter = getAge(civ);
           if (ageAfter.name !== ageBefore.name) {
-            var ageGold = ageAfter.minTechs >= 12 ? 60 : ageAfter.minTechs >= 8 ? 40 : 20;
+            var ageGold = ageAdvanceGold(ageAfter);
             civ.gold += ageGold;
             showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
           }
