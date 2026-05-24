@@ -922,10 +922,11 @@
         state.civs[id].name = CIVS[id].name;
         state.civs[id].color = CIVS[id].color;
       });
-      // Backfill originalCiv for capital cities from older saves
+      // Backfill originalCiv + build queue for cities from older saves
       CIV_SIDES.forEach(function (id) {
         (state.civs[id].cities || []).forEach(function (ct) {
           if (ct.capital && !ct.originalCiv) ct.originalCiv = ct.civ;
+          if (!Array.isArray(ct.queue)) ct.queue = [];
         });
       });
       // Backfill great people fields from older saves
@@ -3621,6 +3622,7 @@
       prod: 0,
       buildings: {},
       producing: 'warrior', // default
+      queue: [],            // up to 3 items to auto-build after current
       capital: isCapital,
       originalCiv: isCapital ? unit.civ : null,   // tracks who founded this capital for domination check
       onRiver: onRiver,
@@ -3684,6 +3686,26 @@
     if (capturedRivalCapitals >= rivalCount) declareVictory(newOwnerId, 'domination');
   }
 
+  // Pull the next *still-valid* queued production. Skip items that became
+  // invalid since they were queued (wonder taken, regular building already
+  // owned). Returns null if the queue empties without a hit.
+  function popQueuedProduction(city) {
+    if (!Array.isArray(city.queue) || city.queue.length === 0) return null;
+    while (city.queue.length) {
+      var next = city.queue.shift();
+      if (BUILDINGS[next]) {
+        if (BUILDINGS[next].wonder) {
+          if (state.wondersBuilt && state.wondersBuilt[next]) continue;   // race lost
+        } else if (city.buildings[next]) {
+          continue;   // already built
+        }
+      }
+      // Units always remain valid
+      return next;
+    }
+    return null;
+  }
+
   function processCity(city) {
     var y = workableYields(city);
 
@@ -3742,7 +3764,8 @@
       // Production completion notification + sound
       if (city.civ === 'player') {
         sfxBuild();
-        var nextProd = pickNextProduction(city);
+        // Prefer the player's queued plan over the default
+        var nextProd = popQueuedProduction(city) || pickNextProduction(city);
         var nextName = UNITS[nextProd] ? UNITS[nextProd].name : (BUILDINGS[nextProd] ? BUILDINGS[nextProd].name : nextProd);
         logEvent(city.name + ' now producing ' + nextName, 'info');
         city.producing = nextProd;
@@ -5122,7 +5145,30 @@
       '<div>' + pName + ' <span style="color:#888">(' + (city.prod | 0) + '/' + pCost + ', ~' + turns + 't)</span></div>' +
       '<div class="bar"><i style="width:' + pct + '%"></i></div>';
 
-    // Options
+    // Queue section
+    if (!Array.isArray(city.queue)) city.queue = [];
+    var qSection = document.getElementById('c-queue-section');
+    var qList = document.getElementById('c-queue');
+    qList.innerHTML = '';
+    if (city.queue.length === 0) {
+      qSection.classList.add('hidden');
+    } else {
+      qSection.classList.remove('hidden');
+      city.queue.forEach(function (qk, qi) {
+        var qu = UNITS[qk] || BUILDINGS[qk];
+        var chip = document.createElement('button');
+        chip.className = 'queue-chip focusable';
+        chip.title = 'Remove from queue';
+        chip.innerHTML = '<span>' + (qu ? qu.name : qk) + '</span><span class="queue-x">×</span>';
+        chip.addEventListener('click', function () {
+          city.queue.splice(qi, 1);
+          openCity(city);
+        });
+        qList.appendChild(chip);
+      });
+    }
+
+    // Available options
     var civ = state.civs.player;
     var avail = availableProducibles(civ, city);
     var list = document.getElementById('c-options');
@@ -5158,6 +5204,9 @@
         if (uDef.siege) uParts.push('siege');
         sub = uParts.join(' · ') + ' · ' + u.cost + ' prod';
       }
+      // Two-button row: main switches now, side button queues
+      var wrap = document.createElement('div');
+      wrap.className = 'prod-row';
       var row = document.createElement('button');
       row.className = 'action-row focusable' + (isWonder ? ' primary' : '');
       row.innerHTML = '<div class="action-icon">' + iconChar + '</div>' +
@@ -5166,9 +5215,21 @@
       row.addEventListener('click', function () {
         city.producing = k;
         showToast('Producing ' + u.name);
-        openCity(city); // refresh
+        openCity(city);
       });
-      list.appendChild(row);
+      var qBtn = document.createElement('button');
+      qBtn.className = 'queue-add focusable';
+      qBtn.title = 'Add to build queue';
+      qBtn.textContent = '+';
+      qBtn.addEventListener('click', function () {
+        if (city.queue.length >= 3) { showToast('Queue full (3 max)'); return; }
+        city.queue.push(k);
+        showToast('Queued ' + u.name);
+        openCity(city);
+      });
+      wrap.appendChild(row);
+      wrap.appendChild(qBtn);
+      list.appendChild(wrap);
     });
 
     showModal('city-screen');

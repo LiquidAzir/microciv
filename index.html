@@ -95,7 +95,11 @@
         </div>
         <div class="city-build-label">Producing</div>
         <div id="c-current" class="city-current">—</div>
-        <div class="city-build-label">Switch to</div>
+        <div id="c-queue-section" class="city-queue-section hidden">
+          <div class="city-build-label">Up Next</div>
+          <div id="c-queue" class="city-queue"></div>
+        </div>
+        <div class="city-build-label">Switch to <span class="city-queue-hint">· tap row to switch · tap + to queue</span></div>
         <div id="c-options" class="action-list"></div>
       </div>
     </div>
@@ -127,7 +131,7 @@
           <div class="help-section">Controls</div>
           <p><b>Pinch your unit</b> — selects it. Pinch a reachable tile to walk there; enemies in range are red — pinch to attack.</p>
           <p><b>Pinch same unit again</b> — opens its action menu (Found City, Build Improvement, Fortify, Skip).</p>
-          <p><b>Pinch your city</b> — opens the city screen (production, food, science, defense).</p>
+          <p><b>Pinch your city</b> — opens the city screen (production, food, science, defense). Tap an option to switch production now, or pinch the <b>+</b> beside it to queue up to 3 follow-ups.</p>
           <p><b>Pinch empty ground</b> — opens global menu if units have moves; ends the turn if all are done.</p>
           <p><b>Esc</b> — cycles to the next unit with moves left.</p>
           <p><b>Scroll mode</b> — toggle with <kbd>↑ ↓ ↑ ↓</kbd>. Arrows pan the camera freely.</p>

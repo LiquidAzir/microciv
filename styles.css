@@ -876,6 +876,70 @@ html, body {
   gap: 8px;
 }
 
+/* Build queue UI */
+.city-queue-section { display: block; }
+.city-queue-section.hidden { display: none; }
+.city-queue-hint {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 4px;
+}
+.city-queue {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.queue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--warm);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: 11px;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+.queue-chip:focus {
+  outline: 2px solid var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-glow);
+}
+.queue-chip .queue-x {
+  color: var(--muted);
+  font-weight: 700;
+}
+.queue-chip:hover .queue-x { color: var(--red); }
+
+.prod-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.prod-row .action-row { flex: 1; margin-bottom: 0; }
+.queue-add {
+  flex: 0 0 36px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--warm);
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+.queue-add:hover { background: var(--card); color: var(--warm); }
+.queue-add:focus {
+  outline: 2px solid var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-glow);
+}
+
 .tech-current {
   background: var(--card);
   padding: 10px 12px;
