@@ -268,16 +268,44 @@
   }
 
   // =====================================================================
-  // SOUND EFFECTS (Web Audio)
+  // AUDIO — sound effects + procedural ambient music
   // =====================================================================
+  var AUDIO_KEY = 'mdg_microciv_audio';
+  // Defaults: SFX on (preserves prior behaviour), music off (user opts in)
+  var audioPrefs = { sfx: true, music: false };
+  (function loadAudioPrefs() {
+    try {
+      var raw = localStorage.getItem(AUDIO_KEY);
+      if (raw) {
+        var p = JSON.parse(raw);
+        if (typeof p.sfx === 'boolean')   audioPrefs.sfx = p.sfx;
+        if (typeof p.music === 'boolean') audioPrefs.music = p.music;
+      }
+    } catch (e) {}
+  })();
+  function saveAudioPrefs() {
+    try { localStorage.setItem(AUDIO_KEY, JSON.stringify(audioPrefs)); } catch (e) {}
+  }
+
   var audioCtx = null;
+  var sfxMaster = null;     // gain node for SFX (mutable for mute)
+  var musicMaster = null;   // gain node for music
   function getAudioCtx() {
     if (!audioCtx) {
       try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
     }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      try { audioCtx.resume(); } catch (e) {}
+    }
+    if (audioCtx && !sfxMaster) {
+      sfxMaster = audioCtx.createGain();
+      sfxMaster.gain.value = audioPrefs.sfx ? 1.0 : 0.0;
+      sfxMaster.connect(audioCtx.destination);
+    }
     return audioCtx;
   }
   function playTone(freq, dur, type, vol) {
+    if (!audioPrefs.sfx) return;
     var ac = getAudioCtx();
     if (!ac) return;
     try {
@@ -288,16 +316,192 @@
       gain.gain.value = vol || 0.08;
       gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
       osc.connect(gain);
-      gain.connect(ac.destination);
+      gain.connect(sfxMaster || ac.destination);
       osc.start(ac.currentTime);
       osc.stop(ac.currentTime + dur);
     } catch (e) {}
   }
-  function sfxMove()   { playTone(440, 0.06, 'square', 0.05); }
-  function sfxAttack()  { playTone(180, 0.12, 'sawtooth', 0.10); setTimeout(function () { playTone(120, 0.15, 'square', 0.06); }, 40); }
-  function sfxBuild()   { playTone(660, 0.08, 'sine', 0.06); setTimeout(function () { playTone(880, 0.1, 'sine', 0.06); }, 80); }
-  function sfxTurnStart() { playTone(523, 0.08, 'sine', 0.05); setTimeout(function () { playTone(659, 0.1, 'sine', 0.05); }, 100); }
-  function sfxSelect()  { playTone(520, 0.04, 'square', 0.04); }
+  // Schedule a tone at an offset (seconds) from "now" so chord/arpeggio
+  // notes line up without setTimeout drift.
+  function scheduleTone(offset, freq, dur, type, vol) {
+    if (!audioPrefs.sfx) return;
+    var ac = getAudioCtx();
+    if (!ac) return;
+    try {
+      var osc = ac.createOscillator();
+      var gain = ac.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.value = freq;
+      var start = ac.currentTime + offset;
+      gain.gain.setValueAtTime(vol || 0.06, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      osc.connect(gain);
+      gain.connect(sfxMaster || ac.destination);
+      osc.start(start);
+      osc.stop(start + dur);
+    } catch (e) {}
+  }
+
+  // ---------- SFX library --------------------------------------------------
+  function sfxMove()      { playTone(440, 0.06, 'square',   0.05); }
+  function sfxAttack()    { playTone(180, 0.12, 'sawtooth', 0.10); scheduleTone(0.04, 120, 0.15, 'square', 0.06); }
+  function sfxBuild()     { playTone(660, 0.08, 'sine',     0.06); scheduleTone(0.08, 880, 0.10, 'sine',   0.06); }
+  function sfxTurnStart() { playTone(523, 0.08, 'sine',     0.05); scheduleTone(0.10, 659, 0.10, 'sine',   0.05); }
+  function sfxSelect()    { playTone(520, 0.04, 'square',   0.04); }
+  // New SFX
+  function sfxFound()     { // Rising arpeggio — founding a city
+    scheduleTone(0.00, 523, 0.12, 'sine', 0.06);
+    scheduleTone(0.10, 659, 0.12, 'sine', 0.06);
+    scheduleTone(0.20, 784, 0.16, 'sine', 0.06);
+    scheduleTone(0.30, 1047, 0.22, 'sine', 0.07);
+  }
+  function sfxResearch()  { // Tech complete — 3-note bright chime
+    scheduleTone(0.00, 880,  0.10, 'triangle', 0.06);
+    scheduleTone(0.10, 1109, 0.10, 'triangle', 0.06);
+    scheduleTone(0.20, 1319, 0.18, 'triangle', 0.07);
+  }
+  function sfxAgeUp()     { // Age advancement — fuller chord (root, fifth, octave)
+    scheduleTone(0.00, 392, 0.40, 'sine',     0.08);
+    scheduleTone(0.05, 587, 0.40, 'sine',     0.06);
+    scheduleTone(0.10, 784, 0.40, 'sine',     0.05);
+    scheduleTone(0.40, 988, 0.30, 'triangle', 0.06);
+  }
+  function sfxPromote()   { // Unit promotion — short double-chime
+    scheduleTone(0.00, 698, 0.07, 'triangle', 0.06);
+    scheduleTone(0.07, 1047, 0.10, 'triangle', 0.06);
+  }
+  function sfxAlly()      { // City-state befriend — coin clink + chime
+    scheduleTone(0.00, 1568, 0.06, 'square',   0.04);
+    scheduleTone(0.06, 1175, 0.08, 'triangle', 0.05);
+    scheduleTone(0.16, 1568, 0.12, 'sine',     0.06);
+  }
+  function sfxWonder()    { // Wonder complete — bold rising chord
+    scheduleTone(0.00, 261, 0.30, 'sine',     0.07);
+    scheduleTone(0.10, 392, 0.30, 'sine',     0.06);
+    scheduleTone(0.20, 523, 0.40, 'sine',     0.06);
+    scheduleTone(0.30, 784, 0.50, 'triangle', 0.07);
+    scheduleTone(0.55, 1047, 0.40, 'triangle', 0.06);
+  }
+  function sfxVictory()   { // Game won — sparkle arpeggio
+    var notes = [523, 659, 784, 1047, 1319, 1568];
+    for (var i = 0; i < notes.length; i++) scheduleTone(i * 0.08, notes[i], 0.18, 'triangle', 0.07);
+    scheduleTone(0.60, 1568, 0.6, 'sine', 0.05);
+  }
+  function sfxDefeat()    { // Game lost — descending minor
+    scheduleTone(0.00, 392, 0.20, 'sawtooth', 0.06);
+    scheduleTone(0.18, 329, 0.20, 'sawtooth', 0.06);
+    scheduleTone(0.36, 277, 0.30, 'sawtooth', 0.06);
+    scheduleTone(0.66, 220, 0.50, 'sawtooth', 0.05);
+  }
+  function sfxError()     { // Invalid action — soft low buzz (less harsh than attack)
+    playTone(180, 0.08, 'square', 0.04);
+  }
+
+  // ---------- Procedural ambient music ------------------------------------
+  // A soft drone + slow pad with sparse pentatonic bell notes on top. Designed
+  // to be tolerable in long sessions: low gain, slow LFO breathing, no rhythm.
+  var music = { running: false, voices: [], lfos: [], master: null, melodyTimer: null };
+  function startMusic() {
+    if (music.running) return;
+    var ac = getAudioCtx();
+    if (!ac) return;
+    music.running = true;
+    music.master = ac.createGain();
+    music.master.gain.value = 0.0;
+    // Fade in
+    music.master.gain.setValueAtTime(0.0, ac.currentTime);
+    music.master.gain.linearRampToValueAtTime(0.07, ac.currentTime + 2.5);
+    music.master.connect(ac.destination);
+
+    // Low drone (A2)
+    var drone = ac.createOscillator();
+    drone.type = 'sine';
+    drone.frequency.value = 110;
+    var droneG = ac.createGain();
+    droneG.gain.value = 0.45;
+    drone.connect(droneG); droneG.connect(music.master);
+    drone.start(); music.voices.push(drone);
+
+    // Slow LFO on drone gain — gentle breathing
+    var lfo1 = ac.createOscillator();
+    lfo1.type = 'sine'; lfo1.frequency.value = 0.08;
+    var lfo1G = ac.createGain(); lfo1G.gain.value = 0.18;
+    lfo1.connect(lfo1G); lfo1G.connect(droneG.gain);
+    lfo1.start(); music.lfos.push(lfo1);
+
+    // Pad voice (perfect fifth above)
+    var pad = ac.createOscillator();
+    pad.type = 'triangle';
+    pad.frequency.value = 165;       // E3 — fifth above A2
+    var padG = ac.createGain();
+    padG.gain.value = 0.18;
+    pad.connect(padG); padG.connect(music.master);
+    pad.start(); music.voices.push(pad);
+
+    // Slower LFO on pad gain
+    var lfo2 = ac.createOscillator();
+    lfo2.type = 'sine'; lfo2.frequency.value = 0.045;
+    var lfo2G = ac.createGain(); lfo2G.gain.value = 0.12;
+    lfo2.connect(lfo2G); lfo2G.connect(padG.gain);
+    lfo2.start(); music.lfos.push(lfo2);
+
+    // Sparse pentatonic bell melody, looped at ~3-6s intervals with rests
+    scheduleAmbientMelody();
+  }
+  function scheduleAmbientMelody() {
+    if (!music.running) return;
+    var ac = audioCtx;
+    if (!ac) return;
+    var pent = [440, 523.25, 659.25, 783.99, 987.77];  // A, C, E, G, B (A minor pent.)
+    // 60% chance to play a note this tick; 40% chance to rest
+    if (Math.random() < 0.6) {
+      var f = pent[Math.floor(Math.random() * pent.length)];
+      try {
+        var osc = ac.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = f;
+        var g = ac.createGain();
+        var now = ac.currentTime;
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(0.05, now + 0.05);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 2.6);
+        osc.connect(g); g.connect(music.master);
+        osc.start(now);
+        osc.stop(now + 2.7);
+      } catch (e) {}
+    }
+    music.melodyTimer = setTimeout(scheduleAmbientMelody, 3500 + Math.random() * 3500);
+  }
+  function stopMusic() {
+    if (!music.running) return;
+    music.running = false;
+    if (music.melodyTimer) { clearTimeout(music.melodyTimer); music.melodyTimer = null; }
+    var ac = audioCtx;
+    if (music.master && ac) {
+      // Fade out then stop oscillators
+      try {
+        music.master.gain.cancelScheduledValues(ac.currentTime);
+        music.master.gain.setValueAtTime(music.master.gain.value, ac.currentTime);
+        music.master.gain.linearRampToValueAtTime(0.0, ac.currentTime + 0.6);
+      } catch (e) {}
+    }
+    var voicesCopy = music.voices.concat(music.lfos);
+    music.voices = []; music.lfos = [];
+    setTimeout(function () {
+      voicesCopy.forEach(function (v) { try { v.stop(); } catch (e) {} });
+      if (music.master) { try { music.master.disconnect(); } catch (e) {} music.master = null; }
+    }, 700);
+  }
+  function setMusicEnabled(on) {
+    audioPrefs.music = !!on;
+    saveAudioPrefs();
+    if (on) startMusic(); else stopMusic();
+  }
+  function setSfxEnabled(on) {
+    audioPrefs.sfx = !!on;
+    saveAudioPrefs();
+    if (sfxMaster) sfxMaster.gain.value = on ? 1.0 : 0.0;
+  }
 
   // =====================================================================
   // TILE YIELD OVERLAY
@@ -3714,13 +3918,13 @@
       unit.promoHp = (unit.promoHp || 0) + 1;
       unit.maxHp += 2;
       unit.hp = Math.min(unit.hp + 2, unit.maxHp);
-      if (unit.civ === 'player') { sfxBuild(); showToast(UNITS[unit.type].name + ' promoted! +2 HP', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +2 HP', 'success'); }
+      if (unit.civ === 'player') { sfxPromote(); showToast(UNITS[unit.type].name + ' promoted! +2 HP', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +2 HP', 'success'); }
     } else if (cycle === 1) {
       unit.promoAtk = (unit.promoAtk || 0) + 1;
-      if (unit.civ === 'player') { sfxBuild(); showToast(UNITS[unit.type].name + ' promoted! +1 ATK', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 ATK', 'success'); }
+      if (unit.civ === 'player') { sfxPromote(); showToast(UNITS[unit.type].name + ' promoted! +1 ATK', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 ATK', 'success'); }
     } else {
       unit.promoDef = (unit.promoDef || 0) + 1;
-      if (unit.civ === 'player') { sfxBuild(); showToast(UNITS[unit.type].name + ' promoted! +1 DEF', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 DEF', 'success'); }
+      if (unit.civ === 'player') { sfxPromote(); showToast(UNITS[unit.type].name + ' promoted! +1 DEF', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 DEF', 'success'); }
     }
   }
 
@@ -3767,6 +3971,7 @@
     killUnit(unit);
     recomputeBorders();
     showToast('Founded ' + name, 'success');
+    if (unit.civ === 'player') sfxFound();
   }
 
   function captureCity(city, newOwnerId) {
@@ -3900,7 +4105,7 @@
             city.buildings[p] = true;
             state.wondersBuilt[p] = city.civ;
             applyWonderOneShot(city, p);
-            if (city.civ === 'player') logEvent(city.name + ' built ' + bdef.name + ' (wonder)', 'success');
+            if (city.civ === 'player') { logEvent(city.name + ' built ' + bdef.name + ' (wonder)', 'success'); sfxWonder(); }
             else logEvent(CIVS[city.civ].name + ' built ' + bdef.name, 'error');
           }
         } else {
@@ -4070,7 +4275,10 @@
       var ageBefore = getAge(civ);
       civ.techs[civ.currentTech] = true;
       civ.techProgress = 0;
-      if (civ.id === 'player') logEvent('Researched ' + def.name, 'success');
+      if (civ.id === 'player') {
+        logEvent('Researched ' + def.name, 'success');
+        sfxResearch();
+      }
       civ.currentTech = null;
       // Check for age advancement
       var ageAfter = getAge(civ);
@@ -4080,6 +4288,7 @@
         if (civ.id === 'player') {
           logEvent('Entered the ' + ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
           showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
+          sfxAgeUp();
         }
       }
       // Every AI picks its next tech automatically; player picks from the menu.
@@ -5260,6 +5469,7 @@
               civPl.gold -= bribeCost;
               csc.ally = 'player';
               recomputeIncome('player');
+              sfxAlly();
               showToast('Allied with ' + csc.name, 'success');
               logEvent('Allied with ' + csc.name + ' (' + kindDef.name + ')', 'success');
               closeModal();
@@ -5277,6 +5487,7 @@
               civPl.gold -= CS_BEFRIEND_COST;
               csc.ally = 'player';
               recomputeIncome('player');
+              sfxAlly();
               showToast('Allied with ' + csc.name, 'success');
               logEvent('Allied with ' + csc.name + ' (' + kindDef.name + ')', 'success');
               closeModal();
@@ -5581,9 +5792,11 @@
       title.textContent = 'Victory';
       title.style.color = '#00ff88';
       detail.innerHTML = VICTORY_MSG_WIN[kind] || 'You won.';
+      sfxVictory();
     } else {
       title.textContent = 'Defeat';
       title.style.color = '#ff4466';
+      sfxDefeat();
       var winName = CIVS[winner] ? CIVS[winner].name : 'Enemy';
       if (kind === 'domination' && state.civs.player.cities.length === 0) {
         detail.innerHTML = winName + ' conquered your civilization.';
@@ -5913,6 +6126,24 @@
       contBtn.classList.add('disabled');
       contBtn.setAttribute('disabled', '');
     }
+    updateAudioToggles();
+  }
+
+  function updateAudioToggles() {
+    var sfxBtn = document.getElementById('sfx-toggle');
+    var musicBtn = document.getElementById('music-toggle');
+    if (sfxBtn) {
+      sfxBtn.classList.toggle('on', !!audioPrefs.sfx);
+      sfxBtn.setAttribute('aria-pressed', audioPrefs.sfx ? 'true' : 'false');
+      var s1 = sfxBtn.querySelector('.audio-state');
+      if (s1) s1.textContent = audioPrefs.sfx ? 'ON' : 'OFF';
+    }
+    if (musicBtn) {
+      musicBtn.classList.toggle('on', !!audioPrefs.music);
+      musicBtn.setAttribute('aria-pressed', audioPrefs.music ? 'true' : 'false');
+      var s2 = musicBtn.querySelector('.audio-state');
+      if (s2) s2.textContent = audioPrefs.music ? 'ON' : 'OFF';
+    }
   }
 
   // =====================================================================
@@ -5940,6 +6171,7 @@
         clearSave();
         newGame(null, fac);
         showScreen('game');
+        if (audioPrefs.music) startMusic();
         break;
       case 'pick-mapsize':
         selectedMapSize = el.dataset.mapsize;
@@ -5953,13 +6185,26 @@
         clearSave();
         newGame();
         showScreen('game');
+        if (audioPrefs.music) startMusic();
         break;
       case 'continue-game':
         if (!hasSave()) return;
-        if (load()) showScreen('game');
+        if (load()) {
+          showScreen('game');
+          if (audioPrefs.music) startMusic();
+        }
         break;
       case 'show-help':
         showScreen('help-screen');
+        break;
+      case 'toggle-sfx':
+        setSfxEnabled(!audioPrefs.sfx);
+        updateAudioToggles();
+        if (audioPrefs.sfx) sfxSelect();   // feedback chirp on enable
+        break;
+      case 'toggle-music':
+        setMusicEnabled(!audioPrefs.music);
+        updateAudioToggles();
         break;
       case 'back':
         if (openModal === 'help-screen') { showScreen('title'); setupTitleButtons(); break; }

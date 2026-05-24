@@ -152,6 +152,42 @@ html, body {
   width: 280px;
 }
 
+.title-audio {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  width: 280px;
+}
+.audio-toggle {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.audio-toggle:hover { background: var(--panel-2); color: var(--text); }
+.audio-toggle.on {
+  color: var(--cyan);
+  border-color: var(--cyan-d);
+  background: rgba(0,212,255,0.06);
+}
+.audio-toggle .audio-state {
+  font-weight: 700;
+  margin-left: 4px;
+}
+.audio-toggle:focus {
+  outline: 2px solid var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-glow);
+}
+
 /* ====================================================================
    CIV SELECT
    ==================================================================== */
