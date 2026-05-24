@@ -5172,33 +5172,16 @@
   // =====================================================================
   var keyHistory = []; // for combo detection (last 4 directional keys)
   var ACTION_KEYS = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
-  var pendingMoves = []; // deferred moves while we wait to see if a combo completes
-
-  function isAlternatingPrefix() {
-    if (keyHistory.length < 2) return false;
-    var last = keyHistory[keyHistory.length - 1].k;
-    var prev = keyHistory[keyHistory.length - 2].k;
-    if (last === prev) return false;
-    var vert = (last === 'up' || last === 'down') && (prev === 'up' || prev === 'down');
-    var horiz = (last === 'left' || last === 'right') && (prev === 'left' || prev === 'right');
-    return vert || horiz;
-  }
-
-  function flushPendingMoves() {
-    if (!pendingMoves.length) return;
-    pendingMoves.forEach(function (m) {
-      if (state.mode === 'cursor') moveCursor(m[0], m[1]);
-      else panInDirection(m[0], m[1]);
-    });
-    pendingMoves = [];
-  }
+  // Combo window — presses spaced further apart than this can't form a combo.
+  // Tight enough that a slow 2-press correction (e.g. ← then → after a pause)
+  // never reads as combo intent.
+  var COMBO_WINDOW_MS = 400;
 
   function pushKey(k) {
     var simple = k.replace('Arrow', '').toLowerCase();
     keyHistory.push({ k: simple, t: Date.now() });
     while (keyHistory.length > 4) keyHistory.shift();
-    // expire entries older than 1.4s
-    var cutoff = Date.now() - 1400;
+    var cutoff = Date.now() - COMBO_WINDOW_MS;
     keyHistory = keyHistory.filter(function (e) { return e.t >= cutoff; });
   }
   function matchCombo(seq) {
@@ -5909,9 +5892,22 @@
       e.preventDefault();
       pushKey(k);
 
+      // Every directional press moves immediately for instant feedback. A combo
+      // is detected after-the-fact from keyHistory — its cursor "wiggle" is
+      // intentional: pressing ←→←→ moves the cursor left, right, left, right
+      // (net zero), and only then fires the zoom toggle. This trades a tiny
+      // bit of visual jitter during a 4-press combo for crisp, immediate
+      // movement on every tap — way more important on a D-pad device.
+      var dc = 0, dr = 0;
+      if (k === 'ArrowUp') dr = -1;
+      else if (k === 'ArrowDown') dr = +1;
+      else if (k === 'ArrowLeft') dc = -1;
+      else if (k === 'ArrowRight') dc = +1;
+      if (state.mode === 'cursor') moveCursor(dc, dr);
+      else panInDirection(dc, dr);
+
       // Combo: ↑↓↑↓ toggles mode
       if (matchCombo(['up','down','up','down']) || matchCombo(['down','up','down','up'])) {
-        pendingMoves = [];        // discard suppressed moves — they were part of the combo
         toggleMode();
         consumeCombo();
         draw();
@@ -5919,43 +5915,21 @@
       }
       // Combo: ←→←→ cycles zoom
       if (matchCombo(['left','right','left','right']) || matchCombo(['right','left','right','left'])) {
-        pendingMoves = [];
         cycleZoom();
         consumeCombo();
         draw();
         return;
       }
-
-      var dc = 0, dr = 0;
-      if (k === 'ArrowUp') dr = -1;
-      else if (k === 'ArrowDown') dr = +1;
-      else if (k === 'ArrowLeft') dc = -1;
-      else if (k === 'ArrowRight') dc = +1;
-
-      // If this press extends an alternating same-axis pattern, defer the move —
-      // it might be the 2nd, 3rd or 4th key of a combo.
-      if (isAlternatingPrefix()) {
-        pendingMoves.push([dc, dr]);
-        draw();
-        return;
-      }
-
-      // Different axis / fresh tap — flush any deferred moves first, then apply this one.
-      flushPendingMoves();
-      if (state.mode === 'cursor') moveCursor(dc, dr);
-      else panInDirection(dc, dr);
       draw();
       return;
     }
 
     if (k === 'Enter') {
       e.preventDefault();
-      flushPendingMoves();      // any deferred reversal moves commit before action
       activate();
       draw();
     } else if (k === 'Escape') {
       e.preventDefault();
-      flushPendingMoves();
       cycleNextUnit();
       draw();
     } else if (k === 'm' || k === 'M') {
