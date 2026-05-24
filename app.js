@@ -1236,10 +1236,12 @@
         state.civs[id].color = CIVS[id].color;
       });
       // Backfill originalCiv + build queue for cities from older saves
-      CIV_SIDES.forEach(function (id) {
+      CIV_SIDES.concat(['cs']).forEach(function (id) {
+        if (!state.civs[id]) return;
         (state.civs[id].cities || []).forEach(function (ct) {
           if (ct.capital && !ct.originalCiv) ct.originalCiv = ct.civ;
           if (!Array.isArray(ct.queue)) ct.queue = [];
+          if (!ct.buildings) ct.buildings = {};
         });
       });
       // Backfill great people fields from older saves
@@ -4049,6 +4051,7 @@
   // owned). Returns null if the queue empties without a hit.
   function popQueuedProduction(city) {
     if (!Array.isArray(city.queue) || city.queue.length === 0) return null;
+    if (!city.buildings) city.buildings = {};
     while (city.queue.length) {
       var next = city.queue.shift();
       if (BUILDINGS[next]) {
@@ -4653,11 +4656,14 @@
           else if (u.moves === u.maxMoves) u.hp = Math.min(u.maxHp, u.hp + 1);
         });
       });
-      CIV_SIDES.forEach(function (id) {
-        state.civs[id].units.forEach(function (u) { u.moves = u.maxMoves; u.hasActed = false; });
+      CIV_SIDES.concat(['barb','cs']).forEach(function (id) {
+        var c = state.civs[id];
+        if (!c) return;
+        c.units.forEach(function (u) {
+          u.moves = u.maxMoves;
+          if (CIV_SIDES.indexOf(id) >= 0) u.hasActed = false;   // hasActed only used by planning civs
+        });
       });
-      state.civs.barb.units.forEach(function (u) { u.moves = u.maxMoves; });
-      state.civs.cs.units.forEach(function (u) { u.moves = u.maxMoves; });
       recomputeBorders();
       CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
