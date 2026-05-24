@@ -4921,16 +4921,21 @@
       }
       if (def.canImprove) {
         var impKind = pickImprovement(t);
-        var canImp = !!impKind;
+        var owned = !!t && t.owner === u.civ;
+        var canImp = !!impKind && owned;
         var idef = impKind && IMPROVEMENTS[impKind];
         var yieldStr = idef ? Object.keys(idef.yield).map(function (k) {
           return '+' + idef.yield[k] + ' ' + k;
         }).join(' · ') : '';
+        var subText = canImp ? yieldStr :
+                      t.improvement ? 'Already improved' :
+                      !owned ? 'Outside your borders' :
+                      'Not buildable here';
         actions.push({
           icon: '⛏',
           primary: true,
           title: canImp ? 'Build ' + idef.name : 'Build Improvement',
-          sub: canImp ? yieldStr : (t.improvement ? 'Already improved' : 'Not buildable here'),
+          sub: subText,
           disabled: !canImp,
           do: function () {
             t.improvement = impKind;
