@@ -132,12 +132,14 @@
   }
 
   var BUILDINGS = {
-    granary:  { name: 'Granary',   cost: 30, food: 2, tech: 'pottery'  },
-    walls:    { name: 'Walls',     cost: 40, def: 4,  tech: 'masonry'  },
-    market:   { name: 'Market',    cost: 50, gold: 3, tech: 'currency' },
-    aqueduct: { name: 'Aqueduct',  cost: 45, food: 3, tech: 'engineering' },
-    temple:   { name: 'Temple',    cost: 40, sci: 3,  tech: 'theology' },
-    bank:     { name: 'Bank',      cost: 55, gold: 4, tech: 'banking' },
+    granary:  { name: 'Granary',    cost: 30, food: 2, tech: 'pottery'  },
+    library:  { name: 'Library',    cost: 30, sci:  2, tech: 'writing'  },
+    walls:    { name: 'Walls',      cost: 40, def:  4, tech: 'masonry'  },
+    market:   { name: 'Market',     cost: 50, gold: 3, tech: 'currency' },
+    aqueduct: { name: 'Aqueduct',   cost: 45, food: 3, tech: 'engineering' },
+    temple:   { name: 'Temple',     cost: 40, sci:  3, tech: 'theology' },
+    university:{name: 'University', cost: 70, sci:  4, tech: 'education' },
+    bank:     { name: 'Bank',       cost: 55, gold: 4, tech: 'banking' },
     // World Wonders — each unique per game, first civ to finish locks it out
     hanging_gardens:  { name: 'Hanging Gardens',  cost:  90, tech: 'pottery',   wonder: true, perCityFood: 2,
                         lore: '+2 food in every city you own' },
@@ -152,27 +154,30 @@
   };
 
   var TECHS = {
-    pottery:     { name: 'Pottery',      cost:  20, req: [],                       unlocks: 'Granary' },
-    sailing:     { name: 'Sailing',      cost:  30, req: ['pottery'],              unlocks: 'Galley, Fishing Boats' },
-    archery:     { name: 'Archery',      cost:  30, req: [],                       unlocks: 'Archer' },
-    masonry:     { name: 'Masonry',      cost:  35, req: ['pottery'],              unlocks: 'Walls' },
-    husbandry:   { name: 'Husbandry',    cost:  40, req: ['archery'],              unlocks: 'Horseman' },
-    currency:    { name: 'Currency',     cost:  55, req: ['masonry'],              unlocks: 'Market' },
-    iron:        { name: 'Metalworking', cost:  70, req: ['husbandry','currency'], unlocks: '+2 atk Warriors' },
-    engineering: { name: 'Engineering',  cost:  60, req: ['masonry','archery'],    unlocks: 'Catapult, Aqueduct' },
-    theology:    { name: 'Theology',     cost:  75, req: ['currency','pottery'],   unlocks: 'Temple' },
-    steel:       { name: 'Steel',        cost:  90, req: ['iron'],                 unlocks: 'Swordsman' },
-    gunpowder:   { name: 'Gunpowder',   cost: 110, req: ['steel','engineering'],  unlocks: 'Musketman' },
-    banking:     { name: 'Banking',      cost: 100, req: ['theology','currency'],  unlocks: 'Bank' }
+    pottery:     { name: 'Pottery',      cost:  18, req: [],                          unlocks: 'Granary' },
+    writing:     { name: 'Writing',      cost:  22, req: ['pottery'],                 unlocks: 'Library' },
+    sailing:     { name: 'Sailing',      cost:  25, req: ['pottery'],                 unlocks: 'Galley, Fishing Boats' },
+    archery:     { name: 'Archery',      cost:  25, req: [],                          unlocks: 'Archer' },
+    masonry:     { name: 'Masonry',      cost:  30, req: ['pottery'],                 unlocks: 'Walls' },
+    husbandry:   { name: 'Husbandry',    cost:  35, req: ['archery'],                 unlocks: 'Horseman' },
+    currency:    { name: 'Currency',     cost:  45, req: ['masonry'],                 unlocks: 'Market' },
+    iron:        { name: 'Metalworking', cost:  60, req: ['husbandry','currency'],    unlocks: '+2 atk Warriors' },
+    engineering: { name: 'Engineering',  cost:  50, req: ['masonry','archery'],       unlocks: 'Catapult, Aqueduct' },
+    theology:    { name: 'Theology',     cost:  60, req: ['currency','pottery'],      unlocks: 'Temple' },
+    philosophy:  { name: 'Philosophy',   cost:  55, req: ['theology','writing'],      unlocks: '+1 sci per Temple' },
+    education:   { name: 'Education',    cost:  80, req: ['theology','writing'],      unlocks: 'University' },
+    steel:       { name: 'Steel',        cost:  80, req: ['iron'],                    unlocks: 'Swordsman' },
+    gunpowder:   { name: 'Gunpowder',    cost: 100, req: ['steel','engineering'],     unlocks: 'Musketman' },
+    banking:     { name: 'Banking',      cost:  90, req: ['theology','currency'],     unlocks: 'Bank' }
   };
-  var TECH_ORDER = ['pottery','sailing','archery','masonry','husbandry','currency','iron','engineering','theology','steel','gunpowder','banking'];
+  var TECH_ORDER = ['pottery','writing','sailing','archery','masonry','husbandry','currency','iron','engineering','theology','philosophy','education','steel','gunpowder','banking'];
 
   // Age thresholds — purely cosmetic + small gold bonus on advancement
   var AGES = [
     { name: 'Ancient',   minTechs: 0 },
     { name: 'Classical', minTechs: 4 },
-    { name: 'Medieval',  minTechs: 7 },
-    { name: 'Modern',    minTechs: 10 }
+    { name: 'Medieval',  minTechs: 8 },
+    { name: 'Modern',    minTechs: 12 }
   ];
   function getAge(civ) {
     var count = 0;
@@ -3339,7 +3344,13 @@
 
   function cityScience(city) {
     var sci = 1 + Math.floor(city.pop / 2);
-    if (city.buildings && city.buildings.temple) sci += 3;
+    var b = city.buildings || {};
+    if (b.library)    sci += BUILDINGS.library.sci;     // +2
+    if (b.temple)     sci += BUILDINGS.temple.sci;      // +3
+    if (b.university) sci += BUILDINGS.university.sci;  // +4
+    // Philosophy: temples give an extra +1 science
+    var civ = state.civs[city.civ];
+    if (b.temple && civ && civ.techs && civ.techs.philosophy) sci += 1;
     return sci;
   }
 
@@ -3852,7 +3863,7 @@
       // Check for age advancement
       var ageAfter = getAge(civ);
       if (ageAfter.name !== ageBefore.name) {
-        var ageGold = ageAfter.minTechs >= 10 ? 60 : ageAfter.minTechs >= 7 ? 40 : 20;
+        var ageGold = ageAfter.minTechs >= 12 ? 60 : ageAfter.minTechs >= 8 ? 40 : 20;
         civ.gold += ageGold;
         if (civ.id === 'player') {
           logEvent('Entered the ' + ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
@@ -3974,7 +3985,7 @@
         // Age advancement
         var ageAfter = getAge(civ);
         if (ageAfter.name !== ageBefore.name) {
-          var ageGold = ageAfter.minTechs >= 10 ? 60 : ageAfter.minTechs >= 7 ? 40 : 20;
+          var ageGold = ageAfter.minTechs >= 12 ? 60 : ageAfter.minTechs >= 8 ? 40 : 20;
           civ.gold += ageGold;
         }
         // Science victory check
@@ -5105,7 +5116,7 @@
     var list = document.getElementById('tech-list');
     list.innerHTML = '';
     // Techs grouped by age for section headers
-    var TECH_AGES = { pottery:0, sailing:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, steel:2, gunpowder:3, banking:3 };
+    var TECH_AGES = { pottery:0, writing:0, sailing:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, philosophy:1, education:1, steel:2, gunpowder:3, banking:3 };
     var AGE_LABELS = ['Ancient Age', 'Classical Age', 'Medieval Age', 'Modern Age'];
     var lastAge = -1;
     TECH_ORDER.forEach(function (k) {
@@ -5144,7 +5155,7 @@
           // Age advancement check
           var ageAfter = getAge(civ);
           if (ageAfter.name !== ageBefore.name) {
-            var ageGold = ageAfter.minTechs >= 10 ? 60 : ageAfter.minTechs >= 7 ? 40 : 20;
+            var ageGold = ageAfter.minTechs >= 12 ? 60 : ageAfter.minTechs >= 8 ? 40 : 20;
             civ.gold += ageGold;
             showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
           }
