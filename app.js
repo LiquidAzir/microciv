@@ -1455,9 +1455,13 @@
   }
   function clampCamera() {
     var ws = worldSize();
-    // In scroll mode, allow the camera to drift a bit past the world edges so
-    // the player can always pan freely even when the map fits on screen at low zoom.
-    var pad = (state && state.mode === 'scroll') ? Math.max(180, VIEW_W * 0.5) : 0;
+    // Always allow some overscroll past the map edges so the world doesn't
+    // feel walled-in. Scroll mode gets a bigger buffer so panning never
+    // jams hard against the edge; cursor mode gets enough padding that the
+    // unit at a corner isn't pinned against the screen border.
+    var pad = (state && state.mode === 'scroll')
+      ? Math.max(280, VIEW_W * 0.6)
+      : Math.max(120, VIEW_W * 0.25);
     var minX = -pad, maxX = (ws.w - VIEW_W) + pad;
     var minY = -pad, maxY = (ws.h - VIEW_H) + pad;
     if (maxX < minX) { state.camera.x = (ws.w - VIEW_W) / 2; }
@@ -4161,7 +4165,9 @@
       foodCap: 10,
       prod: 0,
       buildings: {},
-      producing: 'warrior', // default
+      // Player picks production explicitly; AI defaults to warrior so its
+      // cities never sit idle.
+      producing: unit.civ === 'player' ? null : 'warrior',
       queue: [],            // up to 3 items to auto-build after current
       capital: isCapital,
       originalCiv: isCapital ? unit.civ : null,   // tracks who founded this capital for domination check
@@ -4173,7 +4179,12 @@
     killUnit(unit);
     recomputeBorders();
     showToast('Founded ' + name, 'success');
-    if (unit.civ === 'player') sfxFound();
+    if (unit.civ === 'player') {
+      sfxFound();
+      logEvent('Choose production for ' + name, 'info');
+      // Auto-open the city screen so the player picks immediately
+      setTimeout(function () { openCity(city); }, 350);
+    }
   }
 
   function captureCity(city, newOwnerId) {
