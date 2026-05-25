@@ -3860,8 +3860,9 @@
         if (k.sciPerTurn)  spt += k.sciPerTurn;
       });
     }
-    // Big Ben wonder — +30% gold income (applied last so it scales perks too)
-    if (state.wondersBuilt && state.wondersBuilt.big_ben === civId) {
+    // Big Ben wonder — +30% gold *income* (only boosts positive gpt; never
+    // amplifies a deficit, since "+30% income" shouldn't make you bleed faster)
+    if (state.wondersBuilt && state.wondersBuilt.big_ben === civId && gpt > 0) {
       gpt = Math.round(gpt * (1 + BUILDINGS.big_ben.goldMultiplier));
     }
     civ.goldPerTurn = gpt;
@@ -4828,8 +4829,10 @@
       // Skip only if civ is fully eliminated (no cities, no units)
       if (!aiCiv || (aiCiv.cities.length === 0 && aiCiv.units.length === 0)) return;
       var aiName = CIVS[aiId].name;
-      var per = AI_PERSONALITIES[aiCiv.personality];
-      var perLabel = per ? per.icon + ' ' + per.label : 'Unknown';
+      // Always fall back to a defined personality so the % displays + action
+      // probabilities don't throw on a malformed save.
+      var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.peaceful;
+      var perLabel = per.icon + ' ' + per.label;
       var rel = relation('player', aiId);
 
       // Header row (informational)
