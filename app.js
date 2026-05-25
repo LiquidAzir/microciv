@@ -51,6 +51,7 @@
   var UNITS = {
     settler:   { name: 'Settler',   cost: 30, hp: 8,  atk: 0, def: 1, move: 2, glyph: '☗', tech: null,          civilian: true, canFound: true },
     worker:    { name: 'Worker',    cost: 20, hp: 8,  atk: 0, def: 1, move: 2, glyph: '⚒', tech: null,          civilian: true, canImprove: true },
+    scout:     { name: 'Scout',     cost: 12, hp: 8,  atk: 0, def: 2, move: 3, glyph: '⚐', tech: null,          civilian: true, canExplore: true },
     warrior:   { name: 'Warrior',   cost: 15, hp: 14, atk: 4, def: 3, move: 2, glyph: '⚔', tech: null },
     archer:    { name: 'Archer',    cost: 25, hp: 10, atk: 5, def: 2, move: 2, glyph: '➹', tech: 'archery',     ranged: 2 },
     horseman:  { name: 'Horseman',  cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' },
@@ -3080,9 +3081,48 @@
     p(2,13,10,1, '#081e3c');
   }
 
+  function drawScout(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Broad explorer's hat
+    p(3,3,8,1, c.K);
+    p(4,2,6,1, c.K);
+    p(5,2,4,1, c.D);
+    p(2,4,10,1, c.K);                  // brim
+    p(3,4,8,1, c.D);
+    // Face
+    p(5,5,4,2, c.S);
+    p(5,5,4,1, c.D);
+    p(6,6,1,1, c.K); p(8,6,1,1, c.K);  // eyes
+    // Lean traveler's body
+    p(5,7,4,1, c.K);
+    p(5,8,4,3, c.C);
+    p(6,9,2,1, c.L);
+    p(5,11,4,1, c.K);
+    // Right arm holding banner pole
+    p(9,7,1,4, c.S);
+    p(9,7,1,1, c.K);
+    // Banner pole
+    p(10,3,1,8, c.K);
+    // Banner pennant (civ-colored)
+    p(11,3,3,1, c.K);
+    p(11,3,3,3, c.C);
+    p(11,4,2,1, c.L);
+    p(13,4,1,2, c.K);
+    // Left arm relaxed
+    p(4,8,1,2, c.S);
+    p(4,8,1,1, c.K);
+    // Belt + legs
+    p(5,11,4,1, c.B);
+    p(5,12,1,2, c.K); p(8,12,1,2, c.K);
+    p(6,12,2,2, c.B);
+  }
+
   var UNIT_DRAW = {
     settler:   drawSettler,
     worker:    drawWorker,
+    scout:     drawScout,
     warrior:   drawWarrior,
     archer:    drawArcher,
     horseman:  drawHorseman,
@@ -3782,7 +3822,13 @@
     unit.moves = Math.max(0, unit.moves - 1);
     unit.fortified = false;
     t.unit = unit;
-    if (unit.civ === 'player') sfxMove();
+    if (unit.civ === 'player') {
+      sfxMove();
+      // Reveal fog immediately around the new position. AI visibility is recomputed
+      // at the turn boundary; only the player's view drives rendering, so we skip
+      // the work for AI moves.
+      recomputeVisibility('player');
+    }
     // Tribal village reward on entry
     if (t.village) claimVillage(unit, t);
     return true;
@@ -3904,6 +3950,8 @@
         var newT = tileAt(attacker.c, attacker.r);
         if (newT.city && newT.city.civ !== attacker.civ) captureCity(newT.city, attacker.civ);
         newT.unit = attacker;
+        // Reveal fog around the new position for the player (matches moveUnit)
+        if (attacker.civ === 'player') recomputeVisibility('player');
       }
     }
     if (attacker.hp <= 0) {
@@ -4710,6 +4758,9 @@
         if (u.auto && u.type === 'worker' && u.moves > 0) {
           aiWorkerAction(u);
         }
+        if (u.autoExplore && UNITS[u.type].canExplore && u.moves > 0) {
+          playerAutoExplore(u);
+        }
       });
 
       // Enemy spotted alerts — check for visible enemy units near player cities
@@ -4930,6 +4981,43 @@
   }
 
   // AI workers: if standing on an improvable owned tile, build; else walk toward one
+  // Step a scout/explorer toward the nearest unexplored tile. If no fog remains
+  // within sight, wander. Adjacent enemies stop the move so the player can react.
+  function playerAutoExplore(u) {
+    if (adjacentEnemy(u)) { u.autoExplore = false; return; }
+    while (u.moves > 0) {
+      // Pick nearest unexplored tile (limited search radius for cost)
+      var bestTile = null, bestDist = Infinity;
+      var radius = 8;
+      var civ = state.civs[u.civ];
+      for (var rr = Math.max(0, u.r - radius); rr <= Math.min(MAP_H - 1, u.r + radius); rr++) {
+        for (var cc = Math.max(0, u.c - radius); cc <= Math.min(MAP_W - 1, u.c + radius); cc++) {
+          var nt = tileAt(cc, rr);
+          if (!nt) continue;
+          if (nt.explored && nt.explored[u.civ]) continue;
+          // Skip tiles we couldn't reach (water without sailing, etc.)
+          if (TERRAIN[nt.terrain].impassable && !(nt.terrain === 'water' && civ.techs && civ.techs.sailing)) continue;
+          var d = hexDist([u.c, u.r], [cc, rr]);
+          if (d < bestDist) { bestDist = d; bestTile = [cc, rr]; }
+        }
+      }
+      if (!bestTile) { aiWander(u); break; }
+      // Step toward bestTile
+      var ns = neighbors(u.c, u.r).filter(function (n) {
+        var t = tileAt(n[0], n[1]);
+        if (!canEnterTile(u, t)) return false;
+        if (t.unit) return false;
+        return true;
+      });
+      if (ns.length === 0) break;
+      ns.sort(function (a, b) { return hexDist(a, bestTile) - hexDist(b, bestTile); });
+      var step = ns[0];
+      // No progress means we're stuck — wander then break
+      if (hexDist(step, bestTile) >= hexDist([u.c, u.r], bestTile)) { aiWander(u); break; }
+      if (!moveUnit(u, step[0], step[1])) break;
+    }
+  }
+
   function aiWorkerAction(u) {
     var t = tileAt(u.c, u.r);
     // Build on current tile if possible and we own it
@@ -5452,6 +5540,20 @@
       }
       if (def.canImprove) {
         actions.push({ icon: '⚙', title: u.auto ? 'Manual Control' : 'Auto-Improve', sub: u.auto ? 'Take back direct control' : 'Worker builds automatically each turn', do: function () { u.auto = !u.auto; u.moves = 0; showToast(u.auto ? 'Auto-improve ON' : 'Manual control', 'success'); closeModal(); draw(); } });
+      }
+      if (def.canExplore) {
+        actions.push({
+          icon: '⚐',
+          title: u.autoExplore ? 'Manual Control' : 'Auto-Explore',
+          sub: u.autoExplore ? 'Take back direct control' : 'Wander into fog each turn',
+          do: function () {
+            u.autoExplore = !u.autoExplore;
+            u.moves = 0;
+            showToast(u.autoExplore ? 'Auto-explore ON' : 'Manual control', 'success');
+            closeModal();
+            draw();
+          }
+        });
       }
       // Great person activation
       if (def.great) {
