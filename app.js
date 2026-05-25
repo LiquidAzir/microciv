@@ -705,6 +705,26 @@
     return { x: x, y: y };
   }
 
+  // Inverse of pixelOf — converts a world-pixel coordinate to the nearest hex
+  // (offset coords). Used by the canvas click/tap handler so a player on phone
+  // or PC can interact by tapping a tile directly.
+  function pixelToHex(px, py, size) {
+    // Pixel → fractional axial (pointy-top layout, matching pixelOf)
+    var q = (SQRT3 / 3 * px - (1 / 3) * py) / size;
+    var ra = ((2 / 3) * py) / size;
+    // Cube rounding (preserves x + y + z = 0 after rounding each component)
+    var x = q, z = ra, y = -x - z;
+    var rx = Math.round(x), ry = Math.round(y), rz = Math.round(z);
+    var dx = Math.abs(rx - x), dy = Math.abs(ry - y), dz = Math.abs(rz - z);
+    if (dx > dy && dx > dz)      rx = -ry - rz;
+    else if (dy > dz)             ry = -rx - rz;
+    else                          rz = -rx - ry;
+    // Axial → odd-row offset (inverse of offsetToAxial)
+    var oRow = rz;
+    var oCol = rx + (rz - (rz & 1)) / 2;
+    return [oCol, oRow];
+  }
+
   // =====================================================================
   // MAP GENERATION
   // =====================================================================
@@ -6752,8 +6772,45 @@
     canvas = document.getElementById('map');
     ctx = canvas.getContext('2d');
     document.addEventListener('keydown', onKeyDown);
+    // Touch / mouse input on the map canvas — tap or click a tile to act on
+    // it, same as pressing Enter on that tile with the keyboard. Glasses input
+    // routes through keydown above and is unaffected.
+    canvas.addEventListener('click', onCanvasClick);
+    canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    // Fit the 600x600 app to whatever device viewport we're in. On glasses the
+    // device viewport IS 600x600 so this is always 1.0.
+    updateAppScale();
+    window.addEventListener('resize', updateAppScale);
     setupTitleButtons();
     showScreen('title');
+  }
+
+  function updateAppScale() {
+    var s = Math.min(window.innerWidth, window.innerHeight) / 600;
+    document.documentElement.style.setProperty('--app-scale', s.toFixed(4));
+  }
+
+  function onCanvasClick(ev) {
+    if (!state || state.victory) return;
+    if (!isGameVisible()) return;
+    if (isModalOpen()) return;            // modals handle their own clicks
+    if (isBusy()) return;                  // AI thinking / walk animation
+    var rect = canvas.getBoundingClientRect();
+    // Map the click to canvas-native coordinates regardless of CSS scaling
+    var cx = (ev.clientX - rect.left) * (canvas.width / rect.width);
+    var cy = (ev.clientY - rect.top)  * (canvas.height / rect.height);
+    var size = ZOOM_LEVELS[state.zoom];
+    // Camera holds world-pixel offset of the top-left of view
+    var hex = pixelToHex(cx + state.camera.x, cy + state.camera.y, size);
+    var c = hex[0], r = hex[1];
+    if (!inBounds(c, r)) return;
+    // If the tapped tile is already the cursor, treat the second tap as a
+    // confirm (just call activate); otherwise move the cursor and act.
+    state.cursor.c = c;
+    state.cursor.r = r;
+    ensureCursorVisible();
+    activate();
+    draw();
   }
 
   if (document.readyState === 'loading') {

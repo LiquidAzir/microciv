@@ -30,18 +30,41 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* The game is designed at a fixed 600x600 layout for the Meta Display glasses.
+   On glasses, the device viewport IS 600x600 so the scale below is 1.0 and
+   nothing changes. On phone or PC, html/body fills the window and #app stays
+   600x600 but is scaled+centered to fit. Click coordinates are translated by
+   onCanvasClick using canvas.getBoundingClientRect so taps land correctly. */
 html, body {
-  width: 600px;
-  height: 600px;
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
+  touch-action: manipulation;     /* faster tap response on mobile, no 300ms delay */
 }
 
-#app { position: relative; width: 100%; height: 100%; }
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#app {
+  position: relative;
+  width: 600px;
+  height: 600px;
+  flex-shrink: 0;
+  /* The --app-scale variable is set by JS on load + resize to
+     min(window.innerWidth, window.innerHeight) / 600. On the glasses
+     (600x600 viewport) it stays at 1.0; on phone/PC it fits the window. */
+  transform: scale(var(--app-scale, 1));
+  transform-origin: center center;
+}
 
 .screen {
   position: absolute;
