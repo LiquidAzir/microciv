@@ -5,11 +5,11 @@
   // CONSTANTS
   // =====================================================================
   var STORAGE_KEY = 'mdg_microciv_v1';
-  var MAP_W = 14, MAP_H = 14;
+  var MAP_W = 16, MAP_H = 16;
   var MAP_SIZES = {
-    small:  { w: 10, h: 10, label: 'Small',  desc: 'Faster games, tight quarters' },
-    normal: { w: 14, h: 14, label: 'Normal', desc: 'Standard experience' },
-    large:  { w: 18, h: 18, label: 'Large',  desc: 'Epic sprawl, longer games' }
+    small:  { w: 12, h: 12, label: 'Small',  desc: 'Faster games, tight quarters' },
+    normal: { w: 16, h: 16, label: 'Normal', desc: 'Standard experience' },
+    large:  { w: 20, h: 20, label: 'Large',  desc: 'Epic sprawl, longer games' }
   };
   var DIFFICULTIES = {
     easy:   { label: 'Easy',   desc: 'Relaxed AI, late aggression', aiAtkBonus: -1, aiAggroTurn: 20, aiExtraWarrior: false },
@@ -758,23 +758,26 @@
       }
     }
 
-    // Light smoothing — one pass only, and keep the original terrain unless
-    // a neighbor type clearly outnumbers it (>=3) so variety survives.
-    var copy = JSON.parse(JSON.stringify(map));
-    for (var r = 0; r < MAP_H; r++) {
-      for (var c = 0; c < MAP_W; c++) {
-        var counts = {};
-        var ns = neighbors(c, r);
-        for (var i = 0; i < ns.length; i++) {
-          var tt = copy[ns[i][1]][ns[i][0]].terrain;
-          counts[tt] = (counts[tt] || 0) + 1;
+    // Two smoothing passes for cleaner clusters (mountain ranges, forest blocks,
+    // contiguous deserts). Each pass replaces a tile with the dominant neighbour
+    // type only when that type clearly outnumbers it (>=4 of 6 + self).
+    for (var pass = 0; pass < 2; pass++) {
+      var copy = JSON.parse(JSON.stringify(map));
+      for (var r = 0; r < MAP_H; r++) {
+        for (var c = 0; c < MAP_W; c++) {
+          var counts = {};
+          var ns = neighbors(c, r);
+          for (var i = 0; i < ns.length; i++) {
+            var tt = copy[ns[i][1]][ns[i][0]].terrain;
+            counts[tt] = (counts[tt] || 0) + 1;
+          }
+          var here = copy[r][c].terrain;
+          var best = here, bestN = (counts[here] || 0) + 1;
+          for (var k in counts) {
+            if (counts[k] > bestN && k !== here) { best = k; bestN = counts[k]; }
+          }
+          if (bestN >= 4) map[r][c].terrain = best;
         }
-        var here = copy[r][c].terrain;
-        var best = here, bestN = (counts[here] || 0) + 1;
-        for (var k in counts) {
-          if (counts[k] > bestN && k !== here) { best = k; bestN = counts[k]; }
-        }
-        if (bestN >= 4) map[r][c].terrain = best;
       }
     }
 
@@ -797,11 +800,12 @@
           return RESOURCES[k].terrains.indexOf(t.terrain) >= 0;
         });
         if (!candidates.length) continue;
-        // Per-terrain density: bias for richer biomes
+        // Per-terrain density: bias for richer biomes (slightly bumped to keep
+        // resource scarcity from feeling thin on the larger maps)
         var density = {
-          grass:   0.13, plains:  0.13, forest:  0.05,
-          hills:   0.30, mountain:0.00, desert:  0.10,
-          water:   0.10
+          grass:   0.15, plains:  0.15, forest:  0.07,
+          hills:   0.34, mountain:0.00, desert:  0.13,
+          water:   0.12
         }[t.terrain] || 0;
         if (rnd() < density) {
           t.resource = candidates[Math.floor(rnd() * candidates.length)];
@@ -809,16 +813,22 @@
       }
     }
 
-    // Place one Volcano and one Geyser in random valid interior spots
-    placeWonder(map, 'volcano', ['mountain','hills','plains']);
-    placeWonder(map, 'geyser',  ['grass','plains','forest']);
+    // Natural wonders — scale with map size so a 20x20 isn't covered in just
+    // one volcano. Small: 1 each; Normal: 2 each; Large: 2 volcano + 3 geyser.
+    var wonderCount = MAP_W <= 12 ? 1 : (MAP_W >= 20 ? 3 : 2);
+    for (var w = 0; w < wonderCount; w++) {
+      placeWonder(map, 'volcano', ['mountain','hills','plains']);
+    }
+    for (var w2 = 0; w2 < wonderCount; w2++) {
+      placeWonder(map, 'geyser',  ['grass','plains','forest']);
+    }
 
     // Carve rivers — scale with map size
-    var riverCount = MAP_W <= 10 ? 1 : (MAP_W >= 18 ? 3 : 2);
+    var riverCount = MAP_W <= 12 ? 2 : (MAP_W >= 20 ? 4 : 3);
     placeRivers(map, riverCount);
 
-    // Scatter tribal villages — scale with map area
-    var villageCount = Math.max(3, Math.round(MAP_W * MAP_H / 25));
+    // Scatter tribal villages — denser per area so exploration stays rewarding
+    var villageCount = Math.max(4, Math.round(MAP_W * MAP_H / 20));
     placeVillages(map, villageCount);
 
     return map;
@@ -1039,8 +1049,8 @@
     state.civs.ai.personality  = bag[0];
     state.civs.ai2.personality = bag[1];
 
-    // City-states: 2 on small/normal, 3 on large
-    spawnCityStates(MAP_W >= 18 ? 3 : 2, [p, a, a2]);
+    // City-states scale with map size — denser worlds have more neutrals to court
+    spawnCityStates(MAP_W >= 20 ? 4 : (MAP_W >= 16 ? 3 : 2), [p, a, a2]);
 
     recomputeVisibility('player');
     recomputeVisibility('ai');
