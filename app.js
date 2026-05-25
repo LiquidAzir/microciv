@@ -563,7 +563,17 @@
     if (a === 'barb' || b === 'barb') return true;  // barbarians always hostile
     if (!state || !state.diplomacy) return true;
     var rel = state.diplomacy[dipKey(a, b)];
-    return rel !== 'peace';
+    return rel !== 'peace' && rel !== 'allied';
+  }
+  function relation(a, b) {
+    if (a === b) return 'self';
+    if (a === 'barb' || b === 'barb') return 'war';
+    if (!state || !state.diplomacy) return 'war';
+    return state.diplomacy[dipKey(a, b)] || 'war';
+  }
+  function setRelation(a, b, rel) {
+    if (!state.diplomacy) return;
+    state.diplomacy[dipKey(a, b)] = rel;
   }
   function makePeace(a, b) {
     if (!state.diplomacy) return;
@@ -4678,12 +4688,19 @@
           }
         }
       } else if (state.diplomacy[dipKey(aiId, 'player')] === 'allied') {
-        // Alliance held — no war from this state without renounce
+        // Alliance held — never wars from this state; occasionally proposes
+        // a mutual research deal to the player (one pending offer at a time).
+        if (!state.pendingPeace && state.turn >= 6 && rnd() < 0.06) {
+          state.pendingPeace = { from: aiId, kind: 'deal' };
+        }
       } else {
         // At peace — maybe declare war if strong enough and enough turns passed
         var plMil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
         if (aiMil >= plMil * 1.5 && aiMil >= 4 && state.turn >= 15 && rnd() < 0.15 * per.warMul) {
           declareWarOn(aiId, 'player');
+        } else if (!state.pendingPeace && state.turn >= 10 && rnd() < per.offerAlliance) {
+          // Otherwise propose an alliance based on personality
+          state.pendingPeace = { from: aiId, kind: 'alliance' };
         }
       }
 
@@ -4710,32 +4727,206 @@
 
   function showPeaceOffer() {
     if (!state.pendingPeace) return;
-    var fromId = state.pendingPeace.from;
+    var offer = state.pendingPeace;
+    var fromId = offer.from;
     var fromName = CIVS[fromId] ? CIVS[fromId].name : 'Enemy';
+    var kind = offer.kind || 'peace';
     var actions = [];
-    actions.push({
-      icon: '☮', primary: true, title: 'Accept Peace',
-      sub: 'End the war with ' + fromName,
-      do: function () { makePeace('player', fromId); state.pendingPeace = null; closeModal(); draw(); }
-    });
-    actions.push({
-      icon: '⚔', title: 'Reject', danger: true,
-      sub: 'Continue the war',
-      do: function () { state.pendingPeace = null; closeModal(); draw(); }
-    });
+    if (kind === 'alliance') {
+      actions.push({
+        icon: '★', primary: true, title: 'Accept Alliance',
+        sub: 'Permanent peace pact with ' + fromName,
+        do: function () { setRelation('player', fromId, 'allied'); sfxAlly(); logEvent('Allied with ' + fromName, 'success'); showToast('Allied with ' + fromName, 'success'); state.pendingPeace = null; closeModal(); draw(); }
+      });
+      actions.push({
+        icon: '✕', title: 'Decline', danger: true,
+        sub: 'Politely refuse',
+        do: function () { state.pendingPeace = null; closeModal(); draw(); }
+      });
+      renderDiplomacyActions(actions, fromName + ' Proposes Alliance');
+    } else if (kind === 'deal') {
+      actions.push({
+        icon: '⚗', primary: true, title: 'Accept Research Deal',
+        sub: 'Both sides gain +' + MUTUAL_DEAL_SCI + ' science toward current research',
+        do: function () {
+          var pl = state.civs.player;
+          var ai = state.civs[fromId];
+          if (pl.currentTech) pl.techProgress = Math.min(TECHS[pl.currentTech].cost, pl.techProgress + MUTUAL_DEAL_SCI);
+          if (ai.currentTech) ai.techProgress = Math.min(TECHS[ai.currentTech].cost, ai.techProgress + MUTUAL_DEAL_SCI);
+          sfxResearch();
+          logEvent('Research deal with ' + fromName + ' (+' + MUTUAL_DEAL_SCI + ' sci)', 'success');
+          showToast('+' + MUTUAL_DEAL_SCI + ' science from ' + fromName, 'success');
+          state.pendingPeace = null;
+          closeModal();
+          draw();
+        }
+      });
+      actions.push({
+        icon: '✕', title: 'Decline', danger: true,
+        sub: 'Politely refuse',
+        do: function () { state.pendingPeace = null; closeModal(); draw(); }
+      });
+      renderDiplomacyActions(actions, fromName + ' Proposes Research Deal');
+    } else {
+      // peace
+      actions.push({
+        icon: '☮', primary: true, title: 'Accept Peace',
+        sub: 'End the war with ' + fromName,
+        do: function () { makePeace('player', fromId); state.pendingPeace = null; closeModal(); draw(); }
+      });
+      actions.push({
+        icon: '⚔', title: 'Reject', danger: true,
+        sub: 'Continue the war',
+        do: function () { state.pendingPeace = null; closeModal(); draw(); }
+      });
+      renderDiplomacyActions(actions, fromName + ' Offers Peace');
+    }
+  }
+
+  // Shared renderer for any diplomacy-modal layout. Wipes #action-list and
+  // re-uses the action-menu modal frame.
+  function renderDiplomacyActions(actions, title) {
     var list = document.getElementById('action-list');
     list.innerHTML = '';
     actions.forEach(function (a) {
       var row = document.createElement('button');
-      row.className = 'action-row focusable' + (a.primary ? ' primary' : '') + (a.danger ? ' danger' : '');
+      var cls = 'action-row focusable';
+      if (a.disabled) cls += ' disabled';
+      if (a.primary)  cls += ' primary';
+      if (a.danger)   cls += ' danger';
+      if (a.header)   cls += ' diplomacy-header';
+      row.className = cls;
+      if (a.disabled) row.setAttribute('disabled', '');
+      row.tabIndex = a.disabled ? -1 : 0;
       row.innerHTML = '<div class="action-icon">' + a.icon + '</div>' +
         '<div class="action-body"><div class="action-title">' + a.title + '</div>' +
-        '<div class="action-sub">' + a.sub + '</div></div>';
-      row.addEventListener('click', a.do);
+        (a.sub ? '<div class="action-sub">' + a.sub + '</div>' : '') + '</div>';
+      if (a.do && !a.disabled) row.addEventListener('click', a.do);
       list.appendChild(row);
     });
-    document.getElementById('action-title').textContent = fromName + ' Offers Peace';
+    document.getElementById('action-title').textContent = title;
     showModal('action-menu');
+  }
+
+  // Trade cost / yield for player → AI "trade for tech progress"
+  var TRADE_GOLD_COST = 80;     // player pays
+  var TRADE_SCI_GAIN  = 35;     // player gains toward current tech
+  var MUTUAL_DEAL_SCI = 30;     // free mutual research deal (offered by AI)
+
+  function relationLabel(rel) {
+    if (rel === 'war') return 'At War';
+    if (rel === 'peace') return 'At Peace';
+    if (rel === 'allied') return 'Allied ★';
+    return rel || 'Unknown';
+  }
+
+  function openDiplomacy() {
+    var civPl = state.civs.player;
+    var actions = [];
+    ['ai','ai2'].forEach(function (aiId) {
+      var aiCiv = state.civs[aiId];
+      // Skip only if civ is fully eliminated (no cities, no units)
+      if (!aiCiv || (aiCiv.cities.length === 0 && aiCiv.units.length === 0)) return;
+      var aiName = CIVS[aiId].name;
+      var per = AI_PERSONALITIES[aiCiv.personality];
+      var perLabel = per ? per.icon + ' ' + per.label : 'Unknown';
+      var rel = relation('player', aiId);
+
+      // Header row (informational)
+      actions.push({
+        header: true, disabled: true,
+        icon: '⬢', title: aiName + ' — ' + relationLabel(rel),
+        sub: perLabel + (rel === 'allied' ? ' · permanent peace pact' : '')
+      });
+
+      if (rel === 'war') {
+        actions.push({
+          icon: '☮', primary: true, title: 'Offer Peace',
+          sub: per ? 'Likely: ' + Math.round(per.acceptPeace * 100) + '%' : 'Sue for peace',
+          do: function () { playerOfferPeace(aiId); closeModal(); draw(); }
+        });
+      } else if (rel === 'allied') {
+        actions.push({
+          icon: '✕', danger: true, title: 'Renounce Alliance',
+          sub: 'Back to peace; either side may then declare war',
+          do: function () { setRelation('player', aiId, 'peace'); showToast('Alliance with ' + aiName + ' renounced', 'error'); logEvent('Renounced alliance with ' + aiName, 'error'); closeModal(); draw(); }
+        });
+        actions.push({
+          icon: '⚗', title: 'Trade for Tech',
+          sub: TRADE_GOLD_COST + 'g → +' + TRADE_SCI_GAIN + ' science · likely: ' + Math.round(per.acceptTrade * 100) + '%',
+          disabled: civPl.gold < TRADE_GOLD_COST || !civPl.currentTech,
+          do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
+        });
+      } else {
+        // at peace
+        actions.push({
+          icon: '★', primary: true, title: 'Propose Alliance',
+          sub: 'Permanent peace pact · likely: ' + Math.round(per.acceptAlliance * 100) + '%',
+          do: function () { playerProposeAlliance(aiId); closeModal(); draw(); }
+        });
+        actions.push({
+          icon: '⚗', title: 'Trade for Tech',
+          sub: TRADE_GOLD_COST + 'g → +' + TRADE_SCI_GAIN + ' science · likely: ' + Math.round(per.acceptTrade * 100) + '%',
+          disabled: civPl.gold < TRADE_GOLD_COST || !civPl.currentTech,
+          do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
+        });
+        actions.push({
+          icon: '⚔', danger: true, title: 'Declare War',
+          sub: 'Break the peace treaty',
+          do: function () { declareWarOn('player', aiId); closeModal(); draw(); }
+        });
+      }
+    });
+    actions.push({
+      icon: '←', title: 'Back',
+      do: function () { closeModal(); }
+    });
+    renderDiplomacyActions(actions, 'Diplomacy');
+  }
+
+  function playerOfferPeace(aiId) {
+    var aiCiv = state.civs[aiId];
+    var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
+    if (rnd() < per.acceptPeace) {
+      makePeace('player', aiId);
+      logEvent(CIVS[aiId].name + ' accepted peace', 'success');
+    } else {
+      showToast(CIVS[aiId].name + ' refuses peace', 'error');
+      logEvent(CIVS[aiId].name + ' refused peace offer', 'error');
+    }
+  }
+
+  function playerProposeAlliance(aiId) {
+    var aiCiv = state.civs[aiId];
+    var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
+    if (rnd() < per.acceptAlliance) {
+      setRelation('player', aiId, 'allied');
+      sfxAlly();
+      showToast('Alliance with ' + CIVS[aiId].name + '!', 'success');
+      logEvent('Allied with ' + CIVS[aiId].name + ' (' + (per.label || 'Rival') + ')', 'success');
+    } else {
+      showToast(CIVS[aiId].name + ' declines alliance', 'error');
+      logEvent(CIVS[aiId].name + ' declined the alliance proposal', 'info');
+    }
+  }
+
+  function playerTradeForTech(aiId) {
+    var civPl = state.civs.player;
+    if (civPl.gold < TRADE_GOLD_COST) { showToast('Not enough gold', 'error'); return; }
+    if (!civPl.currentTech) { showToast('No active research', 'error'); return; }
+    var aiCiv = state.civs[aiId];
+    var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
+    if (rnd() < per.acceptTrade) {
+      civPl.gold -= TRADE_GOLD_COST;
+      aiCiv.gold += TRADE_GOLD_COST;
+      civPl.techProgress = Math.min((TECHS[civPl.currentTech].cost), civPl.techProgress + TRADE_SCI_GAIN);
+      sfxResearch();
+      showToast('Trade with ' + CIVS[aiId].name + ': +' + TRADE_SCI_GAIN + ' science', 'success');
+      logEvent('Traded ' + TRADE_GOLD_COST + 'g for ' + TRADE_SCI_GAIN + ' science via ' + CIVS[aiId].name, 'success');
+    } else {
+      showToast(CIVS[aiId].name + ' rejects the trade', 'error');
+      logEvent(CIVS[aiId].name + ' rejected the science trade', 'info');
+    }
   }
 
   function declareVictory(civId, kind) {
@@ -5768,15 +5959,19 @@
     // Global actions (always at bottom)
     actions.push({ icon: '◆', title: 'Research', sub: civPl.currentTech ? TECHS[civPl.currentTech].name + ' · ' + civPl.techProgress + '/' + TECHS[civPl.currentTech].cost : 'Choose research', do: function () { closeModal(); openTech(); } });
 
-    // Diplomacy — declare war on AIs at peace
-    ['ai', 'ai2'].forEach(function (aiId) {
-      if (!state.civs[aiId]) return;
-      var dk = dipKey('player', aiId);
-      if (state.diplomacy[dk] === 'peace') {
-        var aiName = state.civs[aiId].name;
-        actions.push({ icon: '⚔', danger: true, title: 'Declare War on ' + aiName, sub: 'Break the peace treaty', do: function () { declareWarOn('player', aiId); closeModal(); draw(); } });
-      }
+    // Diplomacy — unified menu (alliances, war, peace, trade)
+    var hasRival = ['ai','ai2'].some(function (id) {
+      var c = state.civs[id];
+      return c && (c.cities.length > 0 || c.units.length > 0);
     });
+    if (hasRival) {
+      actions.push({
+        icon: '⚑',
+        title: 'Diplomacy',
+        sub: 'Alliances · trade · war',
+        do: function () { closeModal(); openDiplomacy(); }
+      });
+    }
 
     // Tile yield overlay toggle
     actions.push({ icon: '⬡', title: showYieldOverlay ? 'Hide Yields' : 'Show Yields', sub: 'Food / prod / gold per tile', do: function () { showYieldOverlay = !showYieldOverlay; showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF'); closeModal(); draw(); } });

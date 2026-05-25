@@ -441,6 +441,17 @@ html, body {
   font-family: var(--font-num);
 }
 
+/* Diplomacy menu header row — informational, non-interactive */
+.action-row.diplomacy-header {
+  background: var(--panel-2);
+  border-left: 3px solid var(--cyan);
+  opacity: 1;
+  cursor: default;
+  margin-top: 6px;
+}
+.action-row.diplomacy-header .action-title { color: var(--cyan); }
+.action-row.diplomacy-header .action-sub { color: var(--text-2); }
+
 /* World overview — small persistent mini-map in upper-right corner */
 #minimap {
   position: absolute;
