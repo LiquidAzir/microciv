@@ -151,7 +151,19 @@
     great_lighthouse: { name: 'Great Lighthouse', cost: 100, tech: 'currency',  wonder: true, perWaterGold: 1,
                         lore: '+1 gold per water tile worked' },
     forge:            { name: 'Forge',            cost: 110, tech: 'iron',      wonder: true, perHillProd: 1,
-                        lore: '+1 prod per hills tile worked' }
+                        lore: '+1 prod per hills tile worked' },
+    // Classical / Medieval / Modern wonders — late-game payoffs for an
+    // empire that survived the opening
+    pyramids:         { name: 'Pyramids',         cost: 130, tech: 'masonry',   wonder: true, perCityProd: 1,
+                        lore: '+1 production in every city' },
+    library_of_alex:  { name: 'Library of Alexandria', cost: 140, tech: 'writing', wonder: true, perCitySci: 2,
+                        lore: '+2 science in every city' },
+    notre_dame:       { name: 'Notre Dame',       cost: 170, tech: 'theology',  wonder: true, perCityCulture: 2,
+                        lore: '+2 culture (great-people) per city, per turn' },
+    big_ben:          { name: 'Big Ben',          cost: 200, tech: 'banking',   wonder: true, goldMultiplier: 0.3,
+                        lore: '+30% gold income' },
+    statue_liberty:   { name: 'Statue of Liberty', cost: 220, tech: 'gunpowder', wonder: true, militaryAtk: 1,
+                        lore: '+1 attack on all your military units' }
   };
 
   var TECHS = {
@@ -3714,6 +3726,9 @@
     // Adjacency bonuses for gold-buildings (Market / Bank near rivers)
     gold += buildingAdjacency(city).gold;
 
+    // Pyramids — +1 production in every city of the owner
+    if (wb.pyramids === city.civ) prod += 1;
+
     return { food: food, prod: prod, gold: gold };
   }
 
@@ -3730,6 +3745,9 @@
     if (b.temple && civ && civ.techs && civ.techs.philosophy) sci += 1;
     // Adjacency bonuses for science buildings
     sci += buildingAdjacency(city).sci;
+    // Library of Alexandria — +2 science in every city of the owner
+    var wb2 = state.wondersBuilt || {};
+    if (wb2.library_of_alex === city.civ) sci += BUILDINGS.library_of_alex.perCitySci;
     return sci;
   }
 
@@ -3780,6 +3798,10 @@
         if (k.goldPerTurn) gpt += k.goldPerTurn;
         if (k.sciPerTurn)  spt += k.sciPerTurn;
       });
+    }
+    // Big Ben wonder — +30% gold income (applied last so it scales perks too)
+    if (state.wondersBuilt && state.wondersBuilt.big_ben === civId) {
+      gpt = Math.round(gpt * (1 + BUILDINGS.big_ben.goldMultiplier));
     }
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
@@ -3974,6 +3996,10 @@
     if (f && f.bonus && f.bonus.atk && !UNITS[unit.type].civilian) bonus += f.bonus.atk;
     // Militaristic city-state ally bonus
     if (!UNITS[unit.type].civilian) bonus += csMilitaryBonus(unit.civ);
+    // Statue of Liberty — +1 ATK on all military units of the owner
+    if (state.wondersBuilt && state.wondersBuilt.statue_liberty === unit.civ && !UNITS[unit.type].civilian) {
+      bonus += BUILDINGS.statue_liberty.militaryAtk;
+    }
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
     // Great General bonus
@@ -4673,7 +4699,11 @@
     pl.gold += pl.goldPerTurn;
     progressTech(pl);
     // Great people culture points from temples
-    pl.cities.forEach(function (ct) { if (ct.buildings && ct.buildings.temple) pl.greatPoints.culture += 3; });
+    pl.cities.forEach(function (ct) {
+      if (ct.buildings && ct.buildings.temple) pl.greatPoints.culture += 3;
+      // Notre Dame — +N culture per city per turn
+      if (state.wondersBuilt && state.wondersBuilt.notre_dame === 'player') pl.greatPoints.culture += BUILDINGS.notre_dame.perCityCulture;
+    });
     checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
@@ -4694,7 +4724,10 @@
         c.gold += c.goldPerTurn;
         progressTech(c);
         // Great people culture points for AI
-        c.cities.forEach(function (ct) { if (ct.buildings && ct.buildings.temple) c.greatPoints.culture += 3; });
+        c.cities.forEach(function (ct) {
+          if (ct.buildings && ct.buildings.temple) c.greatPoints.culture += 3;
+          if (state.wondersBuilt && state.wondersBuilt.notre_dame === c.id) c.greatPoints.culture += BUILDINGS.notre_dame.perCityCulture;
+        });
         checkGreatPeople(id);
         // AI auto-upgrades
         c.units.slice().forEach(function (u) {
