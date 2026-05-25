@@ -154,7 +154,7 @@
   };
 
   var TECHS = {
-    pottery:     { name: 'Pottery',      cost:  18, req: [],                          unlocks: 'Granary' },
+    pottery:     { name: 'Pottery',      cost:  14, req: [],                          unlocks: 'Granary' },
     writing:     { name: 'Writing',      cost:  22, req: ['pottery'],                 unlocks: 'Library' },
     sailing:     { name: 'Sailing',      cost:  25, req: ['pottery'],                 unlocks: 'Galley, Fishing Boats' },
     archery:     { name: 'Archery',      cost:  25, req: [],                          unlocks: 'Archer' },
@@ -3671,11 +3671,16 @@
     if (city.buildings.market) gold += BUILDINGS.market.gold;
     if (city.buildings.bank) gold += BUILDINGS.bank.gold;
 
+    // Adjacency bonuses for gold-buildings (Market / Bank near rivers)
+    gold += buildingAdjacency(city).gold;
+
     return { food: food, prod: prod, gold: gold };
   }
 
   function cityScience(city) {
-    var sci = 1 + Math.floor(city.pop / 2);
+    // Floor of 2/turn so the very first city isn't crawling at 1 sci/turn
+    // while Pottery is being researched.
+    var sci = 2 + Math.floor((city.pop - 1) / 2);
     var b = city.buildings || {};
     if (b.library)    sci += BUILDINGS.library.sci;     // +2
     if (b.temple)     sci += BUILDINGS.temple.sci;      // +3
@@ -3683,7 +3688,36 @@
     // Philosophy: temples give an extra +1 science
     var civ = state.civs[city.civ];
     if (b.temple && civ && civ.techs && civ.techs.philosophy) sci += 1;
+    // Adjacency bonuses for science buildings
+    sci += buildingAdjacency(city).sci;
     return sci;
+  }
+
+  // Per-building adjacency table — checks the 6 hexes around the city tile.
+  // City placement matters: a Library next to mountains, a University in a
+  // forest, a Temple beside natural wonders, all earn extra yields.
+  function buildingAdjacency(city) {
+    var b = city.buildings || {};
+    var out = { sci: 0, gold: 0 };
+    // Cheap skip if no eligible building present
+    if (!b.library && !b.university && !b.temple && !b.market && !b.bank) return out;
+    var ns = neighborsAll(city.c, city.r);
+    for (var i = 0; i < ns.length; i++) {
+      if (!ns[i]) continue;
+      var t = state.map[ns[i][1]][ns[i][0]];
+      if (!t) continue;
+      // Library — knowledge from the heights
+      if (b.library    && (t.terrain === 'hills' || t.terrain === 'mountain')) out.sci += 1;
+      // University — book inspiration from the canopy
+      if (b.university && t.terrain === 'forest') out.sci += 1;
+      // Temple — sacred sites
+      if (b.temple     && (t.terrain === 'volcano' || t.terrain === 'geyser')) out.sci += 1;
+      // Market — riverside trade
+      if (b.market     && t.river) out.gold += 1;
+      // Bank — riverside trade (stacks with market)
+      if (b.bank       && t.river) out.gold += 1;
+    }
+    return out;
   }
 
   function recomputeIncome(civId) {
