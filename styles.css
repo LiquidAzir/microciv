@@ -440,6 +440,19 @@ html, body {
   z-index: 5;
   font-family: var(--font-num);
 }
+
+/* World overview — small persistent mini-map in upper-right corner */
+#minimap {
+  position: absolute;
+  top: 36px;
+  right: 6px;
+  background: rgba(6, 8, 14, 0.85);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  z-index: 4;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
 .hud-cell {
   display: flex;
   align-items: center;

@@ -6268,7 +6268,84 @@
   function draw() {
     if (!state) return;
     drawMap();
+    drawMinimap();
     updateHud();
+  }
+
+  // World-overview minimap — small persistent panel in the upper-right corner.
+  // Shows the whole revealed map at a glance with terrain tints, ownership,
+  // cities (squares), player units (small dots), and the current viewport rect.
+  function drawMinimap() {
+    var mm = document.getElementById('minimap');
+    if (!mm) return;
+    var mctx = mm.getContext('2d');
+    var W = mm.width, H = mm.height;
+    mctx.fillStyle = 'rgba(6,8,14,1)';
+    mctx.fillRect(0, 0, W, H);
+
+    var pad = 3;
+    // Hex cells are taller-than-wide visually; reserve space for the row offset
+    var ts = Math.min((W - pad * 2) / (MAP_W + 0.5), (H - pad * 2) / (MAP_H * 0.85 + 0.15));
+    var offX = (W - ts * (MAP_W + 0.5)) / 2;
+    var offY = (H - ts * (MAP_H * 0.85 + 0.15)) / 2;
+    var hexH = ts * 0.85;
+
+    // Tile pass
+    for (var r = 0; r < MAP_H; r++) {
+      for (var c = 0; c < MAP_W; c++) {
+        var t = state.map[r][c];
+        var rowOffset = (r & 1) ? ts * 0.5 : 0;
+        var x = offX + c * ts + rowOffset;
+        var y = offY + r * hexH;
+        if (!t.explored.player) {
+          mctx.fillStyle = '#070a14';
+        } else {
+          mctx.fillStyle = (TERRAIN[t.terrain] && TERRAIN[t.terrain].color) || '#222';
+        }
+        mctx.fillRect(x, y, ts + 0.5, hexH + 0.5);
+        // Owner tint (only on explored)
+        if (t.explored.player && t.owner && CIVS[t.owner]) {
+          var rgb = hexToRgb(CIVS[t.owner].color);
+          mctx.fillStyle = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.35)';
+          mctx.fillRect(x, y, ts + 0.5, hexH + 0.5);
+        }
+        // City marker — small filled square in civ color
+        if (t.explored.player && t.city) {
+          mctx.fillStyle = (CIVS[t.city.civ] && CIVS[t.city.civ].color) || '#fff';
+          var cs = Math.max(2, ts * 0.7);
+          mctx.fillRect(x + ts/2 - cs/2, y + hexH/2 - cs/2, cs, cs);
+        }
+      }
+    }
+    // Player units as tiny dots
+    state.civs.player.units.forEach(function (u) {
+      var x = offX + u.c * ts + ((u.r & 1) ? ts * 0.5 : 0);
+      var y = offY + u.r * hexH;
+      mctx.fillStyle = CIVS.player.color;
+      var ds = Math.max(1, ts * 0.4);
+      mctx.fillRect(x + ts/2 - ds/2, y + hexH/2 - ds/2, ds, ds);
+    });
+
+    // Current viewport rectangle (world coords → mini-map coords)
+    var size = ZOOM_LEVELS[state.zoom];
+    var hexWorldW = size * SQRT3;
+    var hexWorldH = size * 1.5;
+    var vc0 = state.camera.x / hexWorldW;
+    var vc1 = (state.camera.x + VIEW_W) / hexWorldW;
+    var vr0 = state.camera.y / hexWorldH;
+    var vr1 = (state.camera.y + VIEW_H) / hexWorldH;
+    // Clamp into map range so the box stays inside the minimap frame
+    vc0 = Math.max(0, Math.min(MAP_W, vc0));
+    vc1 = Math.max(0, Math.min(MAP_W, vc1));
+    vr0 = Math.max(0, Math.min(MAP_H, vr0));
+    vr1 = Math.max(0, Math.min(MAP_H, vr1));
+    var rx0 = offX + vc0 * ts;
+    var ry0 = offY + vr0 * hexH;
+    var rx1 = offX + vc1 * ts;
+    var ry1 = offY + vr1 * hexH;
+    mctx.strokeStyle = 'rgba(0,212,255,0.9)';
+    mctx.lineWidth = 1;
+    mctx.strokeRect(rx0 + 0.5, ry0 + 0.5, Math.max(2, rx1 - rx0), Math.max(2, ry1 - ry0));
   }
 
   // =====================================================================
