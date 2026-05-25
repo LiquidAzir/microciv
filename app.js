@@ -6972,8 +6972,12 @@
     var cx = (ev.clientX - rect.left) * (canvas.width / rect.width);
     var cy = (ev.clientY - rect.top)  * (canvas.height / rect.height);
     var size = ZOOM_LEVELS[state.zoom];
-    // Camera holds world-pixel offset of the top-left of view
-    var hex = pixelToHex(cx + state.camera.x, cy + state.camera.y, size);
+    // drawMap places each hex centre at (pixelOf - camera + size*√3/2, +size),
+    // so to recover a hex from a click we have to back the half-hex offset
+    // out of the world coordinate before passing it to pixelToHex.
+    var wx = cx + state.camera.x - size * SQRT3 / 2;
+    var wy = cy + state.camera.y - size;
+    var hex = pixelToHex(wx, wy, size);
     var c = hex[0], r = hex[1];
     if (!inBounds(c, r)) return;
     // If the tapped tile is already the cursor, treat the second tap as a
