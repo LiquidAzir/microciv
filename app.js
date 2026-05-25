@@ -238,6 +238,37 @@
   };
   var FACTION_ORDER = ['solaris', 'umbra', 'tellus'];
 
+  // AI personalities — rolled per AI civ at newGame. Each tunes a few existing
+  // dials (build picks, diplomacy probabilities, tech preference) so each game
+  // feels different without new mechanics.
+  var AI_PERSONALITIES = {
+    aggressive: {
+      label: 'Aggressive', icon: '⚔', warMul: 1.6, peaceMul: 0.5,
+      buildingChance: 0.10, wonderChance: 0.15,
+      acceptAlliance: 0.20, acceptPeace: 0.30, acceptTrade: 0.45,
+      offerAlliance: 0.02, techPreference: 'military'
+    },
+    peaceful: {
+      label: 'Peaceful', icon: '☮', warMul: 0.4, peaceMul: 1.8,
+      buildingChance: 0.40, wonderChance: 0.30,
+      acceptAlliance: 0.75, acceptPeace: 0.85, acceptTrade: 0.75,
+      offerAlliance: 0.20, techPreference: 'balanced'
+    },
+    scientific: {
+      label: 'Scientific', icon: '⚗', warMul: 0.7, peaceMul: 1.3,
+      buildingChance: 0.50, wonderChance: 0.35,
+      acceptAlliance: 0.50, acceptPeace: 0.65, acceptTrade: 0.35,
+      offerAlliance: 0.10, techPreference: 'science'
+    },
+    economic: {
+      label: 'Economic', icon: '●', warMul: 0.5, peaceMul: 1.4,
+      buildingChance: 0.50, wonderChance: 0.35,
+      acceptAlliance: 0.55, acceptPeace: 0.70, acceptTrade: 0.85,
+      offerAlliance: 0.15, techPreference: 'gold'
+    }
+  };
+  var PERSONALITY_ORDER = ['aggressive', 'peaceful', 'scientific', 'economic'];
+
   // City name pools per faction
   var CITY_NAMES = {
     solaris: ['Helios','Aurora','Vega','Lyra','Sirius','Polaris','Orion','Caelum'],
@@ -991,6 +1022,12 @@
     state.civs.player.currentTech = 'pottery';
     state.civs.ai.currentTech     = 'archery';
     state.civs.ai2.currentTech    = 'pottery';
+    // Roll a personality per AI. Always two different ones so the player faces
+    // a mix rather than two clones.
+    var bag = PERSONALITY_ORDER.slice();
+    bag.sort(function () { return Math.random() - 0.5; });
+    state.civs.ai.personality  = bag[0];
+    state.civs.ai2.personality = bag[1];
 
     // City-states: 2 on small/normal, 3 on large
     spawnCityStates(MAP_W >= 18 ? 3 : 2, [p, a, a2]);
@@ -1264,6 +1301,20 @@
         if (cv.greatPeopleSpawned === undefined) cv.greatPeopleSpawned = 0;
         if (cv.generalBonus === undefined) cv.generalBonus = null;
         if (cv.economicCountdown === undefined) cv.economicCountdown = 0;
+      });
+      // Backfill AI personalities — old saves get random ones
+      AI_SIDES.forEach(function (id) {
+        if (state.civs[id] && !state.civs[id].personality) {
+          var pool = PERSONALITY_ORDER.slice();
+          // Avoid duplicating the other AI's personality if it already has one
+          AI_SIDES.forEach(function (oid) {
+            if (oid !== id && state.civs[oid] && state.civs[oid].personality) {
+              var idx = pool.indexOf(state.civs[oid].personality);
+              if (idx >= 0) pool.splice(idx, 1);
+            }
+          });
+          state.civs[id].personality = pool[Math.floor(Math.random() * pool.length)];
+        }
       });
       // Backfill unit promo/kills fields from older saves
       CIV_SIDES.concat(['barb','cs']).forEach(function (id) {
@@ -4336,12 +4387,28 @@
     if (AI_SIDES.indexOf(city.civ) >= 0 && civ.cities.length < 2) return 'settler';
     var available = availableProducibles(civ, city);
     if (AI_SIDES.indexOf(city.civ) >= 0) {
-      // ~25% chance to chase an available wonder, otherwise lean military
+      var per = AI_PERSONALITIES[civ.personality] || AI_PERSONALITIES.aggressive;
+      // Wonder chase (personality-adjusted)
       var wonders = available.filter(function (k) { return BUILDINGS[k] && BUILDINGS[k].wonder; });
-      if (wonders.length && rnd() < 0.25) return wonders[Math.floor(rnd() * wonders.length)];
-      // Sometimes build a regular building if available and not yet built
+      if (wonders.length && rnd() < per.wonderChance) return wonders[Math.floor(rnd() * wonders.length)];
+      // Regular buildings — weighted by personality to pick the "right" ones first
       var regBldgs = available.filter(function (k) { return BUILDINGS[k] && !BUILDINGS[k].wonder && !city.buildings[k]; });
-      if (regBldgs.length && rnd() < 0.20) return regBldgs[Math.floor(rnd() * regBldgs.length)];
+      if (regBldgs.length && rnd() < per.buildingChance) {
+        // Sort by personality preference, then pick the top one
+        var SCI_BLDGS = { library: 1, university: 1, temple: 1 };
+        var GOLD_BLDGS = { market: 1, bank: 1 };
+        var DEF_BLDGS = { walls: 1 };
+        regBldgs.sort(function (a, b) {
+          var pri = function (k) {
+            if (civ.personality === 'scientific' && SCI_BLDGS[k]) return 3;
+            if (civ.personality === 'economic'  && GOLD_BLDGS[k]) return 3;
+            if (civ.personality === 'aggressive'&& DEF_BLDGS[k])  return 3;
+            return 1;
+          };
+          return pri(b) - pri(a);
+        });
+        return regBldgs[0];
+      }
       if (available.indexOf('musketman') >= 0) return 'musketman';
       if (available.indexOf('swordsman') >= 0) return 'swordsman';
       if (available.indexOf('horseman') >= 0) return 'horseman';
@@ -4420,15 +4487,36 @@
   }
 
   function pickAiTech(civ) {
+    // Available techs whose prereqs are met
+    var avail = [];
     for (var i = 0; i < TECH_ORDER.length; i++) {
       var t = TECH_ORDER[i];
       if (civ.techs[t]) continue;
       var def = TECHS[t];
       var ok = true;
       for (var j = 0; j < def.req.length; j++) if (!civ.techs[def.req[j]]) { ok = false; break; }
-      if (ok) return t;
+      if (ok) avail.push(t);
     }
-    return null;
+    if (avail.length === 0) return null;
+    // Personality-aware ordering — keep TECH_ORDER as the fallback so AI
+    // never softlocks if its preferred path is empty.
+    var per = AI_PERSONALITIES[civ.personality];
+    if (!per) return avail[0];
+    var SCI_TECHS = { writing: 1, philosophy: 1, education: 1 };
+    var GOLD_TECHS = { currency: 1, banking: 1 };
+    var MIL_TECHS = { archery: 1, husbandry: 1, iron: 1, steel: 1, gunpowder: 1, engineering: 1 };
+    var BAL_TECHS = { pottery: 1, masonry: 1, theology: 1, sailing: 1 };
+    avail.sort(function (a, b) {
+      var pri = function (k) {
+        if (per.techPreference === 'science'  && SCI_TECHS[k])  return 3;
+        if (per.techPreference === 'gold'     && GOLD_TECHS[k]) return 3;
+        if (per.techPreference === 'military' && MIL_TECHS[k])  return 3;
+        if (per.techPreference === 'balanced' && BAL_TECHS[k])  return 2;
+        return 1;
+      };
+      return pri(b) - pri(a);
+    });
+    return avail[0];
   }
 
   // =====================================================================
@@ -4577,21 +4665,24 @@
     AI_SIDES.forEach(function (aiId) {
       var aiCiv = state.civs[aiId];
       if (!aiCiv || aiCiv.cities.length === 0) return;
+      var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
       var aiMil = aiCiv.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
 
       // Check vs player
       if (atWar(aiId, 'player')) {
         var plMil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
-        // Offer peace if significantly weaker
+        // Offer peace if significantly weaker (peace probability scaled by peaceMul)
         if (aiMil < plMil * 0.5 && aiCiv.cities.length <= state.civs.player.cities.length && state.turn >= 8) {
-          if (!state.pendingPeace && rnd() < 0.3) {
+          if (!state.pendingPeace && rnd() < 0.3 * per.peaceMul) {
             state.pendingPeace = { from: aiId };
           }
         }
+      } else if (state.diplomacy[dipKey(aiId, 'player')] === 'allied') {
+        // Alliance held — no war from this state without renounce
       } else {
         // At peace — maybe declare war if strong enough and enough turns passed
         var plMil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
-        if (aiMil >= plMil * 1.5 && aiMil >= 4 && state.turn >= 15 && rnd() < 0.15) {
+        if (aiMil >= plMil * 1.5 && aiMil >= 4 && state.turn >= 15 && rnd() < 0.15 * per.warMul) {
           declareWarOn(aiId, 'player');
         }
       }
@@ -4603,13 +4694,13 @@
         if (!otherCiv || otherCiv.cities.length === 0) return;
         var otherMil = otherCiv.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
         if (atWar(aiId, otherId)) {
-          // Peace if both weak
-          if (aiMil <= 2 && otherMil <= 2 && rnd() < 0.2) {
+          // Peace if both weak (peace probability scaled by peaceMul)
+          if (aiMil <= 2 && otherMil <= 2 && rnd() < 0.2 * per.peaceMul) {
             makePeace(aiId, otherId);
           }
-        } else {
-          // War if strong
-          if (aiMil >= otherMil * 1.5 && aiMil >= 4 && state.turn >= 12 && rnd() < 0.1) {
+        } else if (state.diplomacy[dipKey(aiId, otherId)] !== 'allied') {
+          // War if strong (scaled by warMul)
+          if (aiMil >= otherMil * 1.5 && aiMil >= 4 && state.turn >= 12 && rnd() < 0.1 * per.warMul) {
             declareWarOn(aiId, otherId);
           }
         }
