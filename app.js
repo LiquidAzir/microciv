@@ -6626,6 +6626,155 @@
   }
 
   // =====================================================================
+  // SAVE EXPORT / IMPORT
+  // Tracks which mode the share modal is currently in (export vs import)
+  // so the Copy / Paste / Load buttons know what to do.
+  // =====================================================================
+  var shareMode = null;   // 'export' | 'import'
+
+  // gzip + base64 a string; prefix with 'g:'. Falls back to base64-only ('j:')
+  // if CompressionStream isn't available.
+  async function encodeSavePayload(raw) {
+    if (typeof CompressionStream === 'function') {
+      try {
+        var stream = new Blob([raw]).stream().pipeThrough(new CompressionStream('gzip'));
+        var buf = await new Response(stream).arrayBuffer();
+        var bytes = new Uint8Array(buf);
+        var bin = '';
+        for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return 'g:' + btoa(bin);
+      } catch (e) { /* fall through */ }
+    }
+    return 'j:' + btoa(unescape(encodeURIComponent(raw)));
+  }
+
+  // Inverse — accepts either prefix or raw JSON for legacy paste-ins.
+  async function decodeSavePayload(code) {
+    code = (code || '').trim();
+    if (!code) throw new Error('Empty code');
+    if (code.indexOf('g:') === 0) {
+      if (typeof DecompressionStream !== 'function') throw new Error('Browser too old for gzip codes');
+      var bin = atob(code.slice(2));
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+      return await new Response(stream).text();
+    }
+    if (code.indexOf('j:') === 0) {
+      return decodeURIComponent(escape(atob(code.slice(2))));
+    }
+    // Assume raw JSON
+    return code;
+  }
+
+  async function openShareExport() {
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) { showToast('No save to export', 'error'); return; }
+    shareMode = 'export';
+    document.getElementById('share-title').textContent = 'Export Save';
+    document.getElementById('share-hint').innerHTML =
+      'Copy this code and paste it into <b>Import Save</b> on another device. The code holds your whole game.';
+    var ta = document.getElementById('share-code');
+    ta.readOnly = true;
+    ta.value = 'Encoding…';
+    document.getElementById('share-primary').textContent = 'Copy';
+    document.getElementById('share-secondary').textContent = 'Done';
+    showModal('share-screen');
+    try {
+      ta.value = await encodeSavePayload(raw);
+    } catch (e) {
+      ta.value = '(error encoding save)';
+    }
+  }
+
+  function openShareImport() {
+    shareMode = 'import';
+    document.getElementById('share-title').textContent = 'Import Save';
+    document.getElementById('share-hint').innerHTML =
+      'Paste a code from <b>Export Save</b> on another device, then tap <b>Load</b>. This overwrites your current save.';
+    var ta = document.getElementById('share-code');
+    ta.readOnly = false;
+    ta.value = '';
+    document.getElementById('share-primary').textContent = 'Load';
+    document.getElementById('share-secondary').textContent = 'Paste';
+    showModal('share-screen');
+  }
+
+  function shareModalPrimary() {
+    var ta = document.getElementById('share-code');
+    if (shareMode === 'export') {
+      // Copy code to clipboard
+      copyTextToClipboard(ta.value).then(function (ok) {
+        if (ok) showToast('Save code copied to clipboard', 'success');
+        else showToast('Couldn’t copy — select and copy manually', 'error');
+        // Re-focus the textarea so the user can ⌘C/Ctrl+C themselves if needed
+        ta.focus(); ta.select();
+      });
+    } else {
+      // Load pasted code
+      loadFromShareCode(ta.value);
+    }
+  }
+
+  function shareModalSecondary() {
+    var ta = document.getElementById('share-code');
+    if (shareMode === 'export') {
+      // Done — close
+      closeModal();
+      setupTitleButtons();
+    } else {
+      // Paste from clipboard (or focus textarea for manual paste)
+      readTextFromClipboard().then(function (text) {
+        if (text) {
+          ta.value = text.trim();
+          showToast('Pasted from clipboard');
+        } else {
+          ta.focus();
+          showToast('Paste manually into the box', 'error');
+        }
+      });
+    }
+  }
+
+  async function loadFromShareCode(code) {
+    try {
+      var raw = await decodeSavePayload(code);
+      var parsed = JSON.parse(raw);
+      if (!parsed || !parsed.civs || !parsed.map) throw new Error('Save data missing civs/map');
+      localStorage.setItem(STORAGE_KEY, raw);
+      sfxAlly();
+      showToast('Save imported — Continue on title to load', 'success');
+      closeModal();
+      setupTitleButtons();   // refreshes the Continue button enabled state
+    } catch (e) {
+      showToast('Invalid save code: ' + e.message, 'error');
+    }
+  }
+
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; });
+    }
+    // Legacy fallback for older browsers — works because we already have the
+    // textarea on screen.
+    try {
+      var ta = document.getElementById('share-code');
+      ta.select();
+      var ok = document.execCommand('copy');
+      return Promise.resolve(!!ok);
+    } catch (e) {
+      return Promise.resolve(false);
+    }
+  }
+
+  function readTextFromClipboard() {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      return navigator.clipboard.readText().then(function (t) { return t; }, function () { return null; });
+    }
+    return Promise.resolve(null);
+  }
+
+  // =====================================================================
   // DRAW
   // =====================================================================
   function draw() {
@@ -6752,6 +6901,18 @@
         break;
       case 'show-help':
         showScreen('help-screen');
+        break;
+      case 'share-export':
+        openShareExport();
+        break;
+      case 'share-import':
+        openShareImport();
+        break;
+      case 'share-primary':
+        shareModalPrimary();
+        break;
+      case 'share-secondary':
+        shareModalSecondary();
         break;
       case 'toggle-sfx':
         setSfxEnabled(!audioPrefs.sfx);

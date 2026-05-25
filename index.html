@@ -23,6 +23,10 @@
           <button class="nav-item primary focusable" data-action="show-civ-select">New Game</button>
           <button class="nav-item focusable" data-action="continue-game" id="continue-btn">Continue</button>
           <button class="nav-item focusable" data-action="show-help">How to Play</button>
+          <div class="title-actions-row">
+            <button class="nav-item small focusable" data-action="share-export">Export Save</button>
+            <button class="nav-item small focusable" data-action="share-import">Import Save</button>
+          </div>
         </div>
         <div class="title-audio">
           <button class="audio-toggle focusable" data-action="toggle-sfx" id="sfx-toggle" aria-pressed="true">SFX <span class="audio-state">ON</span></button>
@@ -220,6 +224,9 @@
           <div class="help-section">Tile Yields</div>
           <p>Open the action menu and select <b>Show Yields</b> to toggle food/prod/gold numbers on every tile.</p>
 
+          <div class="help-section">Cross-device saves</div>
+          <p>From the title screen, <b>Export Save</b> shows a long code that holds your whole game. Tap <b>Copy</b>, then paste it into <b>Import Save</b> on another device to pick up where you left off. Codes work between glasses, phone, and PC at the same URL.</p>
+
           <div class="help-section">Game Setup</div>
           <p><b>Map size:</b> Small (10×10, faster games), Normal (14×14), Large (18×18, epic sprawl).</p>
           <p><b>Difficulty:</b> Easy (AI attacks late, −1 atk), Normal (balanced), Hard (AI attacks early, +1 atk, extra starting warrior).</p>
@@ -234,6 +241,21 @@
         <p id="end-detail" class="end-detail"></p>
         <button class="nav-item primary focusable" data-action="restart">New Game</button>
         <button class="nav-item focusable" data-action="back-to-title">Title</button>
+      </div>
+    </div>
+
+    <div id="share-screen" class="screen modal hidden">
+      <div class="modal-card wide">
+        <header class="modal-header">
+          <button class="back-btn focusable" data-action="back">&#8592;</button>
+          <h2 id="share-title">Save Code</h2>
+        </header>
+        <p id="share-hint" class="share-hint"></p>
+        <textarea id="share-code" class="share-code" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+        <div class="share-actions">
+          <button class="nav-item primary focusable" id="share-primary" data-action="share-primary">Copy</button>
+          <button class="nav-item focusable" id="share-secondary" data-action="share-secondary">Paste</button>
+        </div>
       </div>
     </div>
 
