@@ -234,9 +234,33 @@
       color: '#b388ff', edge: '#d4b8ff',
       bonus: { gold: 1 },
       lore: '+1 gold in every city. Coffers fill faster for upkeep and trade.'
+    },
+    // --- New factions ---
+    ferrum: {
+      name: 'Ferrum',
+      title: 'The Iron Legion',
+      color: '#d9892b', edge: '#ffc06a',
+      bonus: { prod: 1 },
+      lean: 'warmonger',
+      lore: '+1 production in every city. Their forges never cool between wars.'
+    },
+    vorne: {
+      name: 'Vorne',
+      title: 'The Bloodbound',
+      color: '#d83a4a', edge: '#ff7a86',
+      bonus: { atk: 1 },
+      lean: 'aggressive',
+      lore: '+1 attack on military units. A horde that lives to charge.'
+    },
+    myrr: {
+      name: 'Myrr',
+      title: 'The Tidewardens',
+      color: '#2ad0c0', edge: '#7af0e4',
+      bonus: { gold: 1 },
+      lore: '+1 gold in every city. Masters of trade across the open seas.'
     }
   };
-  var FACTION_ORDER = ['solaris', 'umbra', 'tellus'];
+  var FACTION_ORDER = ['solaris', 'umbra', 'tellus', 'ferrum', 'vorne', 'myrr'];
 
   // AI personalities — rolled per AI civ at newGame. Each tunes a few existing
   // dials (build picks, diplomacy probabilities, tech preference) so each game
@@ -265,15 +289,29 @@
       buildingChance: 0.50, wonderChance: 0.35,
       acceptAlliance: 0.55, acceptPeace: 0.70, acceptTrade: 0.85,
       offerAlliance: 0.15, techPreference: 'gold'
+    },
+    // Warmonger — scarier than Aggressive. Declares war early and often,
+    // almost never makes peace, ignores wonders, pumps military.
+    warmonger: {
+      label: 'Warmonger', icon: '☠', warMul: 2.3, peaceMul: 0.25,
+      buildingChance: 0.06, wonderChance: 0.05,
+      acceptAlliance: 0.05, acceptPeace: 0.15, acceptTrade: 0.30,
+      offerAlliance: 0.0, techPreference: 'military'
     }
   };
+  // Warmonger is intentionally left OUT of the random roll pool — it only
+  // arrives via a faction `lean`, so a normal random AI is never a warmonger
+  // unless its faction is themed that way.
   var PERSONALITY_ORDER = ['aggressive', 'peaceful', 'scientific', 'economic'];
 
   // City name pools per faction
   var CITY_NAMES = {
     solaris: ['Helios','Aurora','Vega','Lyra','Sirius','Polaris','Orion','Caelum'],
     umbra:   ['Nox','Erebus','Thanos','Vesper','Nyx','Tartarus','Mortis','Pyre'],
-    tellus:  ['Terra','Gaia','Atlas','Cybele','Demeter','Pomona','Faunus','Vertumnus']
+    tellus:  ['Terra','Gaia','Atlas','Cybele','Demeter','Pomona','Faunus','Vertumnus'],
+    ferrum:  ['Ferrum','Castra','Vallum','Aquila','Legio','Fornax','Incus','Malleus'],
+    vorne:   ['Vorne','Krael','Gorthad','Brakka','Skorn','Hagal','Vroth','Drûl'],
+    myrr:    ['Myrr','Tidehold','Coralis','Saltspire','Marisca','Nerida','Pelagos','Thalassa']
   };
   // City-state name pool — neutral cosmopolitan flavour
   var CITY_STATE_NAMES = ['Carthage','Samarkand','Geneva','Lhasa','Petra','Almaty','Antium','Byblos','Kabul','Ragusa'];
@@ -1062,12 +1100,18 @@
     state.civs.player.currentTech = 'pottery';
     state.civs.ai.currentTech     = 'archery';
     state.civs.ai2.currentTech    = 'pottery';
-    // Roll a personality per AI. Always two different ones so the player faces
-    // a mix rather than two clones.
+    // Assign a personality per AI. A faction with a `lean` forces that
+    // personality (e.g. Ferrum is always a warmonger); factions without one
+    // draw distinct random personalities so the two AIs still feel different.
     var bag = PERSONALITY_ORDER.slice();
     bag.sort(function () { return Math.random() - 0.5; });
-    state.civs.ai.personality  = bag[0];
-    state.civs.ai2.personality = bag[1];
+    function assignPersonality(sideId) {
+      var fac = FACTIONS[state.civs[sideId].faction];
+      if (fac && fac.lean && AI_PERSONALITIES[fac.lean]) return fac.lean;
+      return bag.shift() || 'aggressive';
+    }
+    state.civs.ai.personality  = assignPersonality('ai');
+    state.civs.ai2.personality = assignPersonality('ai2');
 
     // City-states scale with map size — denser worlds have more neutrals to court
     spawnCityStates(MAP_W >= 20 ? 4 : (MAP_W >= 16 ? 3 : 2), [p, a, a2]);
@@ -4454,7 +4498,7 @@
           var pri = function (k) {
             if (civ.personality === 'scientific' && SCI_BLDGS[k]) return 3;
             if (civ.personality === 'economic'  && GOLD_BLDGS[k]) return 3;
-            if (civ.personality === 'aggressive'&& DEF_BLDGS[k])  return 3;
+            if ((civ.personality === 'aggressive' || civ.personality === 'warmonger') && DEF_BLDGS[k]) return 3;
             return 1;
           };
           return pri(b) - pri(a);
