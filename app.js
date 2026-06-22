@@ -6387,10 +6387,12 @@
     for (var i = 0; i < TECH_ORDER.length; i++) if (pl.techs[TECH_ORDER[i]]) techCount++;
     var stats = state.stats || {};
     var diffLabel = DIFFICULTIES[state.difficulty || 'normal'] ? DIFFICULTIES[state.difficulty || 'normal'].label : 'Normal';
-    var mapLabel = '';
-    if (MAP_W <= 10) mapLabel = 'Small';
-    else if (MAP_W >= 18) mapLabel = 'Large';
-    else mapLabel = 'Normal';
+    // Derive the size label from the actual map width so it stays correct as
+    // sizes change (was hardcoded to the old 10/14/18 thresholds).
+    var mapLabel = 'Normal';
+    for (var msk in MAP_SIZES) {
+      if (MAP_SIZES[msk].w === MAP_W) { mapLabel = MAP_SIZES[msk].label; break; }
+    }
     detail.innerHTML += '<div class="end-stats">' +
       '<div class="stat-row"><span>Turns</span><span>' + state.turn + '</span></div>' +
       '<div class="stat-row"><span>Cities</span><span>' + pl.cities.length + '</span></div>' +
@@ -6699,6 +6701,15 @@
     host.appendChild(diffRow);
   }
 
+  // After renderCivCards() rebuilds the setup DOM, return focus to the control
+  // the player just changed (matched by data-action + a data-attr value), so
+  // D-pad navigation doesn't snap back to the top of the list.
+  function refocusSetup(action, attr, value) {
+    var sel = '[data-action="' + action + '"][data-' + attr + '="' + value + '"]';
+    var el = document.querySelector(sel);
+    if (el) { try { el.focus(); el.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+  }
+
   function backToTitle() {
     showScreen('title');
     setupTitleButtons();
@@ -6989,10 +7000,15 @@
       case 'pick-mapsize':
         selectedMapSize = el.dataset.mapsize;
         renderCivCards();
+        // Re-render rebuilds the DOM, which drops focus — put it back on the
+        // control just changed so D-pad / neural-band users keep their place
+        // and can keep nudging the selection.
+        refocusSetup('pick-mapsize', 'mapsize', selectedMapSize);
         break;
       case 'pick-difficulty':
         selectedDifficulty = el.dataset.difficulty;
         renderCivCards();
+        refocusSetup('pick-difficulty', 'difficulty', selectedDifficulty);
         break;
       case 'new-game':
         clearSave();
