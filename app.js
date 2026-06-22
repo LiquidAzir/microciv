@@ -5761,6 +5761,27 @@
           openActionMenu();
           return;
         }
+
+        // Clicking your own city always opens the city screen — it never
+        // commands the selected unit to walk there. Any standing multi-turn
+        // order (goto) the unit already has is preserved; we just stop
+        // treating this click as a move and drop the active selection so the
+        // next click is a clean fresh action.
+        if (t.city && t.city.civ === 'player') {
+          state.selected = null;
+          openCity(t.city);
+          return;
+        }
+
+        // Clicking a different friendly unit switches the active selection to
+        // it rather than trying to move the current unit onto an occupied tile.
+        if (t.unit && t.unit.civ === 'player' && t.unit !== su) {
+          state.selected = { c: t.unit.c, r: t.unit.r };
+          sfxSelect();
+          showToast(UNITS[t.unit.type].name + ' · ' + t.unit.moves + ' moves');
+          return;
+        }
+
         if (su.moves > 0) {
           // Ranged attack: if this is a ranged unit and cursor is on an enemy in range, fire
           var suDef = UNITS[su.type];
@@ -5866,6 +5887,12 @@
       state.selected = { c: u.c, r: u.r };
       var def = UNITS[u.type];
       title = UNITS[u.type].name;
+
+      // Garrisoned on your own city — offer quick access to the city screen so
+      // a unit standing on the city tile never blocks reaching production.
+      if (isCity) {
+        actions.push({ icon: '🏛', primary: true, title: 'Manage ' + t.city.name, sub: 'Production, food, science', do: function () { closeModal(); openCity(t.city); } });
+      }
 
       if (def.canFound) {
         actions.push({ icon: '★', primary: true, title: 'Found City', sub: 'Plant a settlement here', do: function () { u.goto = null; foundCity(u); closeModal(); draw(); } });
