@@ -619,10 +619,25 @@
   function setRelation(a, b, rel) {
     if (!state.diplomacy) return;
     state.diplomacy[dipKey(a, b)] = rel;
+    // Forging an alliance wipes the slate clean on both sides.
+    if (rel === 'allied') {
+      [[a, b], [b, a]].forEach(function (pair) {
+        var civ = state.civs[pair[0]];
+        if (AI_SIDES.indexOf(pair[0]) >= 0 && civ && civ.tension) {
+          civ.tension[pair[1]] = 0;
+          if (civ.tensionBand) civ.tensionBand[pair[1]] = 0;
+        }
+      });
+    }
   }
   function makePeace(a, b) {
     if (!state.diplomacy) return;
     state.diplomacy[dipKey(a, b)] = 'peace';
+    // Peace cools grudges on both sides.
+    if (typeof addTension === 'function') {
+      if (AI_SIDES.indexOf(a) >= 0) addTension(a, b, -18);
+      if (AI_SIDES.indexOf(b) >= 0) addTension(b, a, -18);
+    }
     var aName = CIVS[a] ? CIVS[a].name : a;
     var bName = CIVS[b] ? CIVS[b].name : b;
     if (a === 'player' || b === 'player') {
@@ -633,6 +648,10 @@
   function declareWarOn(a, b) {
     if (!state.diplomacy) return;
     state.diplomacy[dipKey(a, b)] = 'war';
+    // The target of a war declaration resents the declarer.
+    if (typeof addTension === 'function' && AI_SIDES.indexOf(b) >= 0) {
+      addTension(b, a, TENSION_WAR_SPIKE, 'war');
+    }
     var aName = CIVS[a] ? CIVS[a].name : a;
     var bName = CIVS[b] ? CIVS[b].name : b;
     if (a === 'player' || b === 'player') {
@@ -1215,7 +1234,11 @@
       greatPoints: { culture: 0, military: 0 },
       greatPeopleSpawned: 0,
       generalBonus: null,
-      economicCountdown: 0
+      economicCountdown: 0,
+      // Dynamic grievance toward each other civ id (0 = cordial, higher = angrier).
+      // Only AIs act on it; the player's map is unused.
+      tension: {},
+      tensionBand: {}
     };
   }
 
@@ -1406,6 +1429,11 @@
             }
           });
           state.civs[id].personality = pool[Math.floor(Math.random() * pool.length)];
+        }
+        // Tension maps for the dynamic-grievance system
+        if (state.civs[id]) {
+          if (!state.civs[id].tension) state.civs[id].tension = {};
+          if (!state.civs[id].tensionBand) state.civs[id].tensionBand = {};
         }
       });
       // Backfill unit promo/kills fields from older saves
@@ -4238,6 +4266,14 @@
     killUnit(unit);
     recomputeBorders();
     showToast('Founded ' + name, 'success');
+    // Planting a city next to a rival's territory irritates them right away.
+    AI_SIDES.forEach(function (aiId) {
+      if (aiId === unit.civ) return;
+      var aic = state.civs[aiId];
+      if (!aic) return;
+      var crowds = aic.cities.some(function (cc) { return hexDist([city.c, city.r], [cc.c, cc.r]) <= TENSION_PROX_RANGE; });
+      if (crowds) addTension(aiId, unit.civ, TENSION_FOUND_SPIKE, 'proximity');
+    });
     if (unit.civ === 'player') {
       sfxFound();
       logEvent('Choose production for ' + name, 'info');
@@ -4249,6 +4285,10 @@
   function captureCity(city, newOwnerId) {
     var oldOwner = state.civs[city.civ];
     var oldOwnerId = oldOwner.id;
+    // Losing a city to someone is the deepest grievance there is.
+    if (AI_SIDES.indexOf(oldOwnerId) >= 0 && oldOwnerId !== newOwnerId) {
+      addTension(oldOwnerId, newOwnerId, TENSION_CAPTURE_SPIKE, 'capture');
+    }
     // Barbarian raiders pillage and burn — they don't keep cities.
     if (newOwnerId === 'barb') {
       var idx0 = oldOwner.cities.indexOf(city);
@@ -4769,8 +4809,110 @@
   }
 
   // =====================================================================
-  // AI DIPLOMACY
+  // AI DIPLOMACY — dynamic tension
+  // Each AI builds grievance toward other civs over time: cities crowding its
+  // borders, a rival's runaway power, and hostile acts all raise tension; it
+  // decays slowly (grudges fade) and drops on peace / alliance. Tension then
+  // bends the AI's war/peace/alliance/trade decisions, so relations shift in
+  // response to what the player actually does.
   // =====================================================================
+  var TENSION_MAX        = 100;
+  var TENSION_DECAY      = 1.4;   // per turn — grudges cool off
+  var TENSION_PROX_RANGE = 4;     // rival cities within this many hexes cause friction
+  var TENSION_PROX_W     = 0.55;  // friction per "closeness point" per nearby city pair
+  var TENSION_THREAT_R   = 1.25;  // a rival this much stronger breeds fear
+  var TENSION_THREAT_W   = 3.0;
+  var TENSION_FOUND_SPIKE = 9;    // instant bump when a rival founds a city next door
+  var TENSION_WAR_SPIKE   = 22;   // when someone declares war on this AI
+  var TENSION_CAPTURE_SPIKE = 38; // when someone takes one of this AI's cities
+
+  function militaryCount(civ) {
+    return civ.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+  }
+  function civPower(civ) {
+    return civ.cities.length * 2 + militaryCount(civ);
+  }
+  function tensionOf(aiId, otherId) {
+    var c = state.civs[aiId];
+    if (!c || !c.tension) return 0;
+    return c.tension[otherId] || 0;
+  }
+  // Band thresholds shared by the AI logic and the Diplomacy menu display.
+  function tensionInfo(t) {
+    if (t >= 55) return { idx: 3, label: 'Hostile', color: '#ff4466' };
+    if (t >= 30) return { idx: 2, label: 'Tense',   color: '#ff9a3a' };
+    if (t >= 12) return { idx: 1, label: 'Wary',    color: '#ffd34d' };
+    return { idx: 0, label: 'Cordial', color: '#00ff88' };
+  }
+  // Add (or subtract) tension and, when an AI's feeling toward the PLAYER
+  // crosses up into a worse band, tell the player why.
+  function addTension(aiId, otherId, amount, reason) {
+    var c = state.civs[aiId];
+    if (!c || AI_SIDES.indexOf(aiId) < 0) return;   // only AIs hold grudges
+    if (!c.tension) c.tension = {};
+    if (!c.tensionBand) c.tensionBand = {};
+    var before = c.tension[otherId] || 0;
+    var after = Math.max(0, Math.min(TENSION_MAX, before + amount));
+    c.tension[otherId] = after;
+    if (otherId !== 'player') return;
+    var prevBand = c.tensionBand[otherId] || 0;
+    var newBand = tensionInfo(after).idx;
+    if (newBand > prevBand && newBand >= 1) {
+      var name = CIVS[aiId] ? CIVS[aiId].name : aiId;
+      var msg = reason === 'threat'
+        ? name + ' grows uneasy at your rising power'
+        : reason === 'war'
+        ? name + ' resents your aggression'
+        : reason === 'capture'
+        ? name + ' is enraged by your conquests'
+        : name + ' resents your encroaching settlements';
+      logEvent(msg, 'error');
+      if (newBand >= 2) showToast(msg, 'error');
+    }
+    c.tensionBand[otherId] = newBand;
+  }
+
+  // Recompute each AI's tension toward every other civ once per turn.
+  function updateTensions() {
+    AI_SIDES.forEach(function (aiId) {
+      var ai = state.civs[aiId];
+      if (!ai) return;
+      if (!ai.tension) ai.tension = {};
+      if (!ai.tensionBand) ai.tensionBand = {};
+      CIV_SIDES.forEach(function (otherId) {
+        if (otherId === aiId) return;
+        var other = state.civs[otherId];
+        var prev = ai.tension[otherId] || 0;
+        // Allies and the city-less drift back toward calm.
+        if (!other || other.cities.length === 0 || relation(aiId, otherId) === 'allied') {
+          ai.tension[otherId] = Math.max(0, prev - TENSION_DECAY * 2);
+          ai.tensionBand[otherId] = tensionInfo(ai.tension[otherId]).idx;
+          return;
+        }
+        var proxAdd = 0;
+        ai.cities.forEach(function (ca) {
+          other.cities.forEach(function (co) {
+            var d = hexDist([ca.c, ca.r], [co.c, co.r]);
+            if (d <= TENSION_PROX_RANGE) proxAdd += (TENSION_PROX_RANGE - d + 1) * TENSION_PROX_W;
+          });
+        });
+        var ratio = civPower(other) / Math.max(1, civPower(ai));
+        var threatAdd = ratio > TENSION_THREAT_R ? (ratio - TENSION_THREAT_R) * TENSION_THREAT_W : 0;
+        var add = proxAdd + threatAdd;
+        // Apply decay first, then route the fresh friction through addTension so
+        // band-crossing alerts toward the player fire as relations sour.
+        ai.tension[otherId] = Math.max(0, prev - TENSION_DECAY);
+        addTension(aiId, otherId, add, proxAdd >= threatAdd ? 'proximity' : 'threat');
+      });
+    });
+  }
+
+  // Tension-adjusted acceptance probability for a player offer (clamped sane).
+  function acceptChance(base, tension, sensitivity) {
+    var v = base * (1 - tension / sensitivity);
+    return Math.max(0.02, Math.min(0.98, v));
+  }
+
   function aiDiplomacyCheck() {
     if (state.victory) return;
     AI_SIDES.forEach(function (aiId) {
@@ -4780,11 +4922,13 @@
       var aiMil = aiCiv.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
 
       // Check vs player
+      var plTension = tensionOf(aiId, 'player');
       if (atWar(aiId, 'player')) {
-        var plMil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
-        // Offer peace if significantly weaker (peace probability scaled by peaceMul)
+        var plMil = militaryCount(state.civs.player);
+        // Offer peace if weaker — but a furious AI keeps fighting (tension cuts
+        // its willingness to sue for peace).
         if (aiMil < plMil * 0.5 && aiCiv.cities.length <= state.civs.player.cities.length && state.turn >= 8) {
-          if (!state.pendingPeace && rnd() < 0.3 * per.peaceMul) {
+          if (!state.pendingPeace && rnd() < 0.3 * per.peaceMul * (1 - plTension / 150)) {
             state.pendingPeace = { from: aiId };
           }
         }
@@ -4795,12 +4939,17 @@
           state.pendingPeace = { from: aiId, kind: 'deal' };
         }
       } else {
-        // At peace — maybe declare war if strong enough and enough turns passed
-        var plMil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
-        if (aiMil >= plMil * 1.5 && aiMil >= 4 && state.turn >= 15 && rnd() < 0.15 * per.warMul) {
+        // At peace — tension raises war odds and lets an angry AI strike even
+        // without an overwhelming army.
+        var plMil = militaryCount(state.civs.player);
+        var warMul = per.warMul * (1 + plTension / 35);     // tension 35 ~doubles it
+        var ratioGate = plTension >= 40 ? 1.0 : 1.5;        // furious AIs fight at parity
+        var milGate   = plTension >= 40 ? 3 : 4;
+        if (aiMil >= plMil * ratioGate && aiMil >= milGate && state.turn >= 12 && rnd() < 0.15 * warMul) {
           declareWarOn(aiId, 'player');
-        } else if (!state.pendingPeace && state.turn >= 10 && rnd() < per.offerAlliance) {
-          // Otherwise propose an alliance based on personality
+        } else if (!state.pendingPeace && state.turn >= 10 && plTension < 20 &&
+                   rnd() < per.offerAlliance * (1 - plTension / 25)) {
+          // Only cordial AIs extend a hand.
           state.pendingPeace = { from: aiId, kind: 'alliance' };
         }
       }
@@ -4810,15 +4959,17 @@
         if (otherId === aiId) return;
         var otherCiv = state.civs[otherId];
         if (!otherCiv || otherCiv.cities.length === 0) return;
-        var otherMil = otherCiv.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+        var otherMil = militaryCount(otherCiv);
+        var oTension = tensionOf(aiId, otherId);
         if (atWar(aiId, otherId)) {
-          // Peace if both weak (peace probability scaled by peaceMul)
-          if (aiMil <= 2 && otherMil <= 2 && rnd() < 0.2 * per.peaceMul) {
+          // Peace if both weak — high mutual grudge keeps the war going.
+          if (aiMil <= 2 && otherMil <= 2 && rnd() < 0.2 * per.peaceMul * (1 - oTension / 150)) {
             makePeace(aiId, otherId);
           }
         } else if (state.diplomacy[dipKey(aiId, otherId)] !== 'allied') {
-          // War if strong (scaled by warMul)
-          if (aiMil >= otherMil * 1.5 && aiMil >= 4 && state.turn >= 12 && rnd() < 0.1 * per.warMul) {
+          var warMul2 = per.warMul * (1 + oTension / 35);
+          var ratioGate2 = oTension >= 40 ? 1.1 : 1.5;
+          if (aiMil >= otherMil * ratioGate2 && aiMil >= 4 && state.turn >= 12 && rnd() < 0.1 * warMul2) {
             declareWarOn(aiId, otherId);
           }
         }
@@ -4913,6 +5064,9 @@
   var TRADE_GOLD_COST = 80;     // player pays
   var TRADE_SCI_GAIN  = 35;     // player gains toward current tech
   var MUTUAL_DEAL_SCI = 30;     // free mutual research deal (offered by AI)
+  // How sharply each offer's acceptance falls as the AI's tension rises.
+  // Shared by the displayed odds and the actual roll so they always match.
+  var ACCEPT_SENS = { alliance: 90, peace: 120, trade: 100 };
 
   function relationLabel(rel) {
     if (rel === 'war') return 'At War';
@@ -4934,18 +5088,27 @@
       var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.peaceful;
       var perLabel = per.icon + ' ' + per.label;
       var rel = relation('player', aiId);
+      // Current grievance toward the player + tension-adjusted odds.
+      var ten = tensionOf(aiId, 'player');
+      var ti = tensionInfo(ten);
+      var attitude = rel === 'allied'
+        ? '<span style="color:#00ff88">Allied</span>'
+        : '<span style="color:' + ti.color + '">' + ti.label + '</span>';
+      var pctAlliance = Math.round(acceptChance(per.acceptAlliance, ten, ACCEPT_SENS.alliance) * 100);
+      var pctPeace    = Math.round(acceptChance(per.acceptPeace,    ten, ACCEPT_SENS.peace)    * 100);
+      var pctTrade    = Math.round(acceptChance(per.acceptTrade,    ten, ACCEPT_SENS.trade)    * 100);
 
-      // Header row (informational)
+      // Header row (informational) — personality + live attitude
       actions.push({
         header: true, disabled: true,
         icon: '⬢', title: aiName + ' — ' + relationLabel(rel),
-        sub: perLabel + (rel === 'allied' ? ' · permanent peace pact' : '')
+        sub: perLabel + ' · ' + attitude
       });
 
       if (rel === 'war') {
         actions.push({
           icon: '☮', primary: true, title: 'Offer Peace',
-          sub: per ? 'Likely: ' + Math.round(per.acceptPeace * 100) + '%' : 'Sue for peace',
+          sub: 'Likely: ' + pctPeace + '%',
           do: function () { playerOfferPeace(aiId); closeModal(); draw(); }
         });
       } else if (rel === 'allied') {
@@ -4956,7 +5119,7 @@
         });
         actions.push({
           icon: '⚗', title: 'Trade for Tech',
-          sub: TRADE_GOLD_COST + 'g → +' + TRADE_SCI_GAIN + ' science · likely: ' + Math.round(per.acceptTrade * 100) + '%',
+          sub: TRADE_GOLD_COST + 'g → +' + TRADE_SCI_GAIN + ' science · likely: ' + pctTrade + '%',
           disabled: civPl.gold < TRADE_GOLD_COST || !civPl.currentTech,
           do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
         });
@@ -4964,12 +5127,12 @@
         // at peace
         actions.push({
           icon: '★', primary: true, title: 'Propose Alliance',
-          sub: 'Permanent peace pact · likely: ' + Math.round(per.acceptAlliance * 100) + '%',
+          sub: 'Permanent peace pact · likely: ' + pctAlliance + '%',
           do: function () { playerProposeAlliance(aiId); closeModal(); draw(); }
         });
         actions.push({
           icon: '⚗', title: 'Trade for Tech',
-          sub: TRADE_GOLD_COST + 'g → +' + TRADE_SCI_GAIN + ' science · likely: ' + Math.round(per.acceptTrade * 100) + '%',
+          sub: TRADE_GOLD_COST + 'g → +' + TRADE_SCI_GAIN + ' science · likely: ' + pctTrade + '%',
           disabled: civPl.gold < TRADE_GOLD_COST || !civPl.currentTech,
           do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
         });
@@ -4990,7 +5153,8 @@
   function playerOfferPeace(aiId) {
     var aiCiv = state.civs[aiId];
     var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
-    if (rnd() < per.acceptPeace) {
+    var chance = acceptChance(per.acceptPeace, tensionOf(aiId, 'player'), ACCEPT_SENS.peace);
+    if (rnd() < chance) {
       makePeace('player', aiId);
       logEvent(CIVS[aiId].name + ' accepted peace', 'success');
     } else {
@@ -5002,8 +5166,9 @@
   function playerProposeAlliance(aiId) {
     var aiCiv = state.civs[aiId];
     var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
-    if (rnd() < per.acceptAlliance) {
-      setRelation('player', aiId, 'allied');
+    var chance = acceptChance(per.acceptAlliance, tensionOf(aiId, 'player'), ACCEPT_SENS.alliance);
+    if (rnd() < chance) {
+      setRelation('player', aiId, 'allied');   // also wipes their tension toward you
       sfxAlly();
       showToast('Alliance with ' + CIVS[aiId].name + '!', 'success');
       logEvent('Allied with ' + CIVS[aiId].name + ' (' + (per.label || 'Rival') + ')', 'success');
@@ -5019,10 +5184,12 @@
     if (!civPl.currentTech) { showToast('No active research', 'error'); return; }
     var aiCiv = state.civs[aiId];
     var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
-    if (rnd() < per.acceptTrade) {
+    var chance = acceptChance(per.acceptTrade, tensionOf(aiId, 'player'), ACCEPT_SENS.trade);
+    if (rnd() < chance) {
       civPl.gold -= TRADE_GOLD_COST;
       aiCiv.gold += TRADE_GOLD_COST;
       civPl.techProgress = Math.min((TECHS[civPl.currentTech].cost), civPl.techProgress + TRADE_SCI_GAIN);
+      addTension(aiId, 'player', -6);   // a fair deal warms relations a little
       sfxResearch();
       showToast('Trade with ' + CIVS[aiId].name + ': +' + TRADE_SCI_GAIN + ' science', 'success');
       logEvent('Traded ' + TRADE_GOLD_COST + 'g for ' + TRADE_SCI_GAIN + ' science via ' + CIVS[aiId].name, 'success');
@@ -5096,6 +5263,7 @@
     aiThinking = true;
     flashEndTurn();
     setTimeout(function () {
+      updateTensions();
       aiDiplomacyCheck();
       aiTurn();
       barbTurn();
