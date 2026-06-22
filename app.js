@@ -139,6 +139,35 @@
     return null;
   }
 
+  // Pillaging — a military unit on an enemy-owned improved tile can raze it.
+  var PILLAGE_GOLD = 16;
+  function pillageInfo(u, t) {
+    if (!u || !t || u.moves <= 0) return false;
+    if (UNITS[u.type].civilian) return false;             // soldiers only
+    if (!t.improvement || !IMPROVEMENTS[t.improvement]) return false;
+    if (!t.owner || t.owner === u.civ) return false;       // must be someone else's land
+    if (!atWar(u.civ, t.owner)) return false;              // and you must be at war
+    return true;
+  }
+  function pillageTile(u, t) {
+    if (!pillageInfo(u, t)) return;
+    var owner = t.owner;
+    var impName = IMPROVEMENTS[t.improvement].name;
+    t.improvement = null;
+    u.moves = 0;
+    state.civs[u.civ].gold += PILLAGE_GOLD;
+    // The victim resents it (already at war, but stokes the grudge).
+    if (typeof addTension === 'function' && AI_SIDES.indexOf(owner) >= 0) {
+      addTension(owner, u.civ, 8, 'war');
+    }
+    recomputeIncome(owner);
+    if (u.civ === 'player') {
+      sfxAttack();
+      showToast('Pillaged the ' + impName + '! +' + PILLAGE_GOLD + ' gold', 'success');
+      logEvent('Pillaged a ' + impName + ' (+' + PILLAGE_GOLD + ' gold)', 'success');
+    }
+  }
+
   var BUILDINGS = {
     granary:  { name: 'Granary',    cost: 30, food: 2, tech: 'pottery'  },
     library:  { name: 'Library',    cost: 30, sci:  2, tech: 'writing'  },
@@ -6321,6 +6350,15 @@
       var upInfo = canUpgrade(u);
       if (upInfo) {
         actions.push({ icon: '⬆', primary: true, title: 'Upgrade → ' + UNITS[upInfo.to].name, sub: upInfo.cost + ' gold', do: function () { upgradeUnit(u); closeModal(); draw(); } });
+      }
+      // Pillage — a military unit standing on an enemy's improved tile can
+      // raze the improvement for gold (rewards raiding, hurts their economy).
+      if (pillageInfo(u, t)) {
+        actions.push({
+          icon: '🔥', primary: true, title: 'Pillage ' + IMPROVEMENTS[t.improvement].name,
+          sub: '+' + PILLAGE_GOLD + ' gold · destroys it · ends move',
+          do: function () { pillageTile(u, t); closeModal(); draw(); }
+        });
       }
       actions.push({ icon: '▣', title: u.fortified ? 'Unfortify' : 'Fortify', sub: 'Heal +2/turn · +25% defense', do: function () { u.goto = null; u.fortified = !u.fortified; u.moves = 0; closeModal(); draw(); } });
       actions.push({ icon: '✕', title: 'Skip Unit', sub: 'End its turn', do: function () { u.goto = null; u.moves = 0; closeModal(); autoSelectNextUnit(); draw(); } });
