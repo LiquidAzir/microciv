@@ -197,6 +197,9 @@
           <p>Ally perks: <b>Mercantile</b> +2 gold/turn · <b>Scientific</b> +2 sci/turn · <b>Militaristic</b> +1 ATK on your military units</p>
           <p><b>Declare War</b> to conquer with military force. Capturing a city-state loots 100 gold and turns it into a normal city of yours.</p>
 
+          <div class="help-section">World Events</div>
+          <p>Every so often a <b>world event</b> strikes — a bountiful harvest, gold rush, research breakthrough or free migrants, or setbacks like plague, earthquakes, unrest or barbarian uprisings. Open the <b>Event Log</b> (global menu) to review your full history.</p>
+
           <div class="help-section">Map Features</div>
           <p><b>Tribal villages</b> — reward on first visit: gold, worker, research, or +1 pop.</p>
           <p><b>Barbarian raiders</b> — spawn from unowned edges early game. Weaker than warriors.</p>
@@ -258,6 +261,17 @@
           <button class="nav-item primary focusable" id="share-primary" data-action="share-primary">Copy</button>
           <button class="nav-item focusable" id="share-secondary" data-action="share-secondary">Paste</button>
         </div>
+      </div>
+    </div>
+
+    <div id="log-screen" class="screen modal hidden">
+      <div class="modal-card wide">
+        <header class="modal-header">
+          <button class="back-btn focusable" data-action="back">&#8592;</button>
+          <h2>Event Log</h2>
+        </header>
+        <div id="log-body" class="log-body"></div>
+        <button class="nav-item primary focusable" data-action="back">Close</button>
       </div>
     </div>
 

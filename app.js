@@ -1341,7 +1341,9 @@
         stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
         diplomacy: state.diplomacy,
         pendingPeace: state.pendingPeace || null,
-        freetech: state.freetech || false
+        freetech: state.freetech || false,
+        log: state.log || [],
+        lastEventTurn: state.lastEventTurn || 0
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
     } catch (e) { /* ignore quota */ }
@@ -5352,6 +5354,9 @@
       // Enemy spotted alerts — check for visible enemy units near player cities
       checkEnemySpotted();
 
+      // Occasional world event for the player's new turn
+      maybeFireWorldEvent();
+
       sfxTurnStart();
       // Show peace offer from AI if pending
       if (state.pendingPeace) {
@@ -5417,6 +5422,10 @@
   function logEvent(msg, kind) {
     if (!state.turnLog) state.turnLog = [];
     state.turnLog.push({ msg: msg, kind: kind || 'info' });
+    // Persistent history for the event-log panel (capped).
+    if (!state.log) state.log = [];
+    state.log.push({ turn: state.turn, msg: msg, kind: kind || 'info' });
+    if (state.log.length > 90) state.log.splice(0, state.log.length - 90);
   }
 
   function showTurnSummary() {
@@ -5450,6 +5459,136 @@
     var el = document.getElementById('end-turn-flash');
     el.classList.remove('hidden');
     setTimeout(function () { el.classList.add('hidden'); }, 600);
+  }
+
+  // =====================================================================
+  // RANDOM WORLD EVENTS
+  // Occasional flavoured moments — good and bad — that shake up a run.
+  // Each event's run() applies its effect and returns a message, or null if
+  // it doesn't apply right now (so we try another).
+  // =====================================================================
+  var EVENT_CHANCE      = 0.20;   // per eligible turn
+  var EVENT_COOLDOWN    = 5;      // min turns between events
+  var EVENT_START_TURN  = 8;      // none in the very early game
+
+  function randomPlayerCity() {
+    var cs = state.civs.player.cities;
+    return cs.length ? cs[Math.floor(rnd() * cs.length)] : null;
+  }
+  function spawnBarbNear(city) {
+    if (!state.civs.barb) return false;
+    var cand = [];
+    for (var rr = Math.max(0, city.r - 3); rr <= Math.min(MAP_H - 1, city.r + 3); rr++) {
+      for (var cc = Math.max(0, city.c - 3); cc <= Math.min(MAP_W - 1, city.c + 3); cc++) {
+        var t = tileAt(cc, rr);
+        if (!t || t.unit || t.city || TERRAIN[t.terrain].impassable) continue;
+        var d = hexDist([cc, rr], [city.c, city.r]);
+        if (d >= 2 && d <= 3) cand.push([cc, rr]);
+      }
+    }
+    if (!cand.length) return false;
+    var pos = cand[Math.floor(rnd() * cand.length)];
+    spawnUnit('barb', 'raider', pos[0], pos[1]);
+    return true;
+  }
+
+  var WORLD_EVENTS = [
+    { id: 'harvest', good: true, run: function () {
+      var c = randomPlayerCity(); if (!c) return null;
+      c.pop += 1; c.food = 0; c.foodCap = 8 + c.pop * 5;
+      return 'Bountiful harvest — ' + c.name + ' grows to pop ' + c.pop + '!';
+    } },
+    { id: 'goldrush', good: true, run: function () {
+      var g = 30 + Math.floor(rnd() * 30) + Math.floor(state.turn / 2);
+      state.civs.player.gold += g;
+      return 'A gold rush fills your coffers (+' + g + ' gold).';
+    } },
+    { id: 'eureka', good: true, run: function () {
+      var civ = state.civs.player; if (!civ.currentTech) return null;
+      var cost = TECHS[civ.currentTech].cost;
+      civ.techProgress = Math.min(cost, civ.techProgress + Math.ceil(cost * 0.4));
+      return 'A breakthrough! Research on ' + TECHS[civ.currentTech].name + ' surges ahead.';
+    } },
+    { id: 'migrants', good: true, run: function () {
+      var home = state.civs.player.cities[0]; if (!home) return null;
+      var spot = findSpawnTile(home, 'worker'); if (!spot) return null;
+      spawnUnit('player', 'worker', spot[0], spot[1]);
+      return 'Migrants arrive — a free Worker joins you near ' + home.name + '.';
+    } },
+    { id: 'veterans', good: true, run: function () {
+      var mil = state.civs.player.units.filter(function (u) { return !UNITS[u.type].civilian && u.hp > 0; });
+      if (!mil.length) return null;
+      var u = mil[Math.floor(rnd() * mil.length)];
+      u.kills = (u.kills || 0) + 2; checkPromotion(u);
+      return 'Veteran drills sharpen your ' + UNITS[u.type].name + ' — promoted!';
+    } },
+    { id: 'plague', good: false, run: function () {
+      var cs = state.civs.player.cities.filter(function (c) { return c.pop > 1; });
+      if (!cs.length) return null;
+      var c = cs[Math.floor(rnd() * cs.length)]; c.pop -= 1;
+      return 'A plague sweeps ' + c.name + ' — it falls to pop ' + c.pop + '.';
+    } },
+    { id: 'quake', good: false, run: function () {
+      var cs = state.civs.player.cities.filter(function (c) { return c.prod > 0; });
+      if (!cs.length) return null;
+      var c = cs[Math.floor(rnd() * cs.length)]; var lost = Math.round(c.prod); c.prod = 0;
+      return 'An earthquake wrecks the works in ' + c.name + ' (lost ' + lost + ' production).';
+    } },
+    { id: 'unrest', good: false, run: function () {
+      var civ = state.civs.player; var loss = Math.min(civ.gold, 20 + Math.floor(rnd() * 25));
+      if (loss <= 0) return null; civ.gold -= loss;
+      return 'Civil unrest drains ' + loss + ' gold from your treasury.';
+    } },
+    { id: 'uprising', good: false, run: function () {
+      var c = randomPlayerCity(); if (!c) return null;
+      if (!spawnBarbNear(c)) return null;
+      return 'Barbarians stir in the wilds near ' + c.name + '!';
+    } }
+  ];
+
+  function maybeFireWorldEvent() {
+    if (state.victory) return;
+    if (state.civs.player.cities.length === 0) return;
+    if (state.turn < EVENT_START_TURN) return;
+    if (state.lastEventTurn && state.turn - state.lastEventTurn < EVENT_COOLDOWN) return;
+    if (rnd() >= EVENT_CHANCE) return;
+    var order = WORLD_EVENTS.slice().sort(function () { return rnd() - 0.5; });
+    for (var i = 0; i < order.length; i++) {
+      var msg = order[i].run();
+      if (msg) {
+        state.lastEventTurn = state.turn;
+        logEvent('Event — ' + msg, order[i].good ? 'success' : 'error');
+        showToast(msg, order[i].good ? 'success' : 'error');
+        if (order[i].good) sfxResearch(); else sfxError();
+        recomputeBorders();
+        recomputeVisibility('player');
+        recomputeIncome('player');
+        return;
+      }
+    }
+  }
+
+  // =====================================================================
+  // EVENT LOG PANEL — scrollable history of notifications
+  // =====================================================================
+  function openLog() {
+    var body = document.getElementById('log-body');
+    if (!body) return;
+    body.innerHTML = '';
+    var entries = (state.log || []).slice();
+    if (entries.length === 0) {
+      body.innerHTML = '<div class="log-empty">No events yet.</div>';
+    } else {
+      // Most recent first
+      for (var i = entries.length - 1; i >= 0; i--) {
+        var e = entries[i];
+        var row = document.createElement('div');
+        row.className = 'log-row' + (e.kind === 'error' ? ' err' : e.kind === 'success' ? ' win' : '');
+        row.innerHTML = '<span class="log-turn">T' + (e.turn || '?') + '</span><span class="log-msg">' + e.msg + '</span>';
+        body.appendChild(row);
+      }
+    }
+    showModal('log-screen');
   }
 
   function autoSelectNextUnit() {
@@ -6277,6 +6416,9 @@
     // Tile yield overlay toggle
     actions.push({ icon: '⬡', title: showYieldOverlay ? 'Hide Yields' : 'Show Yields', sub: 'Food / prod / gold per tile', do: function () { showYieldOverlay = !showYieldOverlay; showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF'); closeModal(); draw(); } });
 
+    // Event log
+    actions.push({ icon: '📜', title: 'Event Log', sub: 'Recent history & notifications', do: function () { closeModal(); openLog(); } });
+
     var endIcon = '▶';
     var endSub = hasMovesLeft ? Math.max(0, civPl.units.filter(function (u) { return u.moves > 0 && !u.fortified; }).length) + ' unit(s) still have moves' : 'All units acted — ready';
     actions.push({ icon: endIcon, primary: !hasMovesLeft, danger: hasMovesLeft, title: 'End Turn', sub: endSub, do: function () { closeModal(); endTurn(); } });
@@ -6622,6 +6764,12 @@
       if (openModal === 'help-screen' && (k === 'ArrowUp' || k === 'ArrowDown')) {
         e.preventDefault();
         scrollHelp(k);
+        return;
+      }
+      if (openModal === 'log-screen' && (k === 'ArrowUp' || k === 'ArrowDown')) {
+        e.preventDefault();
+        var lb = document.getElementById('log-body');
+        if (lb) lb.scrollTop += (k === 'ArrowDown' ? 1 : -1) * Math.max(40, Math.floor(lb.clientHeight * 0.6));
         return;
       }
       if (ACTION_KEYS.indexOf(k) >= 0) { e.preventDefault(); moveModalFocus(k); return; }

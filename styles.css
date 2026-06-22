@@ -230,6 +230,45 @@ body {
 .share-actions .nav-item {
   flex: 1;
 }
+
+/* Event log panel */
+.log-body {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+  padding-right: 2px;
+}
+.log-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 5px 8px;
+  background: var(--panel-2);
+  border-radius: var(--r-sm);
+  border-left: 2px solid var(--line-2);
+}
+.log-row.win { border-left-color: var(--green); }
+.log-row.err { border-left-color: var(--red); }
+.log-turn {
+  flex: 0 0 30px;
+  color: var(--muted);
+  font-family: var(--font-num);
+  font-size: 10px;
+}
+.log-msg { color: var(--text-2); }
+.log-row.win .log-msg { color: #b8f0d0; }
+.log-row.err .log-msg { color: #ffc0cc; }
+.log-empty {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 20px;
+}
 .audio-toggle {
   flex: 1;
   background: transparent;
