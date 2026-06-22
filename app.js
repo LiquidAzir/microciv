@@ -7,10 +7,13 @@
   var STORAGE_KEY = 'mdg_microciv_v1';
   var MAP_W = 16, MAP_H = 16;
   var MAP_SIZES = {
-    small:  { w: 12, h: 12, label: 'Small',  desc: 'Faster games, tight quarters' },
-    normal: { w: 16, h: 16, label: 'Normal', desc: 'Standard experience' },
-    large:  { w: 20, h: 20, label: 'Large',  desc: 'Epic sprawl, longer games' }
+    small:   { w: 12, h: 12, label: 'Small',   desc: '12×12' },
+    normal:  { w: 16, h: 16, label: 'Normal',  desc: '16×16' },
+    large:   { w: 20, h: 20, label: 'Large',   desc: '20×20' },
+    huge:    { w: 24, h: 24, label: 'Huge',    desc: '24×24' },
+    massive: { w: 28, h: 28, label: 'Massive', desc: '28×28' }
   };
+  var MAP_SIZE_ORDER = ['small', 'normal', 'large', 'huge', 'massive'];
   var DIFFICULTIES = {
     chieftain: { label: 'Chieftain', desc: 'Very forgiving — passive AI', aiAtkBonus: -2, aiAggroTurn: 30, aiExtraWarrior: false },
     easy:      { label: 'Easy',      desc: 'Relaxed AI, late aggression', aiAtkBonus: -1, aiAggroTurn: 20, aiExtraWarrior: false },
@@ -875,9 +878,9 @@
       }
     }
 
-    // Natural wonders — scale with map size so a 20x20 isn't covered in just
-    // one volcano. Small: 1 each; Normal: 2 each; Large: 2 volcano + 3 geyser.
-    var wonderCount = MAP_W <= 12 ? 1 : (MAP_W >= 20 ? 3 : 2);
+    // Natural wonders — scale with map size so big maps aren't covered by just
+    // one volcano. Small 1 · Normal 2 · Large 3 · Huge 4 · Massive 5 of each.
+    var wonderCount = MAP_W >= 28 ? 5 : MAP_W >= 24 ? 4 : MAP_W >= 20 ? 3 : MAP_W <= 12 ? 1 : 2;
     for (var w = 0; w < wonderCount; w++) {
       placeWonder(map, 'volcano', ['mountain','hills','plains']);
     }
@@ -885,8 +888,8 @@
       placeWonder(map, 'geyser',  ['grass','plains','forest']);
     }
 
-    // Carve rivers — scale with map size
-    var riverCount = MAP_W <= 12 ? 2 : (MAP_W >= 20 ? 4 : 3);
+    // Carve rivers — scale with map size (Small 2 · Normal 3 · Large 4 · Huge 5 · Massive 6)
+    var riverCount = MAP_W >= 28 ? 6 : MAP_W >= 24 ? 5 : MAP_W >= 20 ? 4 : MAP_W <= 12 ? 2 : 3;
     placeRivers(map, riverCount);
 
     // Scatter tribal villages — denser per area so exploration stays rewarding
@@ -1118,7 +1121,8 @@
     state.civs.ai2.personality = assignPersonality('ai2');
 
     // City-states scale with map size — denser worlds have more neutrals to court
-    spawnCityStates(MAP_W >= 20 ? 4 : (MAP_W >= 16 ? 3 : 2), [p, a, a2]);
+    var csCount = MAP_W >= 28 ? 6 : MAP_W >= 24 ? 5 : MAP_W >= 20 ? 4 : MAP_W >= 16 ? 3 : 2;
+    spawnCityStates(csCount, [p, a, a2]);
 
     recomputeVisibility('player');
     recomputeVisibility('ai');
@@ -1478,9 +1482,16 @@
     for (var r = 0; r < MAP_H; r++)
       for (var c = 0; c < MAP_W; c++) state.map[r][c].visible[civId] = false;
     var civ = state.civs[civId];
+    // Only scan a small bounding box around the source rather than the whole
+    // map — matters on the bigger map sizes where the full-map scan per unit
+    // got expensive. Rows can't be farther than `range`; columns are padded by
+    // an extra `range` to cover the offset-hex skew, and the hexDist check
+    // below still filters precisely so the result is identical.
     function reveal(c, r, range) {
-      for (var rr = 0; rr < MAP_H; rr++)
-        for (var cc = 0; cc < MAP_W; cc++) {
+      var r0 = Math.max(0, r - range), r1 = Math.min(MAP_H - 1, r + range);
+      var c0 = Math.max(0, c - range * 2), c1 = Math.min(MAP_W - 1, c + range * 2);
+      for (var rr = r0; rr <= r1; rr++)
+        for (var cc = c0; cc <= c1; cc++) {
           if (hexDist([cc, rr], [c, r]) <= range) {
             state.map[rr][cc].visible[civId] = true;
             state.map[rr][cc].explored[civId] = true;
@@ -5353,7 +5364,10 @@
       barbMoveUnit(u);
     });
     // Spawn — only in the early game, only a few at a time, only on neutral land
-    if (state.turn <= 28 && state.civs.barb.units.length < 3 && state.turn % 3 === 0) {
+    // Barbarian pressure scales with map size so big empty maps still feel
+    // dangerous early (Small/Normal 3 · Large 4 · Huge 5 · Massive 6).
+    var barbCap = MAP_W >= 28 ? 6 : MAP_W >= 24 ? 5 : MAP_W >= 20 ? 4 : 3;
+    if (state.turn <= 28 && state.civs.barb.units.length < barbCap && state.turn % 3 === 0) {
       trySpawnBarbarian();
     }
   }
@@ -6635,7 +6649,7 @@
     mapRow.innerHTML = '<div class="setup-label">Map Size</div>';
     var mapBtns = document.createElement('div');
     mapBtns.className = 'setup-options';
-    ['small', 'normal', 'large'].forEach(function (key) {
+    MAP_SIZE_ORDER.forEach(function (key) {
       var ms = MAP_SIZES[key];
       var btn = document.createElement('button');
       btn.className = 'setup-btn focusable' + (selectedMapSize === key ? ' active' : '');
