@@ -405,6 +405,91 @@ body {
   box-shadow: 0 0 8px var(--focus-glow);
 }
 
+/* Difficulty slider — a labelled 5-stop track. Each stop is a focusable
+   button so it works with D-pad focus + Enter and with direct tap/click. */
+.diff-current {
+  color: var(--cyan);
+  font-weight: 700;
+  margin-left: 6px;
+}
+.diff-slider {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding: 0 2px;
+}
+/* base track + cyan fill, vertically centred on the dots */
+.diff-slider::before {
+  content: '';
+  position: absolute;
+  left: 12px; right: 12px; top: 8px;
+  height: 3px;
+  background: var(--line);
+  border-radius: 2px;
+}
+.diff-slider-fill {
+  position: absolute;
+  left: 12px; top: 8px;
+  height: 3px;
+  background: var(--cyan-d);
+  border-radius: 2px;
+  transition: width 0.18s ease;
+}
+.diff-stop {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  background: none;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  padding: 0;
+}
+.diff-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--line);
+  transition: transform 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.diff-stop.filled .diff-dot {
+  background: var(--cyan-d);
+  border-color: var(--cyan-d);
+}
+.diff-stop.active .diff-dot {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  transform: scale(1.4);
+  box-shadow: 0 0 10px var(--focus-glow);
+}
+.diff-stop-label {
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+.diff-stop.active .diff-stop-label {
+  color: var(--cyan);
+  font-weight: 700;
+}
+.diff-stop:focus { outline: none; }
+.diff-stop:focus .diff-dot {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.diff-desc {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 8px;
+  text-align: center;
+  min-height: 13px;
+}
+
 /* ====================================================================
    FOCUS / BUTTONS
    ==================================================================== */

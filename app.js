@@ -12,10 +12,14 @@
     large:  { w: 20, h: 20, label: 'Large',  desc: 'Epic sprawl, longer games' }
   };
   var DIFFICULTIES = {
-    easy:   { label: 'Easy',   desc: 'Relaxed AI, late aggression', aiAtkBonus: -1, aiAggroTurn: 20, aiExtraWarrior: false },
-    normal: { label: 'Normal', desc: 'Balanced challenge',         aiAtkBonus: 0,  aiAggroTurn: 10, aiExtraWarrior: false },
-    hard:   { label: 'Hard',   desc: 'Aggressive AI, tough fights', aiAtkBonus: 1,  aiAggroTurn: 8,  aiExtraWarrior: true }
+    chieftain: { label: 'Chieftain', desc: 'Very forgiving — passive AI', aiAtkBonus: -2, aiAggroTurn: 30, aiExtraWarrior: false },
+    easy:      { label: 'Easy',      desc: 'Relaxed AI, late aggression', aiAtkBonus: -1, aiAggroTurn: 20, aiExtraWarrior: false },
+    normal:    { label: 'Normal',    desc: 'Balanced challenge',          aiAtkBonus: 0,  aiAggroTurn: 10, aiExtraWarrior: false },
+    hard:      { label: 'Hard',      desc: 'Aggressive AI, tough fights',  aiAtkBonus: 1,  aiAggroTurn: 8,  aiExtraWarrior: true },
+    brutal:    { label: 'Brutal',    desc: 'Relentless — early rushes',    aiAtkBonus: 2,  aiAggroTurn: 5,  aiExtraWarrior: true }
   };
+  // Slider order, easiest → hardest
+  var DIFFICULTY_ORDER = ['chieftain', 'easy', 'normal', 'hard', 'brutal'];
   var selectedMapSize = 'normal';
   var selectedDifficulty = 'normal';
   var ZOOM_LEVELS = [26, 44, 64];       // hex radius in px — far / normal / close
@@ -6643,22 +6647,41 @@
     mapRow.appendChild(mapBtns);
     host.appendChild(mapRow);
 
-    // --- Difficulty selector ---
+    // --- Difficulty slider ---
+    var selIdx = Math.max(0, DIFFICULTY_ORDER.indexOf(selectedDifficulty));
+    var selDiff = DIFFICULTIES[DIFFICULTY_ORDER[selIdx]];
     var diffRow = document.createElement('div');
     diffRow.className = 'setup-row';
-    diffRow.innerHTML = '<div class="setup-label">Difficulty</div>';
-    var diffBtns = document.createElement('div');
-    diffBtns.className = 'setup-options';
-    ['easy', 'normal', 'hard'].forEach(function (key) {
+    diffRow.innerHTML = '<div class="setup-label">Difficulty <span class="diff-current">' + selDiff.label + '</span></div>';
+
+    var slider = document.createElement('div');
+    slider.className = 'diff-slider';
+    // Cyan fill line up to the active stop (frac of the inner track width)
+    var frac = DIFFICULTY_ORDER.length > 1 ? selIdx / (DIFFICULTY_ORDER.length - 1) : 0;
+    var fill = document.createElement('div');
+    fill.className = 'diff-slider-fill';
+    fill.style.width = 'calc((100% - 24px) * ' + frac + ')';
+    slider.appendChild(fill);
+
+    DIFFICULTY_ORDER.forEach(function (key, i) {
       var d = DIFFICULTIES[key];
-      var btn = document.createElement('button');
-      btn.className = 'setup-btn focusable' + (selectedDifficulty === key ? ' active' : '');
-      btn.dataset.action = 'pick-difficulty';
-      btn.dataset.difficulty = key;
-      btn.innerHTML = '<b>' + d.label + '</b><span class="setup-desc">' + d.desc + '</span>';
-      diffBtns.appendChild(btn);
+      var stop = document.createElement('button');
+      stop.className = 'diff-stop focusable' +
+        (i <= selIdx ? ' filled' : '') +
+        (key === selectedDifficulty ? ' active' : '');
+      stop.dataset.action = 'pick-difficulty';
+      stop.dataset.difficulty = key;
+      stop.title = d.desc;
+      stop.innerHTML = '<span class="diff-dot"></span><span class="diff-stop-label">' + d.label + '</span>';
+      slider.appendChild(stop);
     });
-    diffRow.appendChild(diffBtns);
+    diffRow.appendChild(slider);
+
+    var diffDesc = document.createElement('div');
+    diffDesc.className = 'diff-desc';
+    diffDesc.textContent = selDiff.desc;
+    diffRow.appendChild(diffDesc);
+
     host.appendChild(diffRow);
   }
 
