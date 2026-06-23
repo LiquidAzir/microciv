@@ -378,6 +378,64 @@
   var CS_BRIBE_COST    = 75;   // when bribing away from current ally
   var CS_LOOT_GOLD     = 100;  // one-time loot when conquering
 
+  // City-state quests — an alternative, free path to alliance. Each unallied
+  // city-state offers one task; completing it grants alliance without gold.
+  function makeCsQuest() {
+    var civPl = state.civs && state.civs.player;
+    var techs = (civPl && civPl.techs) || {};
+    var techPool = ['writing', 'archery', 'masonry', 'husbandry'].filter(function (t) { return TECHS[t] && !techs[t]; });
+    var pool = [];
+    if (techPool.length) pool.push('tech');
+    pool.push('cities'); pool.push('barbarians');
+    var type = pool[Math.floor(rnd() * pool.length)];
+    if (type === 'tech') {
+      var tech = techPool[Math.floor(rnd() * techPool.length)];
+      return { type: 'tech', techId: tech, label: 'Research ' + TECHS[tech].name, done: false };
+    }
+    if (type === 'cities') {
+      var target = ((civPl && civPl.cities.length) || 1) + 2;
+      return { type: 'cities', target: target, label: 'Control ' + target + ' cities', done: false };
+    }
+    var base = (state.stats && state.stats.barbsDefeated) || 0;
+    return { type: 'barbarians', target: base + 1, label: 'Defeat a barbarian', done: false };
+  }
+
+  // Human-readable progress for a city-state's quest.
+  function csQuestText(csc) {
+    var q = csc.quest;
+    if (!q) return '';
+    var civPl = state.civs.player;
+    if (q.type === 'tech') return q.label;
+    if (q.type === 'cities') return 'Control ' + q.target + ' cities (' + civPl.cities.length + '/' + q.target + ')';
+    if (q.type === 'barbarians') return 'Defeat a barbarian (' + (((state.stats && state.stats.barbsDefeated) || 0) >= q.target ? 1 : 0) + '/1)';
+    return q.label;
+  }
+
+  // Award alliance for any player quest now satisfied. Quests only resolve for
+  // unclaimed city-states (an AI-held one must be bribed); at war, nothing.
+  function checkCsQuests() {
+    if (!state.civs.cs || atWar('player', 'cs')) return;
+    var civPl = state.civs.player;
+    state.civs.cs.cities.forEach(function (csc) {
+      var q = csc.quest;
+      if (!q || q.done) return;
+      if (csc.ally) { if (csc.ally === 'player') q.done = true; return; }
+      var met = false;
+      if (q.type === 'tech') met = !!civPl.techs[q.techId];
+      else if (q.type === 'cities') met = civPl.cities.length >= q.target;
+      else if (q.type === 'barbarians') met = ((state.stats && state.stats.barbsDefeated) || 0) >= q.target;
+      if (met) {
+        q.done = true;
+        csc.ally = 'player';
+        recomputeIncome('player');
+        sfxAlly();
+        var kd = CS_KINDS[csc.kind] || CS_KINDS.mercantile;
+        showToast('Quest done — ' + csc.name + ' allied!', 'success');
+        logEvent(csc.name + ' quest complete (' + q.label + ') — now allied · ' + kd.name, 'success');
+      }
+    });
+  }
+
   function applyFaction(sideId, factionId) {
     var f = FACTIONS[factionId];
     CIVS[sideId].name = f.name;
@@ -1142,7 +1200,7 @@
       log: [],
       turnLog: [],
       wondersBuilt: {},                  // wonder id -> civ id who built it
-      stats: { unitsKilled: 0, unitsLost: 0 },
+      stats: { unitsKilled: 0, unitsLost: 0, barbsDefeated: 0 },
       diplomacy: {
         ai_player: 'war',
         ai2_player: 'war',
@@ -1248,6 +1306,7 @@
         foundedTurn: 0,
         kind: kind,              // 'mercantile' | 'scientific' | 'militaristic'
         ally: null,              // civId or null
+        quest: makeCsQuest(),    // free-alliance task offered to the player
         isCityState: true
       };
       state.civs.cs.cities.push(city);
@@ -1401,6 +1460,9 @@
       state.turnLog = state.turnLog || [];
       state.wondersBuilt = state.wondersBuilt || {};
       state.stats = state.stats || { unitsKilled: 0, unitsLost: 0 };
+      if (state.stats.barbsDefeated === undefined) state.stats.barbsDefeated = 0;
+      // Backfill quests onto city-states from older saves
+      if (state.civs.cs) state.civs.cs.cities.forEach(function (csc) { if (!csc.quest) csc.quest = makeCsQuest(); });
       state.difficulty = state.difficulty || 'normal';
       // Diplomacy backfill
       if (!state.diplomacy) {
@@ -3685,7 +3747,7 @@
 
     if (defender.hp <= 0) {
       attacker.kills = (attacker.kills || 0) + 1;
-      if (attacker.civ === 'player') state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+      if (attacker.civ === 'player') { state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1; if (defender.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); } }
       if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
       checkPromotion(attacker);
@@ -4209,7 +4271,7 @@
     if (defender.hp <= 0) {
       // Kill tracking & promotions
       attacker.kills = (attacker.kills || 0) + 1;
-      if (attacker.civ === 'player') state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+      if (attacker.civ === 'player') { state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1; if (defender.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); } }
       if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
       checkPromotion(attacker);
@@ -4230,7 +4292,7 @@
       // Defender gets kill credit if attacker dies from counter-damage
       if (defender.hp > 0) {
         defender.kills = (defender.kills || 0) + 1;
-        if (defender.civ === 'player') state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+        if (defender.civ === 'player') { state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1; if (attacker.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); } }
         checkPromotion(defender);
       }
       killUnit(attacker);
@@ -4343,6 +4405,7 @@
     if (unit.civ === 'player') {
       sfxFound();
       logEvent('Choose production for ' + name, 'info');
+      checkCsQuests();   // founding may satisfy a "control N cities" quest
       // Auto-open the city screen so the player picks immediately
       setTimeout(function () { openCity(city); }, 350);
     }
@@ -5401,6 +5464,7 @@
       recomputeBorders();
       CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
+      checkCsQuests();   // award alliances for quests completed during the turn
 
       // Multi-turn movement: continue queued moves
       playerAutoMove();
@@ -6493,6 +6557,9 @@
             }
           });
         } else {
+          if (csc.quest && !csc.quest.done) {
+            actions.push({ icon: '🎯', title: 'Quest: ' + (csc.quest.label || csQuestText(csc)), sub: csQuestText(csc) + ' → free alliance', disabled: true, do: function () {} });
+          }
           actions.push({
             icon: kindDef.icon,
             primary: true,
