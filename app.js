@@ -7901,6 +7901,7 @@
     canvas.addEventListener('pointermove', onPointerMove);
     canvas.addEventListener('pointerup', onPointerUp);
     canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     // Fit the 600x600 app to whatever device viewport we're in. On glasses the
     // device viewport IS 600x600 so this is always 1.0.
@@ -7991,6 +7992,19 @@
       panState = null;
     }
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  // Mouse-wheel zoom (PC): scroll up to zoom in, toward the cursor.
+  function onWheel(e) {
+    if (inputBlocked()) return;
+    e.preventDefault();
+    var dir = e.deltaY < 0 ? 1 : -1;
+    var target = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, state.zoom + dir));
+    if (target === state.zoom) return;
+    var pc = toCanvas(e.clientX, e.clientY);
+    zoomAtScreen(target, pc.x, pc.y);
+    updateHud();
+    draw();
   }
 
   // Change zoom while keeping the tile under (screen-space) sx,sy fixed.
