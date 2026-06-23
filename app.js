@@ -5637,6 +5637,69 @@
     showModal('log-screen');
   }
 
+  // In-game options — audio toggles, restart, quit to title. Reuses the
+  // action-menu frame; toggles re-open to refresh their labels.
+  function openOptions() {
+    var actions = [];
+    actions.push({ header: true, disabled: true, icon: '⚙', title: 'Options', sub: 'Audio · restart · quit' });
+    actions.push({
+      icon: '♪', title: 'Music: ' + (audioPrefs.music ? 'On' : 'Off'),
+      sub: 'Toggle ambient music',
+      do: function () { setMusicEnabled(!audioPrefs.music); openOptions(); }
+    });
+    actions.push({
+      icon: '♫', title: 'Sound FX: ' + (audioPrefs.sfx ? 'On' : 'Off'),
+      sub: 'Toggle sound effects',
+      do: function () { setSfxEnabled(!audioPrefs.sfx); if (audioPrefs.sfx) sfxSelect(); openOptions(); }
+    });
+    actions.push({
+      icon: '⟳', title: 'Restart Game', danger: true, sub: 'Abandon and start a new game',
+      do: function () { closeModal(); clearSave(); showScreen('civ-select'); renderCivCards(); }
+    });
+    actions.push({
+      icon: '⌂', title: 'Quit to Title', danger: true, sub: 'Saved — Continue resumes later',
+      do: function () { save(); closeModal(); showScreen('title'); setupTitleButtons(); }
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Options');
+  }
+
+  // World report — per-civ standings + progress toward each victory path.
+  function openStandings() {
+    var body = document.getElementById('standings-body');
+    if (!body) return;
+    body.innerHTML = '';
+    var totalTechs = TECH_ORDER.length;
+    CIV_SIDES.forEach(function (id) {
+      var civ = state.civs[id];
+      if (!civ) return;
+      var alive = civ.cities.length > 0 || civ.units.some(function (u) { return u.type === 'settler'; });
+      if (!alive && id !== 'player') return;                 // hide eliminated rivals
+      var techCount = 0;
+      for (var i = 0; i < totalTechs; i++) if (civ.techs[TECH_ORDER[i]]) techCount++;
+      var wonders = wondersOwnedBy(id);
+      var mil = civ.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+      var per = (id !== 'player' && AI_PERSONALITIES[civ.personality]) ? AI_PERSONALITIES[civ.personality] : null;
+      var name = CIVS[id] ? CIVS[id].name : id;
+      var color = (CIVS[id] && CIVS[id].color) || '#fff';
+      var nameLine = name + (id === 'player' ? ' (You)' : (per ? ' · ' + per.icon + ' ' + per.label : ''));
+      // Closest victory hint
+      var row = document.createElement('div');
+      row.className = 'rep-civ' + (alive ? '' : ' dead');
+      row.style.borderLeftColor = color;
+      row.innerHTML =
+        '<div class="rep-name" style="color:' + color + '">' + nameLine + (alive ? '' : ' — defeated') + '</div>' +
+        '<div class="rep-stats">🏛 ' + civ.cities.length + '  ·  ⚔ ' + mil + '  ·  ● ' + Math.round(civ.gold) + 'g  ·  ◆ ' + techCount + '/' + totalTechs + '  ·  ✦ ' + wonders + '</div>' +
+        '<div class="rep-vic">' +
+          '<span class="rep-vbar">Culture ' + wonders + '/' + CULTURE_VICTORY_WONDERS + '</span>' +
+          '<span class="rep-vbar">Science ' + techCount + '/' + totalTechs + '</span>' +
+          '<span class="rep-vbar">Gold ' + Math.round(civ.gold) + '/' + ECONOMIC_VICTORY_GOLD + '</span>' +
+        '</div>';
+      body.appendChild(row);
+    });
+    showModal('standings-screen');
+  }
+
   function autoSelectNextUnit() {
     var pl = state.civs.player;
     var u = pl.units.find(function (x) { return x.moves > 0 && !x.fortified; });
@@ -6473,6 +6536,10 @@
 
     // Event log
     actions.push({ icon: '📜', title: 'Event Log', sub: 'Recent history & notifications', do: function () { closeModal(); openLog(); } });
+
+    // World report (standings) + options
+    actions.push({ icon: '🏆', title: 'World Report', sub: 'Standings & victory progress', do: function () { closeModal(); openStandings(); } });
+    actions.push({ icon: '⚙', title: 'Options', sub: 'Audio · restart · quit', do: function () { closeModal(); openOptions(); } });
 
     var endIcon = '▶';
     var endSub = hasMovesLeft ? Math.max(0, civPl.units.filter(function (u) { return u.moves > 0 && !u.fortified; }).length) + ' unit(s) still have moves' : 'All units acted — ready';

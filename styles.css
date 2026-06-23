@@ -269,6 +269,48 @@ body {
   text-align: center;
   padding: 20px;
 }
+
+/* World report / standings */
+.standings-body {
+  max-height: 380px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-right: 2px;
+}
+.rep-civ {
+  background: var(--panel-2);
+  border-left: 3px solid var(--line-2);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+}
+.rep-civ.dead { opacity: 0.5; }
+.rep-name {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.rep-stats {
+  font-size: 12px;
+  color: var(--text-2);
+  font-family: var(--font-num);
+  margin-bottom: 5px;
+}
+.rep-vic {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rep-vbar {
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--card);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-family: var(--font-num);
+}
 .audio-toggle {
   flex: 1;
   background: transparent;
