@@ -7874,6 +7874,16 @@
         if (openModal || state.victory) break;
         endTurn();
         break;
+      case 'toggle-mode':
+        if (openModal || !state || state.victory) break;
+        toggleMode();
+        updateHud(); draw();
+        break;
+      case 'cycle-zoom':
+        if (openModal || !state || state.victory) break;
+        cycleZoom();
+        updateHud(); draw();
+        break;
     }
   });
 
@@ -7887,7 +7897,10 @@
     // Touch / mouse input on the map canvas — tap or click a tile to act on
     // it, same as pressing Enter on that tile with the keyboard. Glasses input
     // routes through keydown above and is unaffected.
-    canvas.addEventListener('click', onCanvasClick);
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     // Fit the 600x600 app to whatever device viewport we're in. On glasses the
     // device viewport IS 600x600 so this is always 1.0.
@@ -7902,26 +7915,108 @@
     document.documentElement.style.setProperty('--app-scale', s.toFixed(4));
   }
 
-  function onCanvasClick(ev) {
-    if (!state || state.victory) return;
-    if (!isGameVisible()) return;
-    if (isModalOpen()) return;            // modals handle their own clicks
-    if (isBusy()) return;                  // AI thinking / walk animation
+  // --- Touch / mouse map input -------------------------------------------
+  // Tap a tile to act on it (same as ⏎ on that tile); drag one finger / the
+  // mouse to pan the map; pinch with two fingers to zoom. Glasses input routes
+  // through keydown and is unaffected.
+  var ptrs = {};                  // active pointerId -> { x, y } in CSS px
+  var panState = null;            // { camX, camY, sx, sy, moved }
+  var pinchState = null;          // { dist, zoom }
+  var TAP_SLOP = 9;               // movement under this (CSS px) still counts as a tap
+
+  function ptrList() { return Object.keys(ptrs).map(function (k) { return ptrs[k]; }); }
+  function ptrDist(a, b) { var dx = a.x - b.x, dy = a.y - b.y; return Math.sqrt(dx * dx + dy * dy); }
+  function toCanvas(clientX, clientY) {
     var rect = canvas.getBoundingClientRect();
-    // Map the click to canvas-native coordinates regardless of CSS scaling
-    var cx = (ev.clientX - rect.left) * (canvas.width / rect.width);
-    var cy = (ev.clientY - rect.top)  * (canvas.height / rect.height);
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height),
+      sc: canvas.width / rect.width
+    };
+  }
+  function inputBlocked() { return !state || state.victory || !isGameVisible() || isModalOpen() || isBusy(); }
+
+  function onPointerDown(e) {
+    if (inputBlocked()) return;
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    var n = ptrList().length;
+    if (n === 1) {
+      panState = { camX: state.camera.x, camY: state.camera.y, sx: e.clientX, sy: e.clientY, moved: false };
+      pinchState = null;
+    } else if (n === 2) {
+      var p = ptrList();
+      pinchState = { dist: ptrDist(p[0], p[1]), zoom: state.zoom };
+      panState = null;            // a second finger cancels the pan/tap
+    }
+    e.preventDefault();
+  }
+
+  function onPointerMove(e) {
+    if (!ptrs[e.pointerId]) return;
+    ptrs[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var p = ptrList();
+    if (pinchState && p.length >= 2) {
+      var d = ptrDist(p[0], p[1]);
+      var ratio = d / pinchState.dist;
+      var target = pinchState.zoom;
+      if (ratio >= 1.30) target = Math.min(ZOOM_LEVELS.length - 1, pinchState.zoom + 1);
+      else if (ratio <= 0.77) target = Math.max(0, pinchState.zoom - 1);
+      if (target !== state.zoom) {
+        var mid = toCanvas((p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2);
+        zoomAtScreen(target, mid.x, mid.y);
+        pinchState = { dist: d, zoom: target };   // ratchet to the next notch
+        updateHud(); draw();
+      }
+    } else if (panState) {
+      var dx = e.clientX - panState.sx, dy = e.clientY - panState.sy;
+      if (!panState.moved && (Math.abs(dx) > TAP_SLOP || Math.abs(dy) > TAP_SLOP)) panState.moved = true;
+      if (panState.moved) {
+        var sc = toCanvas(0, 0).sc;
+        state.camera.x = panState.camX - dx * sc;
+        state.camera.y = panState.camY - dy * sc;
+        clampCamera();
+        draw();
+      }
+    }
+    e.preventDefault();
+  }
+
+  function onPointerUp(e) {
+    var wasPan = panState;
+    delete ptrs[e.pointerId];
+    if (ptrList().length < 2) pinchState = null;
+    if (ptrList().length === 0) {
+      if (wasPan && !wasPan.moved && !inputBlocked()) tapTile(e.clientX, e.clientY);
+      panState = null;
+    }
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  // Change zoom while keeping the tile under (screen-space) sx,sy fixed.
+  function zoomAtScreen(newZoom, sx, sy) {
+    var oldSize = ZOOM_LEVELS[state.zoom];
+    var wx = sx + state.camera.x - oldSize * SQRT3 / 2;
+    var wy = sy + state.camera.y - oldSize;
+    var hex = pixelToHex(wx, wy, oldSize);
+    state.zoom = newZoom;
+    var ns = ZOOM_LEVELS[newZoom];
+    var np = pixelOf(hex[0], hex[1], ns);
+    state.camera.x = np.x + ns * SQRT3 / 2 - sx;
+    state.camera.y = np.y + ns - sy;
+    clampCamera();
+  }
+
+  function tapTile(clientX, clientY) {
+    var pc = toCanvas(clientX, clientY);
     var size = ZOOM_LEVELS[state.zoom];
     // drawMap places each hex centre at (pixelOf - camera + size*√3/2, +size),
-    // so to recover a hex from a click we have to back the half-hex offset
-    // out of the world coordinate before passing it to pixelToHex.
-    var wx = cx + state.camera.x - size * SQRT3 / 2;
-    var wy = cy + state.camera.y - size;
+    // so back the half-hex offset out before converting to a hex.
+    var wx = pc.x + state.camera.x - size * SQRT3 / 2;
+    var wy = pc.y + state.camera.y - size;
     var hex = pixelToHex(wx, wy, size);
     var c = hex[0], r = hex[1];
     if (!inBounds(c, r)) return;
-    // If the tapped tile is already the cursor, treat the second tap as a
-    // confirm (just call activate); otherwise move the cursor and act.
     state.cursor.c = c;
     state.cursor.r = r;
     ensureCursorVisible();

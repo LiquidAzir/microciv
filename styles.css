@@ -660,6 +660,11 @@ body {
   height: 540px;
   background: var(--bg);
   image-rendering: pixelated;
+  /* We handle pan/pinch ourselves via pointer events, so stop the browser
+     from scrolling or zooming the page on touch drags. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .hud-top {
@@ -810,6 +815,7 @@ body {
   color: var(--text);
   font-weight: 800;
 }
+.mode-pill, .zoom-pill { cursor: pointer; }
 .mode-pill {
   background: linear-gradient(180deg, rgba(0,212,255,0.20), rgba(0,168,212,0.15));
   border-color: rgba(0,212,255,0.5);

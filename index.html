@@ -57,10 +57,10 @@
       </div>
       <div id="hud-bottom" class="hud-bottom">
         <div class="hud-row hud-row-1">
-          <span id="mode-pill" class="hud-chip mode-pill" title="↑↓↑↓">
+          <span id="mode-pill" class="hud-chip mode-pill" data-action="toggle-mode" title="Cursor / Scroll (↑↓↑↓)">
             <span class="chip-lbl">MODE</span><span class="chip-val">CURSOR</span>
           </span>
-          <span id="zoom-pill" class="hud-chip zoom-pill" title="←→←→">
+          <span id="zoom-pill" class="hud-chip zoom-pill" data-action="cycle-zoom" title="Zoom (←→←→ · or pinch)">
             <span class="chip-lbl">ZOOM</span><span class="chip-val">○●●</span>
           </span>
           <span id="units-pill" class="hud-chip units-pill" title="esc cycles">
@@ -144,8 +144,9 @@
           <p><b>Pinch your city</b> — opens the city screen (production, food, science, defense). Tap an option to switch production now, or pinch the <b>+</b> beside it to queue up to 3 follow-ups.</p>
           <p><b>Pinch empty ground</b> — opens the <b>☰ Menu</b> (Research, Diplomacy, Event Log, World Report, Options, End Turn); ends the turn if all units are done. On phone/PC you can also tap the <b>☰ MENU</b> or <b>END TURN</b> chip.</p>
           <p><b>Selected unit</b> — a selected unit gets a <span style="color:#ffd34d">gold ring</span> and the cursor + status bar turn <span style="color:#ffb454">amber</span>, so you always know whether you're commanding a unit or just looking around. <b>Esc</b> cycles to the next unit with moves left.</p>
-          <p><b>Scroll mode</b> — toggle with <kbd>↑ ↓ ↑ ↓</kbd>. Arrows pan the camera freely.</p>
-          <p><b>Zoom</b> — cycle with <kbd>← → ← →</kbd>: far · normal · close.</p>
+          <p><b>Scroll mode</b> — toggle with <kbd>↑ ↓ ↑ ↓</kbd> or the <b>MODE</b> chip. Arrows pan the camera freely.</p>
+          <p><b>Zoom</b> — cycle with <kbd>← → ← →</kbd> or the <b>ZOOM</b> chip: far · normal · close.</p>
+          <p><b>On phone / PC</b> — <b>tap</b> a tile to act on it, <b>drag</b> one finger (or the mouse) to pan the map, and <b>pinch</b> two fingers to zoom. Every HUD chip (Menu, End Turn, Mode, Zoom) is tappable too.</p>
 
           <div class="help-section">Factions</div>
           <p><b>Solaris</b> — +1 food per city. <b>Umbra</b> — +1 atk on military. <b>Tellus</b> — +1 gold per city. <b>Ferrum</b> — +1 production (warmongers). <b>Vorne</b> — +1 atk (aggressive horde). <b>Myrr</b> — +1 gold (sea traders). You face two AI rivals drawn from the rest.</p>
