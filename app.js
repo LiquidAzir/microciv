@@ -1969,57 +1969,82 @@
         tree(positions[i][0], positions[i][1], '#173d22', '#2c6234', '#4f8a4a');
       }
     } else if (terrain === 'hills') {
-      // rounded bumps
-      var bumps = [
-        [-size*0.35, size*0.05],
-        [size*0.1, -size*0.1],
-        [size*0.3, size*0.15]
-      ];
-      for (var i = 0; i < bumps.length; i++) {
-        var bx = bumps[i][0], by = bumps[i][1];
-        var bw = size * 0.36, bh = size * 0.22;
-        ctx.fillStyle = '#4d3a1d';                       // shaded underside
-        ctx.beginPath();
-        ctx.ellipse(cx + bx, cy + by, bw, bh, 0, 0, Math.PI);
-        ctx.fill();
-        ctx.fillStyle = '#c49a55';                       // lit dome
-        ctx.beginPath();
-        ctx.ellipse(cx + bx - bw*0.15, cy + by, bw*0.74, bh*0.92, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#5f8f3e';                       // living green crest
-        ctx.beginPath();
-        ctx.ellipse(cx + bx - bw*0.1, cy + by - bh*0.18, bw*0.5, bh*0.36, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
+      // Rolling grassy hills — overlapping rounded mounds, each an earthy dome
+      // with a sunlit left slope and a green grassy crown.
+      var mounds = [[-size * 0.30, size * 0.20, 1.0], [size * 0.22, size * 0.05, 1.2], [size * 0.42, size * 0.24, 0.78]];
+      mounds.sort(function (a, b) { return a[1] - b[1]; });   // far (higher) drawn first
+      for (var i = 0; i < mounds.length; i++) {
+        var mx = cx + mounds[i][0], my = cy + mounds[i][1], sc = mounds[i][2];
+        var mw = size * 0.36 * sc, mh = size * 0.30 * sc;
+        ctx.fillStyle = 'rgba(0,0,0,0.16)';                    // cast shadow
+        ctx.beginPath(); ctx.ellipse(mx + mw * 0.12, my + 1, mw, mh * 0.20, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#6f5328';                             // shaded earthy dome
+        ctx.beginPath(); ctx.ellipse(mx, my, mw, mh, 0, Math.PI, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#a9823f';                             // sunlit slope (upper-left)
+        ctx.beginPath(); ctx.ellipse(mx - mw * 0.18, my, mw * 0.74, mh * 0.92, 0, Math.PI, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#4d8838';                             // green grassy crown
+        ctx.beginPath(); ctx.ellipse(mx, my - mh * 0.12, mw * 0.82, mh * 0.64, 0, Math.PI, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#79c054';                             // lit grass highlight
+        ctx.beginPath(); ctx.ellipse(mx - mw * 0.22, my - mh * 0.18, mw * 0.40, mh * 0.32, 0, Math.PI, Math.PI * 2); ctx.fill();
+        if (size >= 30) {                                      // grass flecks so crowns aren't smooth bubbles
+          ctx.fillStyle = '#356627';
+          ctx.fillRect(mx - mw * 0.04, my - mh * 0.44, px, px);
+          ctx.fillRect(mx + mw * 0.30, my - mh * 0.22, px, px);
+        }
       }
     } else if (terrain === 'mountain') {
-      // overlapping triangular peaks
-      function peak(px0, py0, w, h, dark, mid, light) {
-        ctx.fillStyle = dark;
-        ctx.beginPath();
-        ctx.moveTo(cx + px0, cy + py0 - h);
-        ctx.lineTo(cx + px0 - w, cy + py0);
-        ctx.lineTo(cx + px0 + w, cy + py0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = mid;
-        ctx.beginPath();
-        ctx.moveTo(cx + px0, cy + py0 - h);
-        ctx.lineTo(cx + px0 - w*0.2, cy + py0 - h*0.4);
-        ctx.lineTo(cx + px0 + w, cy + py0);
-        ctx.lineTo(cx + px0, cy + py0);
-        ctx.closePath();
-        ctx.fill();
-        // snow cap
-        ctx.fillStyle = light;
-        ctx.beginPath();
-        ctx.moveTo(cx + px0, cy + py0 - h);
-        ctx.lineTo(cx + px0 - w*0.3, cy + py0 - h*0.55);
-        ctx.lineTo(cx + px0 + w*0.3, cy + py0 - h*0.55);
-        ctx.closePath();
-        ctx.fill();
+      // A craggy massif: a receding back peak, a tall main peak split into a
+      // sunlit and a shadowed face along the ridgeline, topped with a jagged
+      // snow cap and snow gullies — reads as a real mountain, not a grey blob.
+      var footY = cy + size * 0.46;
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';                       // base shadow
+      ctx.beginPath(); ctx.ellipse(cx, footY, size * 0.52, size * 0.11, 0, 0, Math.PI * 2); ctx.fill();
+
+      function peak(apexX, apexY, halfW, lit, shadow, snowFrac, snow, snowShade) {
+        var ax = cx + apexX, ay = cy + apexY;
+        var Lx = cx + apexX - halfW, Rx = cx + apexX + halfW;
+        var Fx = cx + apexX + halfW * 0.10;                     // ridge foot, near centre
+        ctx.fillStyle = shadow;                                 // right (shadow) face
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(Fx, footY); ctx.lineTo(Rx, footY); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = lit;                                    // left (sunlit) face
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(Lx, footY); ctx.lineTo(Fx, footY); ctx.closePath(); ctx.fill();
+        if (snowFrac > 0) {
+          var sy = ay + (footY - ay) * snowFrac;                // snowline
+          var hw = halfW * snowFrac;                            // half-width at snowline
+          ctx.fillStyle = snow;                                 // jagged snow cap
+          ctx.beginPath();
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(ax - hw, sy);
+          ctx.lineTo(ax - hw * 0.45, sy - hw * 0.32);
+          ctx.lineTo(ax - hw * 0.12, sy + hw * 0.20);
+          ctx.lineTo(ax + hw * 0.22, sy - hw * 0.30);
+          ctx.lineTo(ax + hw * 0.55, sy + hw * 0.16);
+          ctx.lineTo(ax + hw, sy);
+          ctx.closePath(); ctx.fill();
+          ctx.fillStyle = snowShade;                            // shadowed side of the cap
+          ctx.beginPath();
+          ctx.moveTo(ax, ay); ctx.lineTo(ax + hw, sy); ctx.lineTo(ax + hw * 0.2, sy); ctx.closePath(); ctx.fill();
+        }
       }
-      peak(-size*0.25, size*0.30, size*0.30, size*0.55, '#36323c', '#9a949f', '#f0f2f6');
-      peak(size*0.18, size*0.35, size*0.35, size*0.42, '#2c2830', '#7e7886', '#e6e8ee');
+      // back peaks (recede — darker, smaller) give the massif a range silhouette
+      peak(-size * 0.36, -size * 0.06, size * 0.26, '#56525f', '#37343f', 0.30, '#d6dbe6', '#aab3c6');
+      peak(size * 0.30, -size * 0.14, size * 0.30, '#625e6b', '#3d3a45', 0.32, '#dfe4ee', '#b3bccd');
+      // main peak (front, tallest) with a generous snow cap
+      peak(-size * 0.08, -size * 0.50, size * 0.46, '#9b98a7', '#4c4854', 0.48, '#f3f6fb', '#c0c8d9');
+      // rock striations on the lit face + snow gullies on the shadow face
+      if (size >= 24) {
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = 'rgba(38,34,46,0.45)'; ctx.lineWidth = Math.max(1, px * 0.5);
+        ctx.beginPath();
+        ctx.moveTo(cx - size * 0.20, cy + size * 0.06); ctx.lineTo(cx - size * 0.12, cy - size * 0.16);
+        ctx.moveTo(cx - size * 0.10, cy + size * 0.16); ctx.lineTo(cx - size * 0.04, cy - size * 0.06);
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(228,234,245,0.75)'; ctx.lineWidth = Math.max(1, px * 0.5);
+        ctx.beginPath();
+        ctx.moveTo(cx + size * 0.00, cy - size * 0.18); ctx.lineTo(cx + size * 0.03, cy + size * 0.12);
+        ctx.moveTo(cx + size * 0.12, cy - size * 0.12); ctx.lineTo(cx + size * 0.09, cy + size * 0.14);
+        ctx.stroke();
+      }
     } else if (terrain === 'tundra') {
       // Pale snowfield: soft shadowed drifts, cold grey rocks, frost cracks
       var rng2 = tileRng(c, r);
