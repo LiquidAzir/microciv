@@ -3634,10 +3634,12 @@
     return targets;
   }
 
-  function rangedAttack(attacker, defender) {
+  // Shared combat math: the attacker's win-ratio vs a defender, factoring
+  // terrain, fortify, walls, Great Wall, home territory, siege, promotions and
+  // tech. Used by attack(), rangedAttack(), and the combat-odds forecast so
+  // the preview always matches the real roll.
+  function combatRatio(attacker, defender) {
     var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
-    if (aDef.atk === 0) { showToast('Cannot attack'); return false; }
-    if (!atWar(attacker.civ, defender.civ)) { showToast('At peace'); return false; }
     var dTile = tileAt(defender.c, defender.r);
     var terr = TERRAIN[dTile.terrain];
     var dBonus = (terr.defBonus || 0);
@@ -3648,12 +3650,25 @@
     }
     if (dTile.owner === defender.civ) dBonus += 0.10;
     if (dBonus > 1.5) dBonus = 1.5;
-
     var aPower = aDef.atk + atkTechBonus(attacker);
-    // Siege bonus: catapults halve city defense bonuses
     if (aDef.siege && dTile.city) dBonus = dBonus * 0.5;
     var dPower = (dDef.def + (defender.promoDef || 0)) * (1 + dBonus);
-    var ratio = aPower / (aPower + dPower);
+    return aPower / (aPower + dPower);
+  }
+  // Expected-damage forecast; the +0..3 random jitter is shown as a range.
+  function combatForecast(attacker, defender, ranged) {
+    var ratio = combatRatio(attacker, defender);
+    var dMin = Math.round(12 * ratio);
+    var fc = { toDefMin: dMin, toDefMax: dMin + 3, ranged: !!ranged };
+    if (!ranged) { var aMin = Math.round(12 * (1 - ratio)); fc.toAtkMin = aMin; fc.toAtkMax = aMin + 3; }
+    return fc;
+  }
+
+  function rangedAttack(attacker, defender) {
+    var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
+    if (aDef.atk === 0) { showToast('Cannot attack'); return false; }
+    if (!atWar(attacker.civ, defender.civ)) { showToast('At peace'); return false; }
+    var ratio = combatRatio(attacker, defender);
 
     // Ranged: full damage to defender, NO counter-damage to attacker
     var dmgToDef = Math.round(12 * ratio + rndInt(0, 3));
@@ -3856,8 +3871,29 @@
     var readyToEnd = !hasMovesLeft && !state.victory;
 
     if (selUnit) {
-      var rangeHint = UNITS[selUnit.type] && UNITS[selUnit.type].ranged ? ' · rng ' + UNITS[selUnit.type].ranged : '';
-      hint.textContent = '⏎ move/fire · esc next · ' + selUnit.moves + '/' + selUnit.maxMoves + ' mv' + rangeHint;
+      // Combat forecast: if the cursor is on an enemy this unit could strike
+      // right now (ranged in range, or melee adjacent), show expected damage.
+      var forecast = null;
+      var sd = UNITS[selUnit.type];
+      var curT = state.map[state.cursor.r][state.cursor.c];
+      if (sd.atk > 0 && selUnit.moves > 0 && curT.unit && curT.visible.player &&
+          curT.unit.civ !== 'player' && atWar('player', curT.unit.civ)) {
+        var dist = hexDist([selUnit.c, selUnit.r], [state.cursor.c, state.cursor.r]);
+        var useRanged = !!sd.ranged && dist <= sd.ranged;
+        var canMelee = dist === 1;
+        if (useRanged || canMelee) {
+          var f = combatForecast(selUnit, curT.unit, useRanged);
+          forecast = useRanged
+            ? '⚔ deal ~' + f.toDefMin + '–' + f.toDefMax + ' · ranged, no counter'
+            : '⚔ deal ~' + f.toDefMin + '–' + f.toDefMax + ' · take ~' + f.toAtkMin + '–' + f.toAtkMax;
+        }
+      }
+      if (forecast) {
+        hint.textContent = forecast;
+      } else {
+        var rangeHint = sd.ranged ? ' · rng ' + sd.ranged : '';
+        hint.textContent = '⏎ move/fire · esc next · ' + selUnit.moves + '/' + selUnit.maxMoves + ' mv' + rangeHint;
+      }
     } else if (state.mode === 'scroll') {
       hint.textContent = 'arrows pan · ↑↓↑↓ cursor';
     } else if (readyToEnd) {
@@ -4154,25 +4190,7 @@
     var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
     if (aDef.atk === 0) { showToast('Cannot attack'); return false; }
     if (!atWar(attacker.civ, defender.civ)) { showToast('At peace'); return false; }
-    var dTile = tileAt(defender.c, defender.r);
-    var terr = TERRAIN[dTile.terrain];
-    var dBonus = (terr.defBonus || 0);
-    if (defender.fortified) dBonus += 0.25;
-    if (dTile.city && dTile.city.civ === defender.civ) {
-      dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
-      // Great Wall — +50% defense in every city the builder owns
-      if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
-    }
-    // Home-territory bonus: defender gets +10% on own owned tiles
-    if (dTile.owner === defender.civ) dBonus += 0.10;
-    // Cap so defense buffs never make a unit invincible
-    if (dBonus > 1.5) dBonus = 1.5;
-
-    var aPower = aDef.atk + atkTechBonus(attacker);
-    // Siege bonus: catapults halve city defense bonuses
-    if (aDef.siege && dTile.city) dBonus = dBonus * 0.5;
-    var dPower = (dDef.def + (defender.promoDef || 0)) * (1 + dBonus);
-    var ratio = aPower / (aPower + dPower);
+    var ratio = combatRatio(attacker, defender);
 
     var dmgToDef = Math.round(12 * ratio + rndInt(0, 3));
     var dmgToAtk = Math.round(12 * (1 - ratio) + rndInt(0, 3));
