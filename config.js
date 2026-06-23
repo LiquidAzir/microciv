@@ -7,12 +7,10 @@
 // personal ?u=<id> link (or scans the QR on the Cloud Sync screen) shares one
 // save automatically — pull on launch, push on save, last-write-wins.
 //
-// By default this reuses the shared `glassrealm-saves` worker. MicroCiv's saves
-// live under their own `mc…` device id, so they never collide with other games.
-// To run your own dedicated worker instead, deploy /worker (see worker/README.md)
-// and paste its URL here, e.g. 'https://microciv-saves.<you>.workers.dev'.
-//
-// Leave cloudUrl as '' to keep saves local-only (Export/Import codes still work).
+// Points at this game's own dedicated worker (deployed from /worker, backed by a
+// fresh KV namespace). MicroCiv's saves use `mc…` device ids.
+// To use a different worker, deploy /worker (see worker/README.md) and paste its
+// URL here. Leave cloudUrl as '' to keep saves local-only (Export/Import still work).
 window.MICROCIV_CONFIG = {
-  cloudUrl: 'https://glassrealm-saves.liquidazir.workers.dev'
+  cloudUrl: 'https://microciv-saves.liquidazir.workers.dev'
 };
