@@ -32,16 +32,16 @@
   var VIEW_W = 600, VIEW_H = 540;
 
   var TERRAIN = {
-    grass:    { name: 'Grass',    food: 2, prod: 0, gold: 0, color: '#1a5c2e', edge: '#2e8a48', glyph: '',  fg: '#5cb070' },
-    plains:   { name: 'Plains',   food: 1, prod: 1, gold: 0, color: '#5c4a18', edge: '#b89840', glyph: '',  fg: '#d4b878' },
-    forest:   { name: 'Forest',   food: 1, prod: 2, gold: 0, color: '#0e2a14', edge: '#1c4a28', glyph: '♣', fg: '#4ca860' },
-    hills:    { name: 'Hills',    food: 1, prod: 2, gold: 0, defBonus: 0.5, color: '#3a2a10', edge: '#8a6830', glyph: '▴', fg: '#d4a060' },
-    mountain: { name: 'Mountain', food: 0, prod: 0, gold: 0, impassable: true, color: '#282434', edge: '#605078', glyph: '▲', fg: '#c2a8d0' },
-    desert:   { name: 'Desert',   food: 0, prod: 1, gold: 1, color: '#7a6418', edge: '#d4a850', glyph: '·', fg: '#e8c878' },
-    tundra:   { name: 'Tundra',   food: 0, prod: 1, gold: 0, color: '#2a3840', edge: '#6882a0', glyph: '',  fg: '#b8d4dc' },
-    water:    { name: 'Sea',      food: 1, prod: 0, gold: 1, impassable: true, color: '#081e3c', edge: '#1a4880', glyph: '~', fg: '#5a92d0' },
-    volcano:  { name: 'Volcano',  food: 0, prod: 1, gold: 0, impassable: true, wonder: true, color: '#1a0a08', edge: '#5a1810', glyph: '',  fg: '#ff6a3a' },
-    geyser:   { name: 'Geyser',   food: 2, prod: 0, gold: 1, wonder: true, color: '#0a2c3c', edge: '#3080a0', glyph: '',  fg: '#7ce5ff' }
+    grass:    { name: 'Grass',    food: 2, prod: 0, gold: 0, color: '#3f7d3a', edge: '#6fb255', glyph: '',  fg: '#82c264' },
+    plains:   { name: 'Plains',   food: 1, prod: 1, gold: 0, color: '#b89844', edge: '#e3c46a', glyph: '',  fg: '#e8cf7a' },
+    forest:   { name: 'Forest',   food: 1, prod: 2, gold: 0, color: '#1f4d2b', edge: '#356b3c', glyph: '♣', fg: '#4f8a4a' },
+    hills:    { name: 'Hills',    food: 1, prod: 2, gold: 0, defBonus: 0.5, color: '#7a5e32', edge: '#a8854a', glyph: '▴', fg: '#c49a55' },
+    mountain: { name: 'Mountain', food: 0, prod: 0, gold: 0, impassable: true, color: '#5a5560', edge: '#8c8694', glyph: '▲', fg: '#aaa4b0' },
+    desert:   { name: 'Desert',   food: 0, prod: 1, gold: 1, color: '#d8b35e', edge: '#efd791', glyph: '·', fg: '#f2dd9c' },
+    tundra:   { name: 'Tundra',   food: 0, prod: 1, gold: 0, color: '#b9c6cf', edge: '#e6eef2', glyph: '',  fg: '#8fa3b2' },
+    water:    { name: 'Sea',      food: 1, prod: 0, gold: 1, impassable: true, color: '#16487a', edge: '#3f86c4', glyph: '~', fg: '#4fa3cf' },
+    volcano:  { name: 'Volcano',  food: 0, prod: 1, gold: 0, impassable: true, wonder: true, color: '#2e1c18', edge: '#7a2a18', glyph: '',  fg: '#ff7b2e' },
+    geyser:   { name: 'Geyser',   food: 2, prod: 0, gold: 1, wonder: true, color: '#1d6473', edge: '#5fc3cf', glyph: '',  fg: '#5fc3cf' }
   };
 
   var RESOURCES = {
@@ -1721,6 +1721,25 @@
     ctx.closePath();
   }
 
+  // Subtle inner bevel — light from the top-left, shadow on the lower-right —
+  // to give each tile a touch of depth without a harsh outline. Clipped to hex.
+  function drawHexBevel(cx, cy, size, terrain) {
+    var darkA = 0.26, lightA = 0.10;
+    if (terrain === 'forest' || terrain === 'volcano') { darkA = 0.20; lightA = 0.13; }
+    function corner(k) { var a = Math.PI / 180 * (60 * k - 30); return [cx + size * Math.cos(a), cy + size * Math.sin(a)]; }
+    ctx.lineWidth = 1;
+    function edge(k, col) {
+      var p = corner(k), q = corner((k + 1) % 6);
+      ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+    }
+    edge(3, 'rgba(255,255,255,' + lightA + ')');     // upper-left + top edges: lit
+    edge(4, 'rgba(255,255,255,' + lightA + ')');
+    edge(5, 'rgba(255,255,255,' + lightA + ')');
+    edge(0, 'rgba(0,0,0,' + darkA + ')');            // right + lower edges: shadow
+    edge(1, 'rgba(0,0,0,' + darkA + ')');
+    edge(2, 'rgba(0,0,0,' + darkA + ')');
+  }
+
   // Tile detail rendering — pixel decals per terrain type.
   // Uses seeded variation so each tile looks distinct but stable across redraws.
   function tileHash(c, r) {
@@ -1762,36 +1781,40 @@
     var terrain = t.terrain;
 
     if (terrain === 'grass') {
-      // Subtle tufts — lighter greens on darker base
-      for (var i = 0; i < 5; i++) {
-        var x = (rng() - 0.5) * size * 1.1;
-        var y = (rng() - 0.5) * size * 0.9;
-        dot(x, y, px, px, '#1e6a38');
-        dot(x + px, y, px*0.6, px*0.6, '#2e8848');
+      // Lush field — upright grass blades (dark base + lit tip) + occasional bloom
+      for (var i = 0; i < 4; i++) {
+        var x = (rng() - 0.5) * size * 1.0;
+        var y = (rng() - 0.5) * size * 0.8;
+        ctx.fillStyle = '#2c5a2a'; ctx.fillRect(cx + x, cy + y, px, px * 2);
+        ctx.fillStyle = '#82c264'; ctx.fillRect(cx + x, cy + y - px, px, px);
       }
-      // Scattered bright specks (flowers/clover)
-      for (var i = 0; i < 2; i++) {
-        var x = (rng() - 0.5) * size * 0.8;
-        var y = (rng() - 0.5) * size * 0.7;
-        dot(x, y, px*0.5, px*0.5, '#4aba68');
+      if (size >= 34 && rng() < 0.34) {
+        ctx.fillStyle = '#d9e36b';
+        ctx.fillRect(cx + (rng() - 0.5) * size * 0.7, cy + (rng() - 0.5) * size * 0.6, px, px);
       }
     } else if (terrain === 'plains') {
-      // Golden wheat-like tufts — clearly warmer than grass
-      for (var i = 0; i < 6; i++) {
-        var x = (rng() - 0.5) * size * 1.1;
-        var y = (rng() - 0.5) * size * 0.9;
-        dot(x, y, px*0.8, px*0.5, '#b89840');
-        dot(x + px*0.4, y - px*0.3, px*0.5, px*0.3, '#c8a850');
+      // Wind-combed dry grassland — horizontal golden rows + a low furrow
+      for (var i = 0; i < 3; i++) {
+        var ry = -size * 0.26 + i * size * 0.26;
+        var rx = (rng() - 0.5) * size * 0.3;
+        var rw = size * (0.34 + rng() * 0.18);
+        ctx.fillStyle = '#e8cf7a';
+        ctx.fillRect(cx + rx - rw / 2, cy + ry, rw, Math.max(1, px * 0.8));
+        ctx.fillStyle = '#8a6f2c';                     // a darker break in the row
+        ctx.fillRect(cx + rx - rw / 2 + rw * 0.55, cy + ry, rw * 0.18, Math.max(1, px * 0.8));
       }
+      ctx.fillStyle = '#6b541f';
+      ctx.fillRect(cx - size * 0.30, cy + size * 0.30, size * 0.6, Math.max(1, px * 0.7));
     } else if (terrain === 'forest') {
+      // Clustered conifer crowns over a deep-green floor
       var nTrees = 3 + Math.floor(rng() * 2);
       var positions = [];
       for (var i = 0; i < nTrees; i++) {
-        positions.push([(rng() - 0.5) * size * 0.9, (rng() - 0.4) * size * 0.7]);
+        positions.push([(rng() - 0.5) * size * 0.95, (rng() - 0.4) * size * 0.7]);
       }
       positions.sort(function (a, b) { return a[1] - b[1]; });
       for (var i = 0; i < positions.length; i++) {
-        tree(positions[i][0], positions[i][1], '#0a2012', '#164a22', '#228a34');
+        tree(positions[i][0], positions[i][1], '#173d22', '#2c6234', '#4f8a4a');
       }
     } else if (terrain === 'hills') {
       // rounded bumps
@@ -1803,18 +1826,17 @@
       for (var i = 0; i < bumps.length; i++) {
         var bx = bumps[i][0], by = bumps[i][1];
         var bw = size * 0.36, bh = size * 0.22;
-        ctx.fillStyle = '#352010';
+        ctx.fillStyle = '#4d3a1d';                       // shaded underside
         ctx.beginPath();
         ctx.ellipse(cx + bx, cy + by, bw, bh, 0, 0, Math.PI);
         ctx.fill();
-        ctx.fillStyle = '#4a3218';
+        ctx.fillStyle = '#c49a55';                       // lit dome
         ctx.beginPath();
-        ctx.ellipse(cx + bx - bw*0.15, cy + by, bw*0.7, bh*0.9, 0, Math.PI, Math.PI * 2);
+        ctx.ellipse(cx + bx - bw*0.15, cy + by, bw*0.74, bh*0.92, 0, Math.PI, Math.PI * 2);
         ctx.fill();
-        // Subtle grass tint on top of hill
-        ctx.fillStyle = 'rgba(40, 80, 30, 0.3)';
+        ctx.fillStyle = '#5f8f3e';                       // living green crest
         ctx.beginPath();
-        ctx.ellipse(cx + bx - bw*0.1, cy + by, bw*0.5, bh*0.5, 0, Math.PI, Math.PI * 2);
+        ctx.ellipse(cx + bx - bw*0.1, cy + by - bh*0.18, bw*0.5, bh*0.36, 0, Math.PI, Math.PI * 2);
         ctx.fill();
       }
     } else if (terrain === 'mountain') {
@@ -1844,59 +1866,47 @@
         ctx.closePath();
         ctx.fill();
       }
-      peak(-size*0.25, size*0.30, size*0.30, size*0.55, '#251820', '#4a2e3e', '#e0d0e0');
-      peak(size*0.18, size*0.35, size*0.35, size*0.42, '#1a1014', '#3a242e', '#c0b0c0');
+      peak(-size*0.25, size*0.30, size*0.30, size*0.55, '#36323c', '#9a949f', '#f0f2f6');
+      peak(size*0.18, size*0.35, size*0.35, size*0.42, '#2c2830', '#7e7886', '#e6e8ee');
     } else if (terrain === 'tundra') {
-      // Sparse snow patches and tiny stunted pines
+      // Pale snowfield: soft shadowed drifts, cold grey rocks, frost cracks
       var rng2 = tileRng(c, r);
-      // base ice sheen — a few pale patches
-      for (var i = 0; i < 4; i++) {
-        var sx = (rng2() - 0.5) * size * 1.1;
-        var sy = (rng2() - 0.5) * size * 0.9;
-        var ss = size * (0.12 + rng2() * 0.10);
-        ctx.fillStyle = 'rgba(220, 232, 240, 0.55)';
-        ctx.beginPath();
-        ctx.ellipse(cx + sx, cy + sy, ss, ss * 0.45, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-        ctx.beginPath();
-        ctx.ellipse(cx + sx - 1, cy + sy - 1, ss * 0.5, ss * 0.18, 0, 0, Math.PI * 2);
-        ctx.fill();
+      for (var i = 0; i < 3; i++) {
+        var sx = (rng2() - 0.5) * size * 1.0;
+        var sy = (rng2() - 0.5) * size * 0.8;
+        var ss = size * (0.16 + rng2() * 0.12);
+        ctx.fillStyle = 'rgba(143,163,178,0.45)';
+        ctx.beginPath(); ctx.ellipse(cx + sx, cy + sy, ss, ss * 0.42, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(244,248,251,0.75)';
+        ctx.beginPath(); ctx.ellipse(cx + sx - 1, cy + sy - ss * 0.3, ss * 0.55, ss * 0.16, 0, 0, Math.PI * 2); ctx.fill();
       }
-      // a couple of stunted dark conifers
-      var trees = 1 + Math.floor(rng2() * 2);
-      for (var i = 0; i < trees; i++) {
-        var tx = (rng2() - 0.5) * size * 0.8;
-        var ty = (rng2() - 0.5) * size * 0.7;
-        var th = size * 0.18;
-        ctx.fillStyle = '#0a1a14';
+      for (var i = 0; i < 3; i++) {
+        ctx.fillStyle = '#6f7d86';
+        ctx.fillRect(cx + (rng2() - 0.5) * size * 0.9, cy + (rng2() - 0.5) * size * 0.7, px, px);
+      }
+      if (size >= 34) {
+        ctx.strokeStyle = 'rgba(244,248,251,0.5)'; ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(cx + tx - 2, cy + ty + th);
-        ctx.lineTo(cx + tx, cy + ty - th);
-        ctx.lineTo(cx + tx + 2, cy + ty + th);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#1c3a2a';
-        ctx.fillRect(cx + tx - 1, cy + ty - 1, 2, th + 1);
-        // snow cap
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(cx + tx - 1, cy + ty - th + 1, 2, 1);
+        ctx.moveTo(cx - size * 0.2, cy + size * 0.1);
+        ctx.lineTo(cx + size * 0.04, cy - size * 0.05);
+        ctx.lineTo(cx + size * 0.24, cy + size * 0.12);
+        ctx.stroke();
       }
     } else if (terrain === 'desert') {
-      // dunes
-      ctx.fillStyle = '#5c451a';
-      for (var i = 0; i < 4; i++) {
-        var dx = -size * 0.5 + i * size * 0.3;
-        var dy = (i % 2 ? 0.15 : -0.05) * size;
-        ctx.beginPath();
-        ctx.ellipse(cx + dx, cy + dy, size * 0.22, size * 0.08, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
+      // Sunlit dunes: shaded underside + bright crest, a couple of pebbles
+      for (var i = 0; i < 3; i++) {
+        var dx = -size * 0.36 + i * size * 0.34;
+        var dy = (i % 2 ? 0.14 : -0.08) * size;
+        ctx.fillStyle = '#a8813a';
+        ctx.beginPath(); ctx.ellipse(cx + dx, cy + dy + 1, size * 0.26, size * 0.09, 0, 0, Math.PI); ctx.fill();
+        ctx.fillStyle = '#f2dd9c';
+        ctx.beginPath(); ctx.ellipse(cx + dx, cy + dy, size * 0.26, size * 0.07, 0, Math.PI, Math.PI * 2); ctx.fill();
       }
-      // sparse dots
-      for (var i = 0; i < 5; i++) {
-        var x = (rng() - 0.5) * size * 1.1;
-        var y = (rng() - 0.5) * size * 0.9;
-        dot(x, y, px*0.6, px*0.6, '#7a5d1c');
+      if (size >= 34) {
+        for (var i = 0; i < 2; i++) {
+          ctx.fillStyle = '#8a6a30';
+          ctx.fillRect(cx + (rng() - 0.5) * size * 0.9, cy + (rng() - 0.3) * size * 0.7, px, px);
+        }
       }
     } else if (terrain === 'volcano') {
       // Large dark cone with glowing crater and smoke wisp
@@ -1981,35 +1991,51 @@
       ctx.fillRect(cx - size*0.20, cy - size*0.25, px*0.6, px*0.6);
       ctx.fillRect(cx + size*0.18, cy - size*0.20, px*0.6, px*0.6);
     } else if (terrain === 'water') {
-      // Deep water shimmer highlights
-      for (var i = 0; i < 2; i++) {
-        var sx = (rng() - 0.5) * size * 0.8;
-        var sy = (rng() - 0.5) * size * 0.6;
-        ctx.fillStyle = 'rgba(20, 60, 110, 0.5)';
-        ctx.beginPath();
-        ctx.ellipse(cx + sx, cy + sy, size * 0.18, size * 0.06, rng() * 0.5, 0, Math.PI * 2);
-        ctx.fill();
+      // Depth: dark centre fading to a lighter shallow edge
+      var wg = ctx.createRadialGradient(cx, cy, size * 0.15, cx, cy, size * 1.05);
+      wg.addColorStop(0, '#06182f');
+      wg.addColorStop(0.6, '#0c2f5c');
+      wg.addColorStop(1, '#16487a');
+      ctx.fillStyle = wg;
+      ctx.fillRect(cx - size, cy - size, size * 2, size * 2);
+
+      // Coastline foam on edges shared with land
+      var nsW = neighborsAll(c, r);
+      var coast = false;
+      ctx.lineCap = 'round';
+      for (var ei = 0; ei < 6; ei++) {
+        if (!nsW[ei]) continue;
+        var ntW = state.map[nsW[ei][1]][nsW[ei][0]];
+        if (ntW.terrain === 'water') continue;
+        coast = true;
+        var edgeIdx = [0, 3, 5, 4, 1, 2][ei];           // neighbor dir -> hex edge
+        var a1 = Math.PI / 180 * (60 * edgeIdx - 30);
+        var a2 = Math.PI / 180 * (60 * (edgeIdx + 1) - 30);
+        var rad = size * 0.9;
+        var x1 = cx + rad * Math.cos(a1), y1 = cy + rad * Math.sin(a1);
+        var x2 = cx + rad * Math.cos(a2), y2 = cy + rad * Math.sin(a2);
+        ctx.strokeStyle = 'rgba(207,234,245,' + (0.45 + rng() * 0.15).toFixed(2) + ')';
+        ctx.lineWidth = Math.max(1.2, size * 0.07);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        var ix1 = x1 + (cx - x1) * 0.10, iy1 = y1 + (cy - y1) * 0.10;
+        var ix2 = x2 + (cx - x2) * 0.10, iy2 = y2 + (cy - y2) * 0.10;
+        ctx.strokeStyle = 'rgba(150,195,225,0.26)';
+        ctx.lineWidth = Math.max(1, size * 0.10);
+        ctx.beginPath(); ctx.moveTo(ix1, iy1); ctx.lineTo(ix2, iy2); ctx.stroke();
       }
-      // wave lines — staggered, varying widths
-      ctx.lineWidth = Math.max(1, px * 0.6);
-      for (var i = 0; i < 4; i++) {
-        var y = -size*0.35 + i * size * 0.24;
-        var xoff = (i % 2 ? 0.06 : -0.06) * size;
-        ctx.strokeStyle = i % 2 === 0 ? '#164070' : '#1a4a80';
+
+      // Gentle wave dashes
+      ctx.strokeStyle = coast ? 'rgba(120,170,220,0.22)' : 'rgba(120,170,220,0.18)';
+      ctx.lineWidth = Math.max(1, size * 0.04);
+      for (var i = 0; i < 3; i++) {
+        var wy = -size * 0.28 + i * size * 0.26 + (rng() - 0.5) * size * 0.06;
+        var wx = (rng() - 0.5) * size * 0.2;
         ctx.beginPath();
-        ctx.moveTo(cx - size*0.38 + xoff, cy + y);
-        ctx.quadraticCurveTo(cx - size*0.08 + xoff, cy + y - 2.5, cx + xoff, cy + y);
-        ctx.quadraticCurveTo(cx + size*0.16 + xoff, cy + y + 2.5, cx + size*0.38 + xoff, cy + y);
+        ctx.moveTo(cx - size * 0.34 + wx, cy + wy);
+        ctx.quadraticCurveTo(cx + wx, cy + wy - size * 0.06, cx + size * 0.34 + wx, cy + wy);
         ctx.stroke();
       }
-      // Specular highlight dot
-      ctx.fillStyle = 'rgba(80, 160, 220, 0.25)';
-      var hx = (rng() - 0.5) * size * 0.5;
-      var hy = (rng() - 0.5) * size * 0.4;
-      ctx.beginPath();
-      ctx.arc(cx + hx, cy + hy, size * 0.06, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 1;
+      ctx.lineCap = 'butt'; ctx.lineWidth = 1;
     }
   }
 
@@ -2053,24 +2079,24 @@
     // Deterministic wiggle so rivers don't shimmer across frames and don't
     // perturb the global RNG (which seeds tile decals etc.)
     var wiggle = (((c * 73856093) ^ (r * 19349663)) >>> 0) % 1000 / 1000 - 0.5;
-    // Dark blue outline
-    ctx.strokeStyle = '#0a2c44';
-    ctx.lineWidth = Math.max(3, size * 0.18);
+    // Dark blue casing
+    ctx.strokeStyle = '#0a2a52';
+    ctx.lineWidth = Math.max(3, size * 0.16);
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(a[0], a[1]);
     ctx.quadraticCurveTo(cx + wiggle * size * 0.2, cy + size * 0.05, b[0], b[1]);
     ctx.stroke();
-    // Bright water
-    ctx.strokeStyle = '#3a92d0';
-    ctx.lineWidth = Math.max(2, size * 0.12);
+    // Bright water body
+    ctx.strokeStyle = '#2a6cb0';
+    ctx.lineWidth = Math.max(2, size * 0.11);
     ctx.beginPath();
     ctx.moveTo(a[0], a[1]);
     ctx.quadraticCurveTo(cx, cy + size * 0.05, b[0], b[1]);
     ctx.stroke();
     // Sparkle highlight
-    ctx.strokeStyle = '#7ce5ff';
-    ctx.lineWidth = Math.max(1, size * 0.04);
+    ctx.strokeStyle = '#7fc2e8';
+    ctx.lineWidth = Math.max(1, size * 0.045);
     ctx.beginPath();
     ctx.moveTo(a[0] + 1, a[1] - 1);
     ctx.quadraticCurveTo(cx + 1, cy + size * 0.04, b[0] + 1, b[1] - 1);
@@ -2078,167 +2104,139 @@
     ctx.lineCap = 'butt';
   }
 
+  var RES_RIM = {
+    wheat: '#e8b830', cattle: '#e0d8cc', horses: '#caa46a', fish: '#5fc8d8',
+    iron: '#9aa6b2', copper: '#d07a3a', gold: '#ffd84a', gems: '#b06cff'
+  };
   function drawResourceMarker(cx, cy, size, kind) {
     var res = RESOURCES[kind];
     if (!res) return;
-    // Big icon centered slightly toward top of tile
-    var x = cx;
-    var y = cy - size * 0.28;
-    var u = Math.max(1.2, size / 22);   // pixel scale
-    function px(rx, ry, w, h, c) {
-      ctx.fillStyle = c;
-      ctx.fillRect(x + rx * u, y + ry * u, w * u, h * u);
+    var x = cx, y = cy - size * 0.26;
+    var r = size * 0.30;
+    var rim = RES_RIM[kind] || res.accent;
+    var lod = size >= 34;
+    // Badge: drop shadow, dark disc, accent rim — so any icon reads on any biome
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.ellipse(x, y + r * 0.16, r, r, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0c0f14';
+    ctx.beginPath(); ctx.ellipse(x, y, r, r, 0, 0, Math.PI * 2); ctx.fill();
+    var rw = Math.max(1.2, size * 0.05);
+    ctx.lineWidth = rw; ctx.strokeStyle = rim;
+    ctx.beginPath(); ctx.ellipse(x, y, r - rw * 0.5, r - rw * 0.5, 0, 0, Math.PI * 2); ctx.stroke();
+    if (size >= 48) {                                   // top-left sheen
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = rw;
+      ctx.beginPath(); ctx.arc(x, y, r - rw, Math.PI * 1.05, Math.PI * 1.62); ctx.stroke();
     }
-    // Drop shadow under icon
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.beginPath();
-    ctx.ellipse(x, y + size * 0.18, size * 0.22, size * 0.07, 0, 0, Math.PI * 2);
-    ctx.fill();
-
+    // Pixel helper: icon-units from badge center, u px per unit (disc r = 5 units)
+    var u = r / 5;
+    function P(a, b, w, h, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x + a * u, y + b * u, w * u, h * u);
+    }
+    ctx.lineWidth = 1;
     switch (kind) {
-      case 'wheat': drawWheatIcon(px, res); break;
-      case 'cattle': drawCattleIcon(px, res); break;
-      case 'fish': drawFishIcon(px, res); break;
-      case 'iron': drawIronIcon(px, res); break;
-      case 'copper': drawCopperIcon(px, res); break;
-      case 'gold': drawGoldIcon(px, res); break;
-      case 'gems': drawGemsIcon(px, res); break;
-      case 'horses': drawHorsesIcon(px, res); break;
+      case 'wheat':  riWheat(P, lod); break;
+      case 'cattle': riCattle(P, lod); break;
+      case 'horses': riHorse(P, lod); break;
+      case 'fish':   riFish(P, lod); break;
+      case 'iron':   riIron(P, lod); break;
+      case 'copper': riCopper(P, lod); break;
+      case 'gold':   riGold(P, lod); break;
+      case 'gems':   riGems(P, lod); break;
     }
   }
 
-  function drawWheatIcon(px, res) {
-    // Bundle of wheat stalks
-    px(-1, -4, 1, 1, '#000');  px(0, -4, 1, 1, '#000');  px(1, -4, 1, 1, '#000');
-    px(-2, -3, 1, 1, '#000');  px(2, -3, 1, 1, '#000');
-    px(-1, -3, 1, 1, res.accent);  px(0, -3, 1, 1, '#fff8a0');  px(1, -3, 1, 1, res.accent);
-    px(-2, -2, 1, 1, '#000');  px(2, -2, 1, 1, '#000');
-    px(-1, -2, 1, 1, '#fff8a0');  px(0, -2, 1, 1, res.accent);  px(1, -2, 1, 1, '#fff8a0');
-    px(-1, -1, 1, 1, res.accent);  px(0, -1, 1, 1, res.accent);  px(1, -1, 1, 1, res.accent);
-    // stalks
-    px(-1, 0, 1, 3, res.dark);
-    px(0, 0, 1, 3, res.dark);
-    px(1, 0, 1, 3, res.dark);
-    // ground tie
-    px(-2, 2, 5, 1, '#000');
-    px(-1, 3, 3, 1, '#3a2410');
+  function riWheat(P, lod) {
+    var OUT = '#5a3c0a', stalk = '#caa030', gDk = '#d8a426', gMid = '#f2c84a', HI = '#fff2c0';
+    P(-0.5, -1, 1, 4, stalk);
+    P(-2.3, 0, 1, 3, stalk);
+    P(1.3, 0, 1, 3, stalk);
+    P(-2, 2.7, 4, 0.9, OUT);                       // tie band
+    function head(hx, hy) {
+      P(hx - 0.5, hy - 2, 1, 1, gDk);
+      P(hx - 1.4, hy - 1, 1, 1, gDk); P(hx - 0.4, hy - 1, 0.9, 1, gMid); P(hx + 0.6, hy - 1, 1, 1, gDk);
+      P(hx - 0.5, hy, 1, 1, gDk);
+    }
+    head(0, -1.4); head(-2, 0.3); head(2, 0.3);
+    if (lod) P(-0.4, -3, 0.8, 0.8, HI);
   }
 
-  function drawCattleIcon(px, res) {
-    // Cow silhouette: body + head + horns + spots
-    px(-3, -1, 6, 1, '#000');             // top of body
-    px(-3, 0, 6, 3, res.dark);            // body
-    px(-2, 0, 5, 2, res.accent);          // belly highlight
-    px(-2, 1, 1, 1, '#fff');              // spot
-    px(1, 1, 1, 1, '#fff');               // spot
-    px(-3, 3, 6, 1, '#000');              // belly outline
-    // legs
-    px(-2, 3, 1, 2, '#000');  px(2, 3, 1, 2, '#000');
-    px(-2, 3, 1, 2, res.dark); px(2, 3, 1, 2, res.dark);
-    // head (right side)
-    px(3, -1, 2, 1, '#000');
-    px(3, 0, 2, 2, res.dark);
-    px(4, 0, 1, 1, '#fff');               // eye
-    // horns
-    px(3, -2, 1, 1, '#fff8a0'); px(4, -2, 1, 1, '#fff8a0');
+  function riCattle(P, lod) {
+    var OUT = '#1a1410', body = '#efe7da', spot = '#6b4a2c', horn = '#d8c8a0', muz = '#d99a9a';
+    P(-4, -1.5, 7, 1, OUT); P(-4, -0.5, 7, 3, body); P(-4, 2.5, 7, 1, OUT);
+    P(-3, 2.5, 1, 2, OUT); P(2, 2.5, 1, 2, OUT);   // legs
+    P(3, -1.5, 2.5, 1, OUT); P(3, -0.5, 2.5, 2.5, body); P(3, 2, 2.5, 1, OUT);   // head
+    P(5, -0.2, 0.8, 1, muz);                        // muzzle
+    P(4, -0.2, 0.8, 0.8, OUT);                      // eye
+    P(3, -2.4, 0.8, 0.9, horn); P(4.2, -2.4, 0.8, 0.9, horn);
+    P(-2.5, 0.4, 2, 1.4, spot);                     // hide spot
+    if (lod) P(-3.5, -0.3, 0.8, 0.8, '#fff');
   }
 
-  function drawFishIcon(px, res) {
-    // Fish silhouette, facing right
-    px(-3, -1, 1, 1, '#000');             // tail tip top
-    px(-4, 0, 1, 2, '#000');              // tail
-    px(-3, 0, 1, 2, res.dark);
-    px(-3, 2, 1, 1, '#000');
-    px(-2, -1, 6, 1, '#000');             // body top
-    px(-2, 0, 6, 2, res.accent);
-    px(-2, 2, 6, 1, '#000');
-    px(0, 0, 2, 1, res.dark);             // back shadow
-    // eye
-    px(3, 0, 1, 1, '#fff');
-    px(3, 1, 1, 1, '#000');
-    // gill
-    px(1, 1, 1, 1, res.dark);
+  function riHorse(P, lod) {
+    var body = '#8a5a30', shade = '#5e3a1c', mane = '#1f130a', HI = '#c89058', eye = '#0c0a08';
+    P(-0.2, -3.6, 1, 1.1, body);                    // ear
+    P(-1, -2.6, 2.6, 1.2, body);                    // forehead
+    P(-1.4, -1.6, 3.4, 1.6, body);                  // head/face
+    P(1.8, -1.1, 1.8, 1.3, body);                   // snout (points right)
+    P(3.2, -0.5, 0.6, 0.7, shade);                  // nostril
+    P(-1.6, 0.2, 2.6, 1.2, body);                   // cheek / jaw
+    P(-2.8, 1.2, 2.6, 2.2, body);                   // upper neck
+    P(-3.8, 2.8, 2, 1.6, shade);                    // lower neck (shaded)
+    P(-1.2, -2, 1, 1.2, mane); P(-2.2, -0.4, 1, 1.4, mane); P(-3.2, 1.2, 1, 1.6, mane);  // mane
+    P(0.4, -1.1, 0.9, 0.9, eye);                    // eye
+    if (lod) P(2.6, -0.8, 0.7, 0.7, HI);            // muzzle glint
   }
 
-  function drawIronIcon(px, res) {
-    // Cluster of metal chunks
-    px(-2, 0, 1, 1, '#000');
-    px(-1, -1, 3, 1, '#000');
-    px(-1, 0, 3, 2, res.accent);
-    px(0, 0, 1, 1, '#fff');                 // highlight
-    px(2, -1, 1, 1, '#000');
-    px(-2, 2, 1, 1, '#000');
-    px(-1, 2, 4, 1, '#000');
-    px(-1, 1, 4, 1, res.accent);
-    px(0, 2, 2, 1, res.dark);
-    px(1, 1, 1, 1, '#fff');
+  function riFish(P, lod) {
+    var OUT = '#0a2a34', body = '#3fa9c4', belly = '#bfeaf0', fin = '#2f7e96', HI = '#eafdff';
+    P(-2, -1.5, 6, 1, OUT); P(-2, -0.5, 6, 2.5, body); P(-2, 2, 6, 1, OUT);
+    P(-1.5, 1.4, 5, 0.9, belly);
+    P(-4, -1.5, 1, 1, OUT); P(-4, -0.5, 1, 2.5, fin); P(-4, 2, 1, 1, OUT); P(-3.2, 0.3, 1, 1.4, fin); // tail
+    P(0, -2.6, 2.4, 1.1, fin);                      // dorsal fin
+    P(2.2, -0.4, 1, 1, '#fff'); P(2.7, -0.1, 0.6, 0.6, OUT);   // eye
+    if (lod) P(0, -0.4, 1, 1, HI);
   }
 
-  function drawCopperIcon(px, res) {
-    // Copper chunk — orange-metallic with sheen
-    px(-2, -1, 1, 1, '#000');
-    px(-1, -2, 3, 1, '#000');
-    px(2, -1, 1, 1, '#000');
-    px(-1, -1, 3, 1, res.accent);
-    px(-2, 0, 5, 2, res.accent);
-    px(-2, 0, 1, 1, '#000'); px(2, 0, 1, 1, '#000');
-    px(-1, 0, 1, 1, '#ffd0a0');             // sheen
-    px(0, 1, 1, 1, '#ffd0a0');              // sheen
-    px(-2, 2, 5, 1, '#000');
-    px(-1, 2, 3, 1, res.dark);
-    // tiny ore flecks
-    px(-3, 2, 1, 1, res.accent);
-    px(3, 2, 1, 1, res.accent);
+  function riIron(P, lod) {
+    var OUT = '#15191e', R1 = '#4a525c', R2 = '#6b7682', R3 = '#98a4b0', HI = '#ffffff';
+    P(-2.5, -1.5, 5, 1, OUT);
+    P(-3.5, -0.5, 7, 1, OUT);
+    P(-3.5, 0.5, 7, 2, R1);
+    P(-3.5, 2.5, 7, 1, OUT);
+    P(-2.5, -0.5, 5, 1, R2);
+    P(0, 0.5, 3.5, 2, R2);
+    P(1.2, -0.5, 2.3, 1, R3);
+    if (lod) { P(2, -0.2, 0.8, 0.8, HI); P(-3.5, -1.4, 1, 1, R2); }
   }
 
-  function drawGoldIcon(px, res) {
-    // Glittering gold pile
-    px(-1, -2, 3, 1, '#000');
-    px(-1, -1, 3, 1, res.accent);
-    px(-2, 0, 5, 1, '#000');
-    px(-2, 1, 5, 1, res.accent);
-    px(-1, 1, 3, 1, '#fff8a0');
-    px(-3, 2, 7, 1, '#000');
-    px(-2, 2, 5, 1, res.accent);
-    px(-1, 2, 3, 1, '#fff8a0');
-    px(-3, 3, 7, 1, res.dark);
-    // sparkle
-    px(2, -3, 1, 1, '#fff');
-    px(-3, -1, 1, 1, '#fff');
+  function riCopper(P, lod) {
+    var OUT = '#1e120a', C1 = '#8a4a22', C2 = '#c06a30', C3 = '#e89048', VG = '#3aa888', HI = '#ffe2c0';
+    P(-2.5, -1.5, 5, 1, OUT);
+    P(-3.5, -0.5, 7, 1, OUT);
+    P(-3.5, 0.5, 7, 2, C1);
+    P(-3.5, 2.5, 7, 1, OUT);
+    P(-2.5, -0.5, 5, 1, C2);
+    P(0, 0.5, 3.5, 2, C3);
+    if (lod) { P(2, -1.4, 0.8, 0.8, VG); P(-1.4, 1, 0.8, 0.8, VG); P(1.6, -0.2, 0.7, 0.7, HI); }
   }
 
-  function drawGemsIcon(px, res) {
-    // Faceted purple gem
-    px(0, -3, 1, 1, '#000');
-    px(-1, -2, 3, 1, '#000');
-    px(-2, -1, 5, 1, '#000');
-    px(-1, -1, 3, 1, '#fff');               // top facet bright
-    px(-2, 0, 5, 1, res.accent);
-    px(-1, 0, 1, 1, '#fff');
-    px(1, 0, 1, 1, res.dark);
-    px(-2, 1, 5, 1, res.accent);
-    px(-1, 1, 1, 1, res.dark);
-    px(-1, 2, 3, 1, '#000');
-    px(0, 2, 1, 1, res.dark);
-    px(0, 3, 1, 1, '#000');
+  function riGold(P, lod) {
+    var OUT = '#4a3208', G1 = '#b8860a', G2 = '#f0c020', G3 = '#ffe66a', HI = '#ffffff';
+    P(-4, 2.4, 8, 1, OUT); P(-4, 1.4, 8, 1, G2); P(2, 1.9, 2, 1, G1); P(-3.4, 1.4, 1, 1, G3);   // bottom coin
+    P(-3, 0.2, 6, 1, OUT); P(-3, -0.8, 6, 1, G2); P(1.4, -0.3, 2, 1, G1); P(-2.4, -0.8, 1, 1, G3); // top coin
+    P(-1, -2.6, 3, 1, OUT); P(-1, -1.8, 3, 1, G2);   // nugget
+    if (lod) { P(1.2, -2.4, 0.8, 0.8, HI); P(-2.4, -0.8, 0.6, 0.6, HI); }
   }
 
-  function drawHorsesIcon(px, res) {
-    // Galloping horse silhouette
-    px(0, -2, 1, 1, '#000');                // ear
-    px(-1, -1, 3, 1, '#000');               // head top
-    px(-1, 0, 3, 1, res.accent);            // head
-    px(-2, 0, 1, 1, '#000');                // mane
-    px(0, 0, 1, 1, '#fff');                 // eye
-    px(-3, 1, 6, 1, '#000');                // back top
-    px(-3, 2, 6, 1, res.accent);            // body
-    px(-3, 2, 1, 1, '#000');                // tail end
-    px(-3, 3, 6, 1, '#000');                // body bottom
-    // legs
-    px(-2, 3, 1, 2, '#000');
-    px(2, 3, 1, 2, '#000');
-    px(-2, 3, 1, 2, res.dark);
-    px(2, 3, 1, 2, res.dark);
+  function riGems(P, lod) {
+    var OUT = '#1a0f28', X1 = '#6a32b0', X2 = '#9a5cf0', X3 = '#c89cff', TL = '#3fd8d0', HI = '#ffffff';
+    P(-0.6, -3.6, 1.2, 1, X3);                      // center spire tip
+    P(-1, -2.6, 1, 3, X1); P(0, -2.6, 1, 3, X2);
+    P(-1.2, 0.4, 2.4, 1, OUT);
+    P(-3.2, -0.8, 1, 1, TL); P(-3.2, 0.2, 2, 2, X1); P(-3.2, 2.2, 2, 1, OUT);   // left crystal (teal)
+    P(2, -0.4, 1, 1, X3); P(2, 0.6, 2, 2, X2); P(2, 2.6, 2, 1, OUT);            // right crystal
+    if (lod) P(1.4, -2, 0.7, 0.7, HI);
   }
 
   function drawImprovement(cx, cy, size, kind) {
@@ -2640,12 +2638,13 @@
 
         // Tile fill
         if (!explored) {
-          // Unexplored — paint a very faint hex with subtle edge
-          hexPath(cx, cy, inset);
-          ctx.fillStyle = 'rgba(12, 12, 22, 0.6)';
+          // Unexplored — near-black with a hair of blue and a faint inner grid
+          hexPath(cx, cy, inset + 0.5);
+          ctx.fillStyle = '#05070d';
           ctx.fill();
-          ctx.strokeStyle = 'rgba(60, 60, 90, 0.25)';
-          ctx.lineWidth = 0.8;
+          ctx.strokeStyle = 'rgba(120,140,180,0.07)';
+          ctx.lineWidth = 1;
+          hexPath(cx, cy, inset - 0.5);
           ctx.stroke();
           continue;
         }
@@ -2657,10 +2656,11 @@
         ctx.clip();                      // clip decals to hex
         drawTerrainDetail(cx, cy, size, t, c, r);
         if (t.river) drawRiverOnTile(cx, cy, size, c, r);
+        drawHexBevel(cx, cy, inset, t.terrain);   // inner depth bevel
         ctx.restore();
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1;               // soft colored rim-light
         ctx.strokeStyle = terrain.edge;
-        ctx.globalAlpha = 0.7;
+        ctx.globalAlpha = (t.terrain === 'forest' || t.terrain === 'volcano') ? 0.7 : 0.55;
         ctx.stroke();
         ctx.globalAlpha = 1.0;
 
@@ -2681,10 +2681,12 @@
           ctx.fill();
         }
 
-        // Dim if not currently visible (fogged)
+        // Dim if not currently visible (remembered, not blacked-out)
         if (!visible) {
           hexPath(cx, cy, inset);
-          ctx.fillStyle = 'rgba(0,0,0,0.48)';
+          ctx.fillStyle = 'rgba(8,10,16,0.42)';      // darken
+          ctx.fill();
+          ctx.fillStyle = 'rgba(60,70,90,0.18)';     // cool desaturating veil
           ctx.fill();
         }
       }
