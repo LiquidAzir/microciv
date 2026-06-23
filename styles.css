@@ -1111,7 +1111,23 @@ body {
 .tech-node.done .tn-badge { color: #6ed296; }
 .tech-node.cur { border-color: var(--sci); box-shadow: 0 0 0 1px var(--sci); }
 .tech-node.cur .tn-badge { color: var(--sci); }
-.tech-node.locked { opacity: .5; }
+.tech-node.locked { opacity: .5; cursor: pointer; }
+.tech-node.locked:hover { opacity: .7; }
+/* queued: in the research plan — dashed cyan, badge shows plan position */
+.tech-node.queued { border-style: dashed; border-color: var(--cyan); opacity: .8; cursor: pointer; }
+.tech-node.queued .tn-badge { color: var(--cyan); }
+.tech-node.queued:hover { opacity: 1; }
+
+/* Research plan chips (under the current-research box) */
+.research-queue { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 8px 0 2px; }
+.research-queue .rq-label { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+.rq-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--card); border: 1px dashed var(--cyan); color: var(--text);
+  border-radius: 999px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+}
+.rq-chip:hover { background: var(--panel-2); }
+.rq-chip .rq-x { color: var(--muted); font-weight: 700; }
 .action-icon {
   width: 28px; height: 28px;
   border-radius: 6px;

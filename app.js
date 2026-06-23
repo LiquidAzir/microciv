@@ -1407,6 +1407,7 @@
       techs: {},
       currentTech: null,
       techProgress: 0,
+      researchQueue: [],            // player-set research plan (prereq chain)
       greatPoints: { culture: 0, military: 0 },
       greatPeopleSpawned: 0,
       generalBonus: null,
@@ -1597,6 +1598,7 @@
         if (cv.greatPeopleSpawned === undefined) cv.greatPeopleSpawned = 0;
         if (cv.generalBonus === undefined) cv.generalBonus = null;
         if (cv.economicCountdown === undefined) cv.economicCountdown = 0;
+        if (!Array.isArray(cv.researchQueue)) cv.researchQueue = [];
       });
       // Backfill AI personalities — old saves get random ones
       AI_SIDES.forEach(function (id) {
@@ -4845,6 +4847,41 @@
 
   function hasTech(civ, t) { return !t || civ.techs[t]; }
 
+  var RESEARCH_QUEUE_MAX = 12;   // generous — a full prereq chain to a leaf fits
+  // Pull the next still-valid tech off the player's research plan into currentTech.
+  // Mirrors popQueuedProduction: skips already-researched / in-progress / blocked.
+  function popQueuedTech(civ) {
+    if (!Array.isArray(civ.researchQueue)) { civ.researchQueue = []; return null; }
+    while (civ.researchQueue.length) {
+      var k = civ.researchQueue.shift();
+      if (civ.techs[k] || k === civ.currentTech) continue;
+      if (!TECHS[k] || !TECHS[k].req.every(function (r) { return civ.techs[r]; })) continue;
+      civ.currentTech = k;
+      civ.techProgress = 0;
+      return k;
+    }
+    return null;
+  }
+  // Queue a target tech and all of its unmet prerequisites, prereq-first, so the
+  // chain researches in a valid order. If nothing is in progress, start at once.
+  function enqueueWithPrereqs(civ, target) {
+    if (!Array.isArray(civ.researchQueue)) civ.researchQueue = [];
+    var chain = [];
+    (function add(k) {
+      if (civ.techs[k] || k === civ.currentTech || chain.indexOf(k) >= 0) return;
+      TECHS[k].req.forEach(add);
+      chain.push(k);
+    })(target);
+    var full = false;
+    chain.forEach(function (k) {
+      if (civ.researchQueue.indexOf(k) >= 0) return;
+      if (civ.researchQueue.length >= RESEARCH_QUEUE_MAX) { full = true; return; }
+      civ.researchQueue.push(k);
+    });
+    if (full) showToast('Research queue full', 'error');
+    if (!civ.currentTech) popQueuedTech(civ);
+  }
+
   function progressTech(civ) {
     if (!civ.currentTech) return;
     civ.techProgress += civ.sciPerTurn;
@@ -4869,13 +4906,15 @@
           sfxAgeUp();
         }
       }
-      // Every AI picks its next tech automatically; player picks from the menu.
+      // Every AI picks its next tech automatically; the player's queue auto-
+      // advances, otherwise prompt them to pick.
       if (AI_SIDES.indexOf(civ.id) >= 0) {
         civ.currentTech = pickAiTech(civ);
       } else if (civ.id === 'player') {
-        // Prompt player to pick a new tech
-        var hasMore = TECH_ORDER.some(function (tk) { return !civ.techs[tk]; });
-        if (hasMore) {
+        popQueuedTech(civ);                 // pull the next planned tech, if any
+        if (civ.currentTech) {
+          logEvent('Now researching ' + TECHS[civ.currentTech].name, 'info');
+        } else if (TECH_ORDER.some(function (tk) { return !civ.techs[tk]; })) {
           logEvent('Choose your next research!', 'info');
         }
       }
@@ -6935,6 +6974,7 @@
         var allDone = true;
         for (var ti = 0; ti < TECH_ORDER.length; ti++) { if (!civ.techs[TECH_ORDER[ti]]) { allDone = false; break; } }
         if (allDone) { closeModal(); showEndScreen('player', 'science'); return; }
+        if (!civ.currentTech) popQueuedTech(civ);   // chain the plan after a free pick
         closeModal();
         updateHud();
         draw();
@@ -6947,6 +6987,33 @@
       openTech();
       updateHud();
       save();
+    }
+
+    // Render the research-plan chips under the current-research box.
+    var qWrap = document.getElementById('tech-queue');
+    if (!qWrap) {
+      qWrap = document.createElement('div');
+      qWrap.id = 'tech-queue';
+      qWrap.className = 'research-queue';
+      cur.parentNode.insertBefore(qWrap, cur.nextSibling);
+    }
+    qWrap.innerHTML = '';
+    if (civ.researchQueue && civ.researchQueue.length) {
+      var lbl = document.createElement('span');
+      lbl.className = 'rq-label';
+      lbl.textContent = 'Plan:';
+      qWrap.appendChild(lbl);
+      civ.researchQueue.forEach(function (qk, qi) {
+        var chip = document.createElement('button');
+        chip.className = 'rq-chip focusable';
+        chip.title = 'Remove from plan';
+        chip.innerHTML = '<span>' + (qi + 1) + '. ' + (TECHS[qk] ? TECHS[qk].name : qk) + '</span><span class="rq-x">×</span>';
+        chip.addEventListener('click', function () {
+          civ.researchQueue.splice(qi, 1);
+          openTech(); updateHud(); save();
+        });
+        qWrap.appendChild(chip);
+      });
     }
 
     // Group techs into tiers (rows) by prerequisite depth.
@@ -6973,18 +7040,27 @@
         var done = !!civ.techs[k];
         var isCur = k === civ.currentTech;
         var canResearch = def.req.every(function (r) { return civ.techs[r]; }) && !done;
-        var stateCls = done ? 'done' : isCur ? 'cur' : canResearch ? 'avail' : 'locked';
+        var queueIdx = civ.researchQueue ? civ.researchQueue.indexOf(k) : -1;
+        var stateCls = done ? 'done' : isCur ? 'cur' : canResearch ? 'avail' : (queueIdx >= 0 ? 'queued' : 'locked');
         var node = document.createElement('button');
         node.className = 'tech-node ' + stateCls + ' focusable';
-        if (done || isCur || !canResearch) node.setAttribute('disabled', '');
-        var badge = done ? '✓' : isCur ? '▶' : canResearch ? def.cost + '◆' : '🔒';
+        if (done || isCur) node.setAttribute('disabled', '');   // avail/queued/locked stay clickable
+        var badge = done ? '✓' : isCur ? '▶' : canResearch ? def.cost + '◆' : (queueIdx >= 0 ? (queueIdx + 1) + '' : '🔒');
         var sub = isCur ? civ.techProgress + '/' + def.cost : def.unlocks;
         var bar = isCur ? '<div class="tn-bar"><i style="width:' + Math.min(100, (civ.techProgress / def.cost) * 100) + '%"></i></div>' : '';
         node.innerHTML =
           '<div class="tn-badge">' + badge + '</div>' +
           '<div class="tn-name">' + def.name + '</div>' +
           '<div class="tn-sub">' + sub + '</div>' + bar;
-        (function (k2, def2, can2) { node.addEventListener('click', function () { chooseTech(k2, def2, can2); }); })(k, def, canResearch);
+        (function (k2, def2, can2, done2, cur2) {
+          node.addEventListener('click', function () {
+            if (can2) { chooseTech(k2, def2, true); return; }      // available → research now
+            if (done2 || cur2) return;                              // researched / in progress → inert
+            enqueueWithPrereqs(civ, k2);                            // locked → queue prereq chain
+            sfxSelect();
+            openTech(); updateHud(); save();
+          });
+        })(k, def, canResearch, done, isCur);
         row.appendChild(node);
         nodeEls[k] = node;
       });
