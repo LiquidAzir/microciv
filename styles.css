@@ -1079,6 +1079,38 @@ body {
   border-bottom: 1px solid rgba(255,211,77,0.2);
   margin-top: 4px;
 }
+
+/* Tech-tree dependency graph */
+.tech-graph { position: relative; width: 100%; padding: 4px 0 6px; }
+.tech-edges { position: absolute; top: 0; left: 0; z-index: 0; overflow: visible; pointer-events: none; }
+.tier-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; margin: 0 0 28px; }
+.tier-row:last-child { margin-bottom: 4px; }
+.tech-node {
+  position: relative;
+  z-index: 1;
+  width: 104px;
+  background: var(--card);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  padding: 6px 6px 7px;
+  text-align: center;
+  color: var(--text);
+  cursor: default;
+  transition: transform .08s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.tech-node .tn-badge { font-size: 11px; font-family: var(--font-num); color: var(--muted); margin-bottom: 2px; }
+.tech-node .tn-name { font-size: 12px; font-weight: 700; line-height: 1.1; }
+.tech-node .tn-sub { font-size: 9px; color: var(--muted); margin-top: 2px; line-height: 1.15; }
+.tech-node .tn-bar { height: 3px; background: rgba(255,255,255,.12); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+.tech-node .tn-bar i { display: block; height: 100%; background: var(--sci); }
+.tech-node.avail { border-color: var(--cyan); cursor: pointer; }
+.tech-node.avail .tn-badge { color: var(--cyan); }
+.tech-node.avail:hover, .tech-node.avail:focus { transform: translateY(-1px); box-shadow: 0 0 0 1px var(--cyan); outline: none; }
+.tech-node.done { border-color: rgba(110,210,150,.5); opacity: .9; }
+.tech-node.done .tn-badge { color: #6ed296; }
+.tech-node.cur { border-color: var(--sci); box-shadow: 0 0 0 1px var(--sci); }
+.tech-node.cur .tn-badge { color: var(--sci); }
+.tech-node.locked { opacity: .5; }
 .action-icon {
   width: 28px; height: 28px;
   border-radius: 6px;

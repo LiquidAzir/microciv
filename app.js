@@ -223,6 +223,22 @@
     banking:     { name: 'Banking',      cost:  90, req: ['theology','currency'],     unlocks: 'Bank' }
   };
   var TECH_ORDER = ['pottery','writing','sailing','archery','masonry','husbandry','currency','iron','engineering','theology','philosophy','education','steel','gunpowder','banking'];
+  // Tier = longest prerequisite chain depth (0 = no prereqs). Drives the tech-tree
+  // graph layout: each tier is one row, dependents sit below their requirements.
+  var TECH_DEPTH = (function () {
+    var d = {};
+    function dep(k) {
+      if (d[k] != null) return d[k];
+      var r = TECHS[k].req;
+      if (!r.length) { d[k] = 0; return 0; }
+      var m = 0;
+      r.forEach(function (x) { m = Math.max(m, dep(x)); });
+      d[k] = m + 1;
+      return d[k];
+    }
+    TECH_ORDER.forEach(dep);
+    return d;
+  })();
 
   // Victory thresholds (used by culture + economic checks)
   var CULTURE_VICTORY_WONDERS = 4;     // own this many World Wonders → culture victory
@@ -6800,68 +6816,113 @@
 
     var list = document.getElementById('tech-list');
     list.innerHTML = '';
-    // Techs grouped by age for section headers
-    var TECH_AGES = { pottery:0, writing:0, sailing:0, archery:0, masonry:0, husbandry:0, currency:0, iron:0, engineering:1, theology:1, philosophy:1, education:1, steel:2, gunpowder:3, banking:3 };
-    var AGE_LABELS = ['Ancient Age', 'Classical Age', 'Medieval Age', 'Modern Age'];
-    var lastAge = -1;
-    TECH_ORDER.forEach(function (k) {
-      // Insert era header when crossing into a new age
-      var ta = TECH_AGES[k] || 0;
-      if (ta !== lastAge) {
-        lastAge = ta;
-        var hdr = document.createElement('div');
-        hdr.className = 'tech-age-header';
-        hdr.textContent = AGE_LABELS[ta];
-        list.appendChild(hdr);
-      }
-      var def = TECHS[k];
-      var done = !!civ.techs[k];
-      var canResearch = def.req.every(function (r) { return civ.techs[r]; }) && !done;
-      var row = document.createElement('button');
-      row.className = 'action-row focusable' + ((!canResearch || k === civ.currentTech) ? ' disabled' : '');
-      if (!canResearch || k === civ.currentTech) row.setAttribute('disabled','');
-      var status = done ? 'Researched' :
-                   k === civ.currentTech ? 'In progress' :
-                   canResearch ? (def.cost + ' science') :
-                   'Requires: ' + def.req.map(function (r) { return TECHS[r].name; }).join(', ');
-      row.innerHTML = '<div class="action-icon">' + (done ? '✓' : '◆') + '</div>' +
-        '<div class="action-body"><div class="action-title">' + def.name + '</div>' +
-        '<div class="action-sub">' + status + ' · ' + def.unlocks + '</div></div>';
-      row.addEventListener('click', function () {
-        if (!canResearch || k === civ.currentTech) return;
-        if (state.freetech) {
-          // Great Scientist — instantly complete this tech
-          var ageBefore = getAge(civ);
-          civ.techs[k] = true;
-          state.freetech = false;
-          if (civ.currentTech === k) { civ.currentTech = null; civ.techProgress = 0; }
-          showToast(def.name + ' discovered free!', 'success');
-          sfxBuild();
-          // Age advancement check
-          var ageAfter = getAge(civ);
-          if (ageAfter.name !== ageBefore.name) {
-            var ageGold = ageAdvanceGold(ageAfter);
-            civ.gold += ageGold;
-            showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
-          }
-          // Science victory check
-          var allDone = true;
-          for (var ti = 0; ti < TECH_ORDER.length; ti++) { if (!civ.techs[TECH_ORDER[ti]]) { allDone = false; break; } }
-          if (allDone) { closeModal(); showEndScreen('player', 'science'); return; }
-          closeModal();
-          updateHud();
-          draw();
-          return;
+
+    // Click logic shared by every node (start research, or instant-complete
+    // when a Great Scientist's free pick is pending).
+    function chooseTech(k, def, canResearch) {
+      if (!canResearch || k === civ.currentTech) return;
+      if (state.freetech) {
+        var ageBefore = getAge(civ);
+        civ.techs[k] = true;
+        state.freetech = false;
+        if (civ.currentTech === k) { civ.currentTech = null; civ.techProgress = 0; }
+        showToast(def.name + ' discovered free!', 'success');
+        sfxBuild();
+        var ageAfter = getAge(civ);
+        if (ageAfter.name !== ageBefore.name) {
+          var ageGold = ageAdvanceGold(ageAfter);
+          civ.gold += ageGold;
+          showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
         }
-        civ.currentTech = k;
-        civ.techProgress = 0;
-        showToast('Researching ' + def.name);
-        openTech();
+        var allDone = true;
+        for (var ti = 0; ti < TECH_ORDER.length; ti++) { if (!civ.techs[TECH_ORDER[ti]]) { allDone = false; break; } }
+        if (allDone) { closeModal(); showEndScreen('player', 'science'); return; }
+        closeModal();
         updateHud();
-      });
-      list.appendChild(row);
+        draw();
+        save();
+        return;
+      }
+      civ.currentTech = k;
+      civ.techProgress = 0;
+      showToast('Researching ' + def.name);
+      openTech();
+      updateHud();
+      save();
+    }
+
+    // Group techs into tiers (rows) by prerequisite depth.
+    var tiers = [];
+    TECH_ORDER.forEach(function (k) {
+      var d = TECH_DEPTH[k] || 0;
+      (tiers[d] = tiers[d] || []).push(k);
     });
+
+    var SVG_NS = 'http://www.w3.org/2000/svg';
+    var graph = document.createElement('div');
+    graph.className = 'tech-graph';
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'tech-edges');
+    graph.appendChild(svg);
+
+    var nodeEls = {};
+    tiers.forEach(function (tier) {
+      if (!tier) return;
+      var row = document.createElement('div');
+      row.className = 'tier-row';
+      tier.forEach(function (k) {
+        var def = TECHS[k];
+        var done = !!civ.techs[k];
+        var isCur = k === civ.currentTech;
+        var canResearch = def.req.every(function (r) { return civ.techs[r]; }) && !done;
+        var stateCls = done ? 'done' : isCur ? 'cur' : canResearch ? 'avail' : 'locked';
+        var node = document.createElement('button');
+        node.className = 'tech-node ' + stateCls + ' focusable';
+        if (done || isCur || !canResearch) node.setAttribute('disabled', '');
+        var badge = done ? '✓' : isCur ? '▶' : canResearch ? def.cost + '◆' : '🔒';
+        var sub = isCur ? civ.techProgress + '/' + def.cost : def.unlocks;
+        var bar = isCur ? '<div class="tn-bar"><i style="width:' + Math.min(100, (civ.techProgress / def.cost) * 100) + '%"></i></div>' : '';
+        node.innerHTML =
+          '<div class="tn-badge">' + badge + '</div>' +
+          '<div class="tn-name">' + def.name + '</div>' +
+          '<div class="tn-sub">' + sub + '</div>' + bar;
+        (function (k2, def2, can2) { node.addEventListener('click', function () { chooseTech(k2, def2, can2); }); })(k, def, canResearch);
+        row.appendChild(node);
+        nodeEls[k] = node;
+      });
+      graph.appendChild(row);
+    });
+
+    list.appendChild(graph);
     showModal('tech-screen');
+
+    // Draw prerequisite connectors once the modal has laid out. A green line
+    // means the prerequisite is already researched; a faint line means it isn't.
+    requestAnimationFrame(function () {
+      var W = graph.offsetWidth, H = graph.offsetHeight;
+      if (!W || !H) return;
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      svg.setAttribute('width', W);
+      svg.setAttribute('height', H);
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      TECH_ORDER.forEach(function (k) {
+        var el = nodeEls[k];
+        if (!el) return;
+        var x2 = el.offsetLeft + el.offsetWidth / 2, y2 = el.offsetTop;
+        TECHS[k].req.forEach(function (rq) {
+          var pe = nodeEls[rq];
+          if (!pe) return;
+          var x1 = pe.offsetLeft + pe.offsetWidth / 2, y1 = pe.offsetTop + pe.offsetHeight;
+          var my = (y1 + y2) / 2;
+          var path = document.createElementNS(SVG_NS, 'path');
+          path.setAttribute('d', 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + my + ' ' + x2 + ',' + my + ' ' + x2 + ',' + y2);
+          path.setAttribute('stroke', civ.techs[rq] ? 'rgba(110,210,150,0.75)' : 'rgba(150,170,190,0.30)');
+          path.setAttribute('stroke-width', '2');
+          path.setAttribute('fill', 'none');
+          svg.appendChild(path);
+        });
+      });
+    });
   }
 
   // =====================================================================
