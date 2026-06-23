@@ -827,6 +827,14 @@ body {
 .units-pill .chip-val { color: var(--green); }
 .units-pill.empty { opacity: 0.5; }
 .units-pill.empty .chip-val { color: var(--muted); }
+/* MENU chip — visible entry point to the global menu (clickable on phone/PC) */
+.menu-chip {
+  cursor: pointer;
+  color: var(--cyan);
+  border-color: rgba(0,212,255,0.45);
+  letter-spacing: 1.5px;
+}
+.menu-chip:hover { background: rgba(0,212,255,0.16); border-color: rgba(0,212,255,0.75); }
 
 .hud-tile {
   flex: 1;
@@ -851,6 +859,7 @@ body {
 }
 .end-turn-chip {
   margin-left: auto;
+  cursor: pointer;
   font-weight: 800;
   font-size: 10px;
   letter-spacing: 2px;
@@ -867,6 +876,18 @@ body {
   border-color: var(--green);
   box-shadow: 0 0 20px rgba(0,255,136,0.45);
   animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* "A unit is selected" — the whole bottom HUD shifts to amber so the selected
+   state never reads the same as the free-cursor state at a glance. */
+.hud-bottom.unit-selected {
+  border-top-color: rgba(255,180,84,0.55);
+  box-shadow: inset 0 2px 0 rgba(255,180,84,0.28);
+}
+.hud-bottom.unit-selected .hud-hint {
+  color: var(--warm);
+  font-weight: 700;
+  max-width: 360px;
 }
 
 /* Turn summary banner */

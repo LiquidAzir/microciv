@@ -2932,6 +2932,20 @@
       if (su && su.unit && su.unit.civ === 'player' && su.unit.moves > 0) {
         drawMoveRange(su.unit, size, inset, 1.0);
       }
+      // Gold ring on the selected unit's tile, so it stays obvious which unit
+      // is active even after the cursor moves away to pick a destination.
+      if (su && su.unit) {
+        var spx = pixelOf(state.selected.c, state.selected.r, size);
+        var scx = spx.x - state.camera.x + size * SQRT3 / 2;
+        var scy = spx.y - state.camera.y + size;
+        hexPath(scx, scy, inset);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#ffd34d';
+        ctx.shadowColor = '#ffd34d';
+        ctx.shadowBlur = 12;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
     } else {
       var ht = tileAt(state.cursor.c, state.cursor.r);
       if (ht && ht.unit && ht.unit.civ === 'player' && ht.unit.moves > 0 && state.mode === 'cursor') {
@@ -2939,21 +2953,26 @@
       }
     }
 
-    // Cursor
+    // Cursor — cyan while free-browsing, amber "armed" while a unit is selected
+    // (the cursor is then the move/attack target), so the two modes never look
+    // the same.
     if (state.mode === 'cursor' || state.selected) {
+      var armed = !!state.selected;
+      var curMain = armed ? '#ffb454' : '#00d4ff';
+      var curGlow = armed ? 'rgba(255,180,84,0.28)' : 'rgba(0,212,255,0.25)';
       var p2 = pixelOf(state.cursor.c, state.cursor.r, size);
       var ccx = p2.x - state.camera.x + size * SQRT3 / 2;
       var ccy = p2.y - state.camera.y + size;
       // Outer glow
       hexPath(ccx, ccy, inset);
       ctx.lineWidth = 4;
-      ctx.strokeStyle = 'rgba(0,212,255,0.25)';
+      ctx.strokeStyle = curGlow;
       ctx.stroke();
       // Inner bright line
       hexPath(ccx, ccy, inset);
       ctx.lineWidth = 2;
-      ctx.strokeStyle = '#00d4ff';
-      ctx.shadowColor = '#00d4ff';
+      ctx.strokeStyle = curMain;
+      ctx.shadowColor = curMain;
       ctx.shadowBlur = 10;
       ctx.stroke();
       ctx.shadowBlur = 0;
@@ -4018,6 +4037,11 @@
 
     var readyToEnd = !hasMovesLeft && !state.victory;
 
+    // Flip the whole bottom HUD into a clearly-different "a unit is selected"
+    // look (amber) so the two states never read the same at a glance.
+    var hudBottom = document.getElementById('hud-bottom');
+    if (hudBottom) hudBottom.classList.toggle('unit-selected', !!selUnit);
+
     if (selUnit) {
       // Combat forecast: if the cursor is on an enemy this unit could strike
       // right now (ranged in range, or melee adjacent), show expected damage.
@@ -4036,18 +4060,17 @@
             : '⚔ deal ~' + f.toDefMin + '–' + f.toDefMax + ' · take ~' + f.toAtkMin + '–' + f.toAtkMax;
         }
       }
-      if (forecast) {
-        hint.textContent = forecast;
-      } else {
-        var rangeHint = sd.ranged ? ' · rng ' + sd.ranged : '';
-        hint.textContent = '⏎ move/fire · esc next · ' + selUnit.moves + '/' + selUnit.maxMoves + ' mv' + rangeHint;
-      }
+      // Always lead with WHAT is selected so the state is unmistakable.
+      var selLabel = '▶ ' + sd.name + ' ' + selUnit.moves + '/' + selUnit.maxMoves + ' mv';
+      hint.textContent = forecast
+        ? selLabel + ' · ' + forecast
+        : selLabel + ' · ⏎ move · esc next unit';
     } else if (state.mode === 'scroll') {
-      hint.textContent = 'arrows pan · ↑↓↑↓ cursor';
+      hint.textContent = 'arrows pan · ↑↓↑↓ for cursor';
     } else if (readyToEnd) {
-      hint.textContent = 'pinch any empty tile to end turn';
+      hint.textContent = 'no units left · ⏎ on open land = end turn · or ☰ Menu';
     } else {
-      hint.textContent = 'pinch unit · esc next · ⏎ act';
+      hint.textContent = 'pinch a unit to command it · ⏎ on open land = ☰ Menu';
     }
 
     var ti = state.map[state.cursor.r][state.cursor.c];
@@ -7815,6 +7838,16 @@
         break;
       case 'back-to-title':
         backToTitle();
+        break;
+      case 'open-menu':
+        // Phone/PC affordance for the global menu (diplomacy, research, options,
+        // end turn). On glasses the same menu opens with ⏎ on open land.
+        if (openModal || state.victory) break;
+        openActionMenu();
+        break;
+      case 'end-turn':
+        if (openModal || state.victory) break;
+        endTurn();
         break;
     }
   });

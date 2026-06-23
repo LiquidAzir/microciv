@@ -66,7 +66,8 @@
           <span id="units-pill" class="hud-chip units-pill" title="esc cycles">
             <span class="chip-lbl">UNITS</span><span class="chip-val">0</span>
           </span>
-          <span id="end-turn-chip" class="end-turn-chip">END TURN</span>
+          <span id="menu-chip" class="hud-chip menu-chip" data-action="open-menu" title="Diplomacy, Research, Options… (or ⏎ on open land)">☰ MENU</span>
+          <span id="end-turn-chip" class="end-turn-chip" data-action="end-turn" title="End your turn">END TURN</span>
         </div>
         <div class="hud-row hud-row-2">
           <span id="hud-tile" class="hud-tile">—</span>
@@ -141,8 +142,8 @@
           <p><b>Pinch your unit</b> — selects it. Pinch a reachable tile to walk there; enemies in range are red — pinch to attack.</p>
           <p><b>Pinch same unit again</b> — opens its action menu (Found City, Build Improvement, Fortify, Skip).</p>
           <p><b>Pinch your city</b> — opens the city screen (production, food, science, defense). Tap an option to switch production now, or pinch the <b>+</b> beside it to queue up to 3 follow-ups.</p>
-          <p><b>Pinch empty ground</b> — opens global menu if units have moves; ends the turn if all are done.</p>
-          <p><b>Esc</b> — cycles to the next unit with moves left.</p>
+          <p><b>Pinch empty ground</b> — opens the <b>☰ Menu</b> (Research, Diplomacy, Event Log, World Report, Options, End Turn); ends the turn if all units are done. On phone/PC you can also tap the <b>☰ MENU</b> or <b>END TURN</b> chip.</p>
+          <p><b>Selected unit</b> — a selected unit gets a <span style="color:#ffd34d">gold ring</span> and the cursor + status bar turn <span style="color:#ffb454">amber</span>, so you always know whether you're commanding a unit or just looking around. <b>Esc</b> cycles to the next unit with moves left.</p>
           <p><b>Scroll mode</b> — toggle with <kbd>↑ ↓ ↑ ↓</kbd>. Arrows pan the camera freely.</p>
           <p><b>Zoom</b> — cycle with <kbd>← → ← →</kbd>: far · normal · close.</p>
 
