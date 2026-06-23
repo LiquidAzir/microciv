@@ -376,12 +376,37 @@
     player: { name: 'Solaris',    color: '#00d4ff', edge: '#7ce5ff' },
     ai:     { name: 'Umbra',      color: '#ff7a59', edge: '#ffb59a' },
     ai2:    { name: 'Tellus',     color: '#b388ff', edge: '#d4b8ff' },
+    ai3:    { name: 'Vorne',      color: '#3fd17a', edge: '#9af0c0' },
     barb:   { name: 'Raiders',    color: '#7a7888', edge: '#b8b6c4' },
     cs:     { name: 'City-State', color: '#ffd34d', edge: '#fff0a8' }
   };
-  // Non-barbarian civilization side IDs. Loops over real civs iterate this.
+  // Non-barbarian civilization side IDs. Loops over real civs iterate these.
+  // They are REBUILT per-game by setCivSides() based on how many AIs the map
+  // size warrants (2 normally, 3 on Huge/Massive), so almost all game logic
+  // adapts to the civ count automatically.
   var CIV_SIDES = ['player', 'ai', 'ai2'];
   var AI_SIDES  = ['ai', 'ai2'];
+  var ALL_AI_IDS = ['ai', 'ai2', 'ai3'];   // every possible AI side, in order
+  function setCivSides(aiIds) {
+    AI_SIDES = aiIds.slice();
+    CIV_SIDES = ['player'].concat(AI_SIDES);
+  }
+  // Number of AI rivals for a given map width. Small/Normal/Large keep 2;
+  // Huge (24) and Massive (28) get a 3rd to fill the extra space.
+  function aiCountForMap(w) { return w >= 24 ? 3 : 2; }
+  // Build the default diplomacy table for the current CIV_SIDES: every pair of
+  // real civs starts at war; everyone is at peace with city-states.
+  function defaultDiplomacy() {
+    var dip = {};
+    var sides = CIV_SIDES.concat(['cs']);
+    for (var i = 0; i < sides.length; i++) {
+      for (var j = i + 1; j < sides.length; j++) {
+        var a = sides[i], b = sides[j];
+        dip[dipKey(a, b)] = (a === 'cs' || b === 'cs') ? 'peace' : 'war';
+      }
+    }
+    return dip;
+  }
 
   // City-state perk kinds — see processCityStatePerks
   var CS_KINDS = {
@@ -908,8 +933,8 @@
       village: null,     // null or { reward: 'gold' | 'worker' | 'science' | 'pop' }
       river: false,      // tile sits on a river — +1 food worked, fresh water for cities
       owner: null,       // 'player' | 'ai' | 'ai2' | null
-      visible: { player: false, ai: false, ai2: false },
-      explored: { player: false, ai: false, ai2: false }
+      visible: { player: false, ai: false, ai2: false, ai3: false },
+      explored: { player: false, ai: false, ai2: false, ai3: false }
     };
   }
 
@@ -1178,19 +1203,26 @@
     var others = FACTION_ORDER.filter(function (f) { return f !== playerFaction; });
     // Shuffle so AI faction assignment is randomized
     others.sort(function () { return Math.random() - 0.5; });
-    var aiFaction  = others[0];
-    var ai2Faction = others[1];
 
     // Apply map size
     var mSize = MAP_SIZES[selectedMapSize] || MAP_SIZES.normal;
     MAP_W = mSize.w;
     MAP_H = mSize.h;
 
+    // Scale the number of AI rivals with map size, then lock in CIV_SIDES /
+    // AI_SIDES for this game so every generic loop knows the roster.
+    var aiCount = aiCountForMap(MAP_W);
+    var aiIds = ALL_AI_IDS.slice(0, aiCount);
+    setCivSides(aiIds);
+    var aiFactions = others.slice(0, aiCount);
+
     applyFaction('player', playerFaction);
-    applyFaction('ai',  aiFaction);
-    applyFaction('ai2', ai2Faction);
+    aiIds.forEach(function (id, i) { applyFaction(id, aiFactions[i]); });
 
     var map = generateMap(seed);
+
+    var civs = { player: makeCiv('player', playerFaction), barb: makeBarbCiv(), cs: makeCsCiv() };
+    aiIds.forEach(function (id, i) { civs[id] = makeCiv(id, aiFactions[i]); });
 
     state = {
       seed: seed,
@@ -1200,13 +1232,7 @@
       mapW: MAP_W,
       mapH: MAP_H,
       difficulty: selectedDifficulty,
-      civs: {
-        player: makeCiv('player', playerFaction),
-        ai:     makeCiv('ai',  aiFaction),
-        ai2:    makeCiv('ai2', ai2Faction),
-        barb:   makeBarbCiv(),
-        cs:     makeCsCiv()
-      },
+      civs: civs,
       cursor: { c: 0, r: 0 },
       camera: { x: 0, y: 0 },           // world pixel offset of top-left of view
       zoom: DEFAULT_ZOOM,
@@ -1217,34 +1243,24 @@
       turnLog: [],
       wondersBuilt: {},                  // wonder id -> civ id who built it
       stats: { unitsKilled: 0, unitsLost: 0, barbsDefeated: 0 },
-      diplomacy: {
-        ai_player: 'war',
-        ai2_player: 'war',
-        ai_ai2: 'war',
-        ai_cs:     'peace',   // dipKey sorts alphabetically: ai < cs < player
-        ai2_cs:    'peace',
-        cs_player: 'peace'
-      },
+      diplomacy: defaultDiplomacy(),     // every civ pair at war; city-states at peace
       pendingPeace: null,                // { from: civId } when AI offers peace
       freetech: false                     // great scientist free tech pick
     };
 
-    var p  = pickStart(map);
-    var a  = pickStart(map, [p]);
-    var a2 = pickStart(map, [p, a]);
-
+    // Starting positions: player first, then one per AI, each kept apart.
+    var starts = [pickStart(map)];
+    aiIds.forEach(function () { starts.push(pickStart(map, starts.slice())); });
+    var p = starts[0];
     state.cursor.c = p[0]; state.cursor.r = p[1];
 
     spawnStarter('player', p);
-    spawnStarter('ai',  a);
-    spawnStarter('ai2', a2);
+    aiIds.forEach(function (id, i) { spawnStarter(id, starts[i + 1]); });
 
     state.civs.player.currentTech = 'pottery';
-    state.civs.ai.currentTech     = 'archery';
-    state.civs.ai2.currentTech    = 'pottery';
     // Assign a personality per AI. A faction with a `lean` forces that
     // personality (e.g. Ferrum is always a warmonger); factions without one
-    // draw distinct random personalities so the two AIs still feel different.
+    // draw distinct random personalities so the AIs still feel different.
     var bag = PERSONALITY_ORDER.slice();
     bag.sort(function () { return Math.random() - 0.5; });
     function assignPersonality(sideId) {
@@ -1252,16 +1268,16 @@
       if (fac && fac.lean && AI_PERSONALITIES[fac.lean]) return fac.lean;
       return bag.shift() || 'aggressive';
     }
-    state.civs.ai.personality  = assignPersonality('ai');
-    state.civs.ai2.personality = assignPersonality('ai2');
+    aiIds.forEach(function (id, i) {
+      state.civs[id].currentTech = i === 0 ? 'archery' : 'pottery';
+      state.civs[id].personality = assignPersonality(id);
+    });
 
     // City-states scale with map size — denser worlds have more neutrals to court
     var csCount = MAP_W >= 28 ? 6 : MAP_W >= 24 ? 5 : MAP_W >= 20 ? 4 : MAP_W >= 16 ? 3 : 2;
-    spawnCityStates(csCount, [p, a, a2]);
+    spawnCityStates(csCount, starts);
 
-    recomputeVisibility('player');
-    recomputeVisibility('ai');
-    recomputeVisibility('ai2');
+    CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
     recomputeBorders();
     centerCameraOn(state.cursor.c, state.cursor.r);
     save();
@@ -1480,13 +1496,6 @@
       // Backfill quests onto city-states from older saves
       if (state.civs.cs) state.civs.cs.cities.forEach(function (csc) { if (!csc.quest) csc.quest = makeCsQuest(); });
       state.difficulty = state.difficulty || 'normal';
-      // Diplomacy backfill
-      if (!state.diplomacy) {
-        state.diplomacy = { ai_player: 'war', ai2_player: 'war', ai_ai2: 'war' };
-      }
-      if (state.diplomacy.cs_player === undefined) state.diplomacy.cs_player = 'peace';
-      if (state.diplomacy.ai_cs === undefined)     state.diplomacy.ai_cs     = 'peace';
-      if (state.diplomacy.ai2_cs === undefined)    state.diplomacy.ai2_cs    = 'peace';
       if (state.pendingPeace === undefined) state.pendingPeace = null;
       if (state.freetech === undefined) state.freetech = false;
       // Restore map dimensions from save (or default to 14x14 for old saves)
@@ -1503,6 +1512,8 @@
           if (tl.river === undefined) tl.river = false;
           if (!tl.visible.ai2) tl.visible.ai2 = false;
           if (!tl.explored.ai2) tl.explored.ai2 = false;
+          if (!tl.visible.ai3) tl.visible.ai3 = false;
+          if (!tl.explored.ai3) tl.explored.ai3 = false;
           // Remove fishing improvement from old saves (no longer buildable)
           if (tl.improvement === 'fishing') tl.improvement = null;
         }
@@ -1514,6 +1525,11 @@
         state.civs.ai2 = makeCiv('ai2', leftover);
         state.civs.ai2.currentTech = 'pottery';
       }
+      // Lock in the civ roster from whichever AIs this save actually has, then
+      // (re)build the diplomacy table — preserving any saved relations on top
+      // of sane defaults (every civ pair at war, city-states at peace).
+      setCivSides(ALL_AI_IDS.filter(function (id) { return state.civs[id]; }));
+      state.diplomacy = Object.assign(defaultDiplomacy(), state.diplomacy || {});
       // Re-apply factions so CIVS colors/names match the saved game
       CIV_SIDES.forEach(function (id) {
         var fid = state.civs[id].faction || 'solaris';
@@ -5223,7 +5239,7 @@
   function openDiplomacy() {
     var civPl = state.civs.player;
     var actions = [];
-    ['ai','ai2'].forEach(function (aiId) {
+    AI_SIDES.forEach(function (aiId) {
       var aiCiv = state.civs[aiId];
       // Skip only if civ is fully eliminated (no cities, no units)
       if (!aiCiv || (aiCiv.cities.length === 0 && aiCiv.units.length === 0)) return;
@@ -5448,9 +5464,12 @@
         var hasCities = plCheck.cities.length > 0;
         var hasSettlers = plCheck.units.some(function (u) { return u.type === 'settler'; });
         if (!hasCities && !hasSettlers) {
-          // Find which AI is strongest as the "winner"
-          var winner = 'ai';
-          if (state.civs.ai2.cities.length > state.civs.ai.cities.length) winner = 'ai2';
+          // Find which surviving AI is strongest as the "winner"
+          var winner = AI_SIDES[0];
+          AI_SIDES.forEach(function (id) {
+            if (state.civs[id] && state.civs[winner] &&
+                state.civs[id].cities.length > state.civs[winner].cities.length) winner = id;
+          });
           declareVictory(winner, 'domination');
         }
       }
@@ -5863,9 +5882,7 @@
         aiCiv.gold -= cost;
         csc.ally = aiId;
         recomputeIncome(aiId);
-        if (csc.ally === aiId && (aiId === 'ai' || aiId === 'ai2')) {
-          logEvent(CIVS[aiId].name + ' allied with ' + csc.name, 'info');
-        }
+        logEvent(CIVS[aiId].name + ' allied with ' + csc.name, 'info');
       });
     });
   }
@@ -6619,7 +6636,7 @@
     actions.push({ icon: '◆', title: 'Research', sub: civPl.currentTech ? TECHS[civPl.currentTech].name + ' · ' + civPl.techProgress + '/' + TECHS[civPl.currentTech].cost : 'Choose research', do: function () { closeModal(); openTech(); } });
 
     // Diplomacy — unified menu (alliances, war, peace, trade)
-    var hasRival = ['ai','ai2'].some(function (id) {
+    var hasRival = AI_SIDES.some(function (id) {
       var c = state.civs[id];
       return c && (c.cities.length > 0 || c.units.length > 0);
     });
