@@ -44,15 +44,18 @@
     geyser:   { name: 'Geyser',   food: 2, prod: 0, gold: 1, wonder: true, color: '#1d6473', edge: '#5fc3cf', glyph: '',  fg: '#5fc3cf' }
   };
 
+  // `weight` biases the per-tile random pick so distribution stays balanced
+  // regardless of how common each terrain is (gold was flooding via the large
+  // desert biome). Higher weight = more likely when its terrain rolls a resource.
   var RESOURCES = {
-    wheat:  { label: 'Wheat',  terrains: ['grass'],            yield: { food: 2 }, accent: '#ffd34d', dark: '#7a4f10' },
-    cattle: { label: 'Cattle', terrains: ['plains','grass'],   yield: { food: 1, prod: 1 }, accent: '#c08a55', dark: '#3a2410' },
-    fish:   { label: 'Fish',   terrains: ['water'],            yield: { food: 2, gold: 1 }, accent: '#5ad4e6', dark: '#1a4a5a' },
-    iron:   { label: 'Iron',   terrains: ['hills'],            yield: { prod: 2 }, accent: '#c8c8d4', dark: '#3a3a48' },
-    copper: { label: 'Copper', terrains: ['hills'],            yield: { prod: 1, gold: 1 }, accent: '#e08c4a', dark: '#5a2810' },
-    gold:   { label: 'Gold',   terrains: ['hills','desert'],   yield: { gold: 3 }, accent: '#ffd700', dark: '#7a5a00' },
-    gems:   { label: 'Gems',   terrains: ['hills'],            yield: { gold: 3 }, accent: '#b388ff', dark: '#3a1a5a' },
-    horses: { label: 'Horses', terrains: ['plains'],           yield: { food: 1, prod: 1 }, accent: '#d8a87a', dark: '#3a2010' }
+    wheat:  { label: 'Wheat',  terrains: ['grass'],            yield: { food: 2 }, weight: 3, accent: '#ffd34d', dark: '#7a4f10' },
+    cattle: { label: 'Cattle', terrains: ['plains','grass'],   yield: { food: 1, prod: 1 }, weight: 2, accent: '#c08a55', dark: '#3a2410' },
+    fish:   { label: 'Fish',   terrains: ['water'],            yield: { food: 2, gold: 1 }, weight: 2, accent: '#5ad4e6', dark: '#1a4a5a' },
+    iron:   { label: 'Iron',   terrains: ['hills'],            yield: { prod: 2 }, weight: 4, accent: '#c8c8d4', dark: '#3a3a48' },
+    copper: { label: 'Copper', terrains: ['hills'],            yield: { prod: 1, gold: 1 }, weight: 2, accent: '#e08c4a', dark: '#5a2810' },
+    gold:   { label: 'Gold',   terrains: ['hills','desert'],   yield: { gold: 3 }, weight: 1, accent: '#ffd700', dark: '#7a5a00' },
+    gems:   { label: 'Gems',   terrains: ['hills'],            yield: { gold: 3 }, weight: 3, accent: '#b388ff', dark: '#3a1a5a' },
+    horses: { label: 'Horses', terrains: ['plains'],           yield: { food: 1, prod: 1 }, weight: 3, accent: '#d8a87a', dark: '#3a2010' }
   };
 
   var UNITS = {
@@ -913,15 +916,25 @@
           return RESOURCES[k].terrains.indexOf(t.terrain) >= 0;
         });
         if (!candidates.length) continue;
-        // Per-terrain density: bias for richer biomes (slightly bumped to keep
-        // resource scarcity from feeling thin on the larger maps)
+        // Per-terrain density. Desert is the largest biome and the only source
+        // of gold, so its density is kept low to stop gold from flooding.
         var density = {
-          grass:   0.15, plains:  0.15, forest:  0.07,
-          hills:   0.34, mountain:0.00, desert:  0.13,
+          grass:   0.15, plains:  0.16, forest:  0.07,
+          hills:   0.30, mountain:0.00, desert:  0.05,
           water:   0.12
         }[t.terrain] || 0;
         if (rnd() < density) {
-          t.resource = candidates[Math.floor(rnd() * candidates.length)];
+          // Weighted pick so strategic resources (iron, horses, gems) aren't
+          // drowned out by whatever terrain happens to be common this map.
+          var totW = 0;
+          for (var ci = 0; ci < candidates.length; ci++) totW += (RESOURCES[candidates[ci]].weight || 1);
+          var roll = rnd() * totW;
+          var chosen = candidates[candidates.length - 1];
+          for (var ci = 0; ci < candidates.length; ci++) {
+            roll -= (RESOURCES[candidates[ci]].weight || 1);
+            if (roll <= 0) { chosen = candidates[ci]; break; }
+          }
+          t.resource = chosen;
         }
       }
     }
@@ -2664,13 +2677,15 @@
         ctx.stroke();
         ctx.globalAlpha = 1.0;
 
-        // Resource marker
-        if (t.resource && visible) {
+        // Resource marker — shown on any EXPLORED tile (not just currently
+        // visible) so a discovered resource always keeps its symbol; the fog
+        // overlay below dims it to read as "remembered".
+        if (t.resource && explored) {
           drawResourceMarker(cx, cy, size, t.resource);
         }
 
-        // Improvement
-        if (t.improvement && visible) {
+        // Improvement (also persists on explored tiles)
+        if (t.improvement && explored) {
           drawImprovement(cx, cy, size, t.improvement);
         }
 
