@@ -66,9 +66,15 @@
     archer:    { name: 'Archer',    cost: 25, hp: 10, atk: 5, def: 2, move: 2, glyph: '➹', tech: 'archery',     ranged: 2 },
     horseman:  { name: 'Horseman',  cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' },
     swordsman: { name: 'Swordsman', cost: 45, hp: 18, atk: 8, def: 5, move: 2, glyph: '⚔', tech: 'steel' },
+    pikeman:   { name: 'Pikeman',   cost: 38, hp: 20, atk: 6, def: 9, move: 2, glyph: '⛏', tech: 'feudalism' },
+    knight:    { name: 'Knight',    cost: 60, hp: 22, atk: 11, def: 6, move: 4, glyph: '♘', tech: 'chivalry' },
     catapult:  { name: 'Catapult',  cost: 40, hp: 8,  atk: 7, def: 1, move: 2, glyph: '⊕', tech: 'engineering', ranged: 2, siege: true },
+    trebuchet: { name: 'Trebuchet', cost: 55, hp: 10, atk: 10, def: 2, move: 2, glyph: '⊗', tech: 'mathematics', ranged: 2, siege: true },
+    cannon:    { name: 'Cannon',    cost: 70, hp: 14, atk: 14, def: 3, move: 2, glyph: '◎', tech: 'metallurgy',  ranged: 2, siege: true },
     musketman: { name: 'Musketman', cost: 50, hp: 20, atk: 9, def: 4, move: 2, glyph: '⚡', tech: 'gunpowder',  ranged: 2 },
+    rifleman:  { name: 'Rifleman',  cost: 65, hp: 26, atk: 12, def: 8, move: 2, glyph: '☄', tech: 'rifling',    ranged: 2 },
     galley:    { name: 'Galley',    cost: 30, hp: 14, atk: 5, def: 3, move: 3, glyph: '⛵', tech: 'sailing',     naval: true },
+    caravel:   { name: 'Caravel',   cost: 42, hp: 18, atk: 7, def: 4, move: 4, glyph: '⛴', tech: 'navigation',  naval: true },
     raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true },
     great_general:   { name: 'Great General',   cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚑', tech: null, civilian: true, great: true },
     great_scientist: { name: 'Great Scientist', cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚗', tech: null, civilian: true, great: true },
@@ -77,9 +83,13 @@
 
   // Unit upgrade paths: type -> { to, tech, cost }
   var UPGRADES = {
-    warrior:  { to: 'swordsman',  tech: 'steel',     cost: 30 },
-    archer:   { to: 'musketman',  tech: 'gunpowder',  cost: 35 },
-    horseman: { to: 'swordsman',  tech: 'steel',      cost: 25 }
+    warrior:   { to: 'swordsman',  tech: 'steel',       cost: 30 },
+    archer:    { to: 'musketman',  tech: 'gunpowder',   cost: 35 },
+    horseman:  { to: 'knight',     tech: 'chivalry',    cost: 30 },
+    catapult:  { to: 'trebuchet',  tech: 'mathematics', cost: 25 },
+    trebuchet: { to: 'cannon',     tech: 'metallurgy',  cost: 30 },
+    musketman: { to: 'rifleman',   tech: 'rifling',     cost: 35 },
+    galley:    { to: 'caravel',    tech: 'navigation',  cost: 20 }
   };
 
   var GP_THRESHOLD = 50;  // base great person points needed
@@ -180,6 +190,15 @@
     temple:   { name: 'Temple',     cost: 40, sci:  3, tech: 'theology' },
     university:{name: 'University', cost: 70, sci:  4, tech: 'education' },
     bank:     { name: 'Bank',       cost: 55, gold: 4, tech: 'banking' },
+    // Expansion buildings — production, economy, culture, science, defense lanes
+    workshop:     { name: 'Workshop',      cost: 50, prod: 3, tech: 'construction' },
+    factory:      { name: 'Factory',       cost: 90, prod: 4, tech: 'industrialization' },
+    harbor:       { name: 'Harbor',        cost: 45, food: 2, gold: 2, tech: 'trade', coastal: true },
+    observatory:  { name: 'Observatory',   cost: 65, sci:  5, tech: 'astronomy' },
+    amphitheater: { name: 'Amphitheater',  cost: 35, culture: 1, tech: 'drama' },
+    cathedral:    { name: 'Cathedral',     cost: 60, culture: 2, tech: 'acoustics' },
+    castle:       { name: 'Castle',        cost: 60, def:  6, tech: 'feudalism' },
+    stock_exchange:{name: 'Stock Exchange',cost: 70, gold: 6, tech: 'economics' },
     // World Wonders — each unique per game, first civ to finish locks it out
     hanging_gardens:  { name: 'Hanging Gardens',  cost:  90, tech: 'pottery',   wonder: true, perCityFood: 2,
                         lore: '+2 food in every city you own' },
@@ -202,7 +221,11 @@
     big_ben:          { name: 'Big Ben',          cost: 200, tech: 'banking',   wonder: true, goldMultiplier: 0.3,
                         lore: '+30% gold income' },
     statue_liberty:   { name: 'Statue of Liberty', cost: 220, tech: 'gunpowder', wonder: true, militaryAtk: 1,
-                        lore: '+1 attack on all your military units' }
+                        lore: '+1 attack on all your military units' },
+    university_of_sankore: { name: 'University of Sankore', cost: 170, tech: 'astronomy', wonder: true, perCitySci: 2,
+                        lore: '+2 science in every city you own' },
+    sistine_chapel:   { name: 'Sistine Chapel',   cost: 180, tech: 'acoustics', wonder: true, perCityCulture: 3,
+                        lore: '+3 culture (great-people) per city, per turn' }
   };
 
   var TECHS = {
@@ -220,9 +243,26 @@
     education:   { name: 'Education',    cost:  80, req: ['theology','writing'],      unlocks: 'University' },
     steel:       { name: 'Steel',        cost:  80, req: ['iron'],                    unlocks: 'Swordsman' },
     gunpowder:   { name: 'Gunpowder',    cost: 100, req: ['steel','engineering'],     unlocks: 'Musketman' },
-    banking:     { name: 'Banking',      cost:  90, req: ['theology','currency'],     unlocks: 'Bank' }
+    banking:     { name: 'Banking',      cost:  90, req: ['theology','currency'],     unlocks: 'Bank' },
+    // Expansion — parallel "lanes" (production, economy, culture, naval, deeper
+    // military + science) so each era offers a meaningful "which next" choice.
+    mining:        { name: 'Mining',         cost:  16, req: [],                         unlocks: '+1 prod from Mines' },
+    agriculture:   { name: 'Agriculture',    cost:  20, req: ['pottery'],                unlocks: '+1 food from Farms' },
+    trade:         { name: 'Trade',          cost:  34, req: ['currency'],               unlocks: 'Harbor' },
+    construction:  { name: 'Construction',   cost:  42, req: ['masonry'],                unlocks: 'Workshop' },
+    mathematics:   { name: 'Mathematics',    cost:  50, req: ['masonry','currency'],     unlocks: 'Trebuchet' },
+    drama:         { name: 'Drama',          cost:  46, req: ['writing'],                unlocks: 'Amphitheater' },
+    feudalism:     { name: 'Feudalism',      cost:  58, req: ['husbandry','masonry'],    unlocks: 'Pikeman, Castle' },
+    chivalry:      { name: 'Chivalry',       cost:  66, req: ['husbandry','iron'],       unlocks: 'Knight' },
+    navigation:    { name: 'Navigation',     cost:  62, req: ['sailing','currency'],     unlocks: 'Caravel' },
+    economics:     { name: 'Economics',      cost:  74, req: ['banking','trade'],        unlocks: 'Stock Exchange' },
+    astronomy:     { name: 'Astronomy',      cost:  88, req: ['education','navigation'], unlocks: 'Observatory, U. of Sankore' },
+    acoustics:     { name: 'Acoustics',      cost:  92, req: ['drama','education'],      unlocks: 'Cathedral, Sistine Chapel' },
+    metallurgy:    { name: 'Metallurgy',     cost: 100, req: ['steel','mathematics'],    unlocks: 'Cannon' },
+    industrialization: { name: 'Industrialization', cost: 150, req: ['construction','economics'], unlocks: 'Factory' },
+    rifling:       { name: 'Rifling',        cost: 135, req: ['gunpowder','metallurgy'], unlocks: 'Rifleman; +1 atk muskets' }
   };
-  var TECH_ORDER = ['pottery','writing','sailing','archery','masonry','husbandry','currency','iron','engineering','theology','philosophy','education','steel','gunpowder','banking'];
+  var TECH_ORDER = ['pottery','mining','agriculture','writing','sailing','archery','masonry','husbandry','currency','trade','construction','mathematics','drama','iron','engineering','theology','feudalism','philosophy','navigation','education','steel','chivalry','economics','astronomy','acoustics','gunpowder','banking','metallurgy','industrialization','rifling'];
   // Tier = longest prerequisite chain depth (0 = no prereqs). Drives the tech-tree
   // graph layout: each tier is one row, dependents sit below their requirements.
   var TECH_DEPTH = (function () {
@@ -245,12 +285,14 @@
   var ECONOMIC_VICTORY_GOLD   = 1500;  // hold this much gold...
   var ECONOMIC_VICTORY_TURNS  = 5;     // ...for this many consecutive turns → economic victory
 
-  // Age thresholds — purely cosmetic + small gold bonus on advancement
+  // Age thresholds — purely cosmetic + small gold bonus on advancement.
+  // Re-spaced over the 30-tech tree so each era gates roughly one fifth.
   var AGES = [
-    { name: 'Ancient',   minTechs: 0 },
-    { name: 'Classical', minTechs: 4 },
-    { name: 'Medieval',  minTechs: 8 },
-    { name: 'Modern',    minTechs: 12 }
+    { name: 'Ancient',    minTechs: 0 },
+    { name: 'Classical',  minTechs: 6 },
+    { name: 'Medieval',   minTechs: 12 },
+    { name: 'Modern',     minTechs: 18 },
+    { name: 'Industrial', minTechs: 23 }
   ];
   function getAge(civ) {
     var count = 0;
@@ -260,11 +302,12 @@
     }
     return AGES[0];
   }
-  // Gold bonus on age advancement — Modern > Medieval > Classical > Ancient
+  // Gold bonus on age advancement — scales with the age tier so all five pay
+  // distinctly (Ancient 20 → Industrial 80).
   function ageAdvanceGold(age) {
-    if (age.minTechs >= AGES[3].minTechs) return 60;
-    if (age.minTechs >= AGES[2].minTechs) return 40;
-    return 20;
+    var idx = AGES.indexOf(age);
+    if (idx < 0) idx = 0;
+    return 20 + idx * 15;
   }
 
   // Selectable factions. Each gives ONE small bonus.
@@ -3466,6 +3509,13 @@
     catapult:  drawCatapult,
     musketman: drawMusketman,
     galley:    drawGalley,
+    // Expansion units reuse the closest thematic sprite (civ color distinguishes them)
+    pikeman:   drawSwordsman,   // armored footman
+    knight:    drawHorseman,    // mounted
+    trebuchet: drawCatapult,    // siege
+    cannon:    drawCatapult,    // siege
+    rifleman:  drawMusketman,   // gunpowder infantry
+    caravel:   drawGalley,      // ship
     raider:    drawWarrior,  // reuses warrior sprite; civ color makes it grey
     great_general:   drawGreatPerson,
     great_scientist: drawGreatPerson,
@@ -3740,6 +3790,7 @@
     if (defender.fortified) dBonus += 0.25;
     if (dTile.city && dTile.city.civ === defender.civ) {
       dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
+      if (dTile.city.buildings.castle) dBonus += 0.5;   // Castle stacks atop Walls
       if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
     }
     if (dTile.owner === defender.civ) dBonus += 0.10;
@@ -3923,10 +3974,11 @@
     if (ageEl) {
       ageEl.textContent = age.name.toUpperCase();
       var cell = ageEl.parentElement;
-      cell.classList.remove('classical', 'medieval', 'modern');
+      cell.classList.remove('classical', 'medieval', 'modern', 'industrial');
       if (age.name === 'Classical') cell.classList.add('classical');
       if (age.name === 'Medieval') cell.classList.add('medieval');
       if (age.name === 'Modern') cell.classList.add('modern');
+      if (age.name === 'Industrial') cell.classList.add('industrial');
     }
 
     // CIV chip (top HUD)
@@ -4059,6 +4111,10 @@
         if (iy.food) f += iy.food;
         if (iy.prod) p += iy.prod;
         if (iy.gold) g += iy.gold;
+        // Tech upgrades to improvements: Mining boosts Mines, Agriculture boosts Farms
+        var ctechs = state.civs[city.civ].techs;
+        if (t.improvement === 'mine' && ctechs.mining) p += 1;
+        if (t.improvement === 'farm' && ctechs.agriculture) f += 1;
       }
       // World wonder per-tile bonuses (only if this city's civ owns the wonder)
       if (wb.great_lighthouse === city.civ && t.terrain === 'water') g += BUILDINGS.great_lighthouse.perWaterGold;
@@ -4080,8 +4136,13 @@
     // building bonuses
     if (city.buildings.granary) food += BUILDINGS.granary.food;
     if (city.buildings.aqueduct) food += BUILDINGS.aqueduct.food;
+    if (city.buildings.harbor) { food += BUILDINGS.harbor.food; gold += BUILDINGS.harbor.gold; }
     if (city.buildings.market) gold += BUILDINGS.market.gold;
     if (city.buildings.bank) gold += BUILDINGS.bank.gold;
+    if (city.buildings.stock_exchange) gold += BUILDINGS.stock_exchange.gold;
+    // Production buildings (Workshop / Factory) — the first prod-yielding buildings
+    if (city.buildings.workshop) prod += BUILDINGS.workshop.prod;
+    if (city.buildings.factory) prod += BUILDINGS.factory.prod;
 
     // Adjacency bonuses for gold-buildings (Market / Bank near rivers)
     gold += buildingAdjacency(city).gold;
@@ -4100,14 +4161,18 @@
     if (b.library)    sci += BUILDINGS.library.sci;     // +2
     if (b.temple)     sci += BUILDINGS.temple.sci;      // +3
     if (b.university) sci += BUILDINGS.university.sci;  // +4
+    if (b.observatory) sci += BUILDINGS.observatory.sci; // +5
     // Philosophy: temples give an extra +1 science
     var civ = state.civs[city.civ];
     if (b.temple && civ && civ.techs && civ.techs.philosophy) sci += 1;
+    // Astronomy: coastal cities study the stars and seas — +2 science
+    if (civ && civ.techs && civ.techs.astronomy && isCoastalCity(city)) sci += 2;
     // Adjacency bonuses for science buildings
     sci += buildingAdjacency(city).sci;
-    // Library of Alexandria — +2 science in every city of the owner
+    // Per-city wonder science: Library of Alexandria + University of Sankore
     var wb2 = state.wondersBuilt || {};
     if (wb2.library_of_alex === city.civ) sci += BUILDINGS.library_of_alex.perCitySci;
+    if (wb2.university_of_sankore === city.civ) sci += BUILDINGS.university_of_sankore.perCitySci;
     return sci;
   }
 
@@ -4136,6 +4201,20 @@
       if (b.bank       && t.river) out.gold += 1;
     }
     return out;
+  }
+
+  // Great-people culture generated per city per turn — Temple + the new culture
+  // buildings (Amphitheater, Cathedral) + Notre Dame / Sistine Chapel wonders.
+  function cityCulturePerTurn(ct, civId) {
+    var c = 0;
+    var b = ct.buildings || {};
+    if (b.temple) c += 3;
+    if (b.amphitheater) c += BUILDINGS.amphitheater.culture;
+    if (b.cathedral) c += BUILDINGS.cathedral.culture;
+    var wb = state.wondersBuilt || {};
+    if (wb.notre_dame === civId) c += BUILDINGS.notre_dame.perCityCulture;
+    if (wb.sistine_chapel === civId) c += BUILDINGS.sistine_chapel.perCityCulture;
+    return c;
   }
 
   function recomputeIncome(civId) {
@@ -4335,6 +4414,8 @@
   function atkTechBonus(unit) {
     var bonus = 0;
     if (state.civs[unit.civ].techs.iron && unit.type === 'warrior') bonus += 2;
+    // Rifling sharpens gunpowder infantry
+    if (state.civs[unit.civ].techs.rifling && (unit.type === 'musketman' || unit.type === 'rifleman')) bonus += 1;
     var f = FACTIONS[state.civs[unit.civ].faction];
     if (f && f.bonus && f.bonus.atk && !UNITS[unit.type].civilian) bonus += f.bonus.atk;
     // Militaristic city-state ally bonus
@@ -4707,9 +4788,9 @@
       var regBldgs = available.filter(function (k) { return BUILDINGS[k] && !BUILDINGS[k].wonder && !city.buildings[k]; });
       if (regBldgs.length && rnd() < per.buildingChance) {
         // Sort by personality preference, then pick the top one
-        var SCI_BLDGS = { library: 1, university: 1, temple: 1 };
-        var GOLD_BLDGS = { market: 1, bank: 1 };
-        var DEF_BLDGS = { walls: 1 };
+        var SCI_BLDGS = { library: 1, university: 1, temple: 1, observatory: 1 };
+        var GOLD_BLDGS = { market: 1, bank: 1, harbor: 1, stock_exchange: 1 };
+        var DEF_BLDGS = { walls: 1, castle: 1 };
         regBldgs.sort(function (a, b) {
           var pri = function (k) {
             if (civ.personality === 'scientific' && SCI_BLDGS[k]) return 3;
@@ -4721,11 +4802,17 @@
         });
         return regBldgs[0];
       }
+      // Best available offensive unit first; siege/naval mixed in occasionally.
+      if (available.indexOf('rifleman') >= 0) return 'rifleman';
       if (available.indexOf('musketman') >= 0) return 'musketman';
+      if (available.indexOf('knight') >= 0) return 'knight';
       if (available.indexOf('swordsman') >= 0) return 'swordsman';
+      if (available.indexOf('cannon') >= 0 && rnd() < 0.3) return 'cannon';
       if (available.indexOf('horseman') >= 0) return 'horseman';
-      if (available.indexOf('archer') >= 0) return 'archer';
+      if (available.indexOf('trebuchet') >= 0 && rnd() < 0.3) return 'trebuchet';
       if (available.indexOf('catapult') >= 0 && rnd() < 0.3) return 'catapult';
+      if (available.indexOf('archer') >= 0) return 'archer';
+      if (available.indexOf('caravel') >= 0 && isCoastalCity(city) && rnd() < 0.2) return 'caravel';
       if (available.indexOf('galley') >= 0 && isCoastalCity(city) && rnd() < 0.2) return 'galley';
       return 'warrior';
     }
@@ -4747,6 +4834,7 @@
     for (var k in BUILDINGS) {
       var b = BUILDINGS[k];
       if (b.tech && !civ.techs[b.tech]) continue;
+      if (b.coastal && city && !isCoastalCity(city)) continue;   // Harbor needs the sea
       if (b.wonder && state.wondersBuilt && state.wondersBuilt[k]) continue;
       // Don't suggest already-built regular buildings to this city
       if (city && city.buildings && city.buildings[k] && !b.wonder) continue;
@@ -4814,10 +4902,10 @@
     // never softlocks if its preferred path is empty.
     var per = AI_PERSONALITIES[civ.personality];
     if (!per) return avail[0];
-    var SCI_TECHS = { writing: 1, philosophy: 1, education: 1 };
-    var GOLD_TECHS = { currency: 1, banking: 1 };
-    var MIL_TECHS = { archery: 1, husbandry: 1, iron: 1, steel: 1, gunpowder: 1, engineering: 1 };
-    var BAL_TECHS = { pottery: 1, masonry: 1, theology: 1, sailing: 1 };
+    var SCI_TECHS = { writing: 1, philosophy: 1, education: 1, astronomy: 1, drama: 1, acoustics: 1 };
+    var GOLD_TECHS = { currency: 1, banking: 1, trade: 1, economics: 1 };
+    var MIL_TECHS = { archery: 1, husbandry: 1, iron: 1, steel: 1, gunpowder: 1, engineering: 1, mathematics: 1, feudalism: 1, chivalry: 1, navigation: 1, metallurgy: 1, industrialization: 1, rifling: 1 };
+    var BAL_TECHS = { pottery: 1, masonry: 1, theology: 1, sailing: 1, mining: 1, agriculture: 1, construction: 1 };
     avail.sort(function (a, b) {
       var pri = function (k) {
         if (per.techPreference === 'science'  && SCI_TECHS[k])  return 3;
@@ -5411,12 +5499,8 @@
     pl.cities.forEach(processCity);
     pl.gold += pl.goldPerTurn;
     progressTech(pl);
-    // Great people culture points from temples
-    pl.cities.forEach(function (ct) {
-      if (ct.buildings && ct.buildings.temple) pl.greatPoints.culture += 3;
-      // Notre Dame — +N culture per city per turn
-      if (state.wondersBuilt && state.wondersBuilt.notre_dame === 'player') pl.greatPoints.culture += BUILDINGS.notre_dame.perCityCulture;
-    });
+    // Great people culture points (temples + culture buildings + wonders)
+    pl.cities.forEach(function (ct) { pl.greatPoints.culture += cityCulturePerTurn(ct, 'player'); });
     checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
@@ -5438,10 +5522,7 @@
         c.gold += c.goldPerTurn;
         progressTech(c);
         // Great people culture points for AI
-        c.cities.forEach(function (ct) {
-          if (ct.buildings && ct.buildings.temple) c.greatPoints.culture += 3;
-          if (state.wondersBuilt && state.wondersBuilt.notre_dame === c.id) c.greatPoints.culture += BUILDINGS.notre_dame.perCityCulture;
-        });
+        c.cities.forEach(function (ct) { c.greatPoints.culture += cityCulturePerTurn(ct, c.id); });
         checkGreatPeople(id);
         // AI auto-upgrades
         c.units.slice().forEach(function (u) {
@@ -6711,7 +6792,7 @@
     document.getElementById('c-food').textContent = (city.food | 0) + '/' + city.foodCap + ' (+' + (y.food - city.pop * 2) + ')';
     document.getElementById('c-prod').textContent = '+' + y.prod;
     document.getElementById('c-sci').textContent = '+' + cityScience(city);
-    var def = (city.buildings.walls ? 4 : 0) + (city.pop);
+    var def = (city.buildings.walls ? 4 : 0) + (city.buildings.castle ? 6 : 0) + (city.pop);
     if (state.wondersBuilt && state.wondersBuilt.great_wall === city.civ) def = Math.round(def * 1.5);
     document.getElementById('c-def').textContent = def;
 

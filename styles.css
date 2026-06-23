@@ -724,6 +724,7 @@ body {
 .hud-cell.age-cell.classical { color: #7ce5ff; background: rgba(124,229,255,0.08); border-color: rgba(124,229,255,0.35); }
 .hud-cell.age-cell.medieval  { color: #ff7a59; background: rgba(255,122,89,0.08);  border-color: rgba(255,122,89,0.35); }
 .hud-cell.age-cell.modern    { color: #00ff88; background: rgba(0,255,136,0.08);   border-color: rgba(0,255,136,0.35); }
+.hud-cell.age-cell.industrial{ color: #ffd34d; background: rgba(255,211,77,0.08);  border-color: rgba(255,211,77,0.35); }
 .hud-cell.hud-tech {
   flex: 1;
   justify-content: flex-end;
@@ -1083,24 +1084,24 @@ body {
 /* Tech-tree dependency graph */
 .tech-graph { position: relative; width: 100%; padding: 4px 0 6px; }
 .tech-edges { position: absolute; top: 0; left: 0; z-index: 0; overflow: visible; pointer-events: none; }
-.tier-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; margin: 0 0 28px; }
+.tier-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 0 0 20px; }
 .tier-row:last-child { margin-bottom: 4px; }
 .tech-node {
   position: relative;
   z-index: 1;
-  width: 104px;
+  width: 82px;
   background: var(--card);
   border: 1px solid var(--line-2);
   border-radius: var(--r-sm);
-  padding: 6px 6px 7px;
+  padding: 5px 4px 6px;
   text-align: center;
   color: var(--text);
   cursor: default;
   transition: transform .08s ease, box-shadow .12s ease, border-color .12s ease;
 }
-.tech-node .tn-badge { font-size: 11px; font-family: var(--font-num); color: var(--muted); margin-bottom: 2px; }
-.tech-node .tn-name { font-size: 12px; font-weight: 700; line-height: 1.1; }
-.tech-node .tn-sub { font-size: 9px; color: var(--muted); margin-top: 2px; line-height: 1.15; }
+.tech-node .tn-badge { font-size: 10px; font-family: var(--font-num); color: var(--muted); margin-bottom: 1px; }
+.tech-node .tn-name { font-size: 11px; font-weight: 700; line-height: 1.08; }
+.tech-node .tn-sub { font-size: 8px; color: var(--muted); margin-top: 2px; line-height: 1.12; }
 .tech-node .tn-bar { height: 3px; background: rgba(255,255,255,.12); border-radius: 2px; margin-top: 5px; overflow: hidden; }
 .tech-node .tn-bar i { display: block; height: 100%; background: var(--sci); }
 .tech-node.avail { border-color: var(--cyan); cursor: pointer; }
