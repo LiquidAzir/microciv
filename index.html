@@ -27,6 +27,7 @@
             <button class="nav-item small focusable" data-action="share-export">Export Save</button>
             <button class="nav-item small focusable" data-action="share-import">Import Save</button>
           </div>
+          <button class="nav-item small focusable" data-action="cloud-sync">☁ Cloud Sync</button>
         </div>
         <div class="title-audio">
           <button class="audio-toggle focusable" data-action="toggle-sfx" id="sfx-toggle" aria-pressed="true">SFX <span class="audio-state">ON</span></button>
@@ -267,6 +268,23 @@
       </div>
     </div>
 
+    <div id="cloud-screen" class="screen modal hidden">
+      <div class="modal-card wide">
+        <header class="modal-header">
+          <button class="back-btn focusable" data-action="back">&#8592;</button>
+          <h2>☁ Cloud Sync</h2>
+        </header>
+        <div id="cloud-status" class="cloud-status">Checking…</div>
+        <div id="cloud-qr-wrap" class="cloud-qr"><img id="cloud-qr" alt="sync link QR" /></div>
+        <div id="cloud-link" class="cloud-link"></div>
+        <p class="share-hint">Open or scan this link on your other device to share this save automatically. Saves upload after each turn and download on launch (newest wins).</p>
+        <div class="share-actions">
+          <button class="nav-item primary focusable" id="cloud-copy" data-action="cloud-copy">Copy Link</button>
+          <button class="nav-item focusable" data-action="back">Done</button>
+        </div>
+      </div>
+    </div>
+
     <div id="log-screen" class="screen modal hidden">
       <div class="modal-card wide">
         <header class="modal-header">
@@ -290,6 +308,8 @@
     </div>
 
   </div>
+  <script src="config.js"></script>
+  <script src="cloud.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

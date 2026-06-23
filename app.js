@@ -1500,6 +1500,7 @@
       if (!state) return;
       // strip canvas-only fields
       var copy = {
+        t: Date.now(),               // last-write-wins timestamp for cloud sync
         seed: state.seed,
         turn: state.turn,
         currentCiv: state.currentCiv,
@@ -1523,8 +1524,67 @@
         lastEventTurn: state.lastEventTurn || 0
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
+      scheduleCloudPush();
     } catch (e) { /* ignore quota */ }
   }
+
+  // ---- Cloud save sync (optional; see config.js / cloud.js) --------------
+  var cloudPushTimer = 0, cloudPullPromise = null;
+
+  // Debounced upload: compress the current save into a tiny { t, z } envelope
+  // and PUT it. Debouncing means rapid saves only send the final state.
+  function scheduleCloudPush() {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) return;
+    clearTimeout(cloudPushTimer);
+    cloudPushTimer = setTimeout(function () {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      var t = Date.now();
+      try { t = JSON.parse(raw).t || t; } catch (e) {}
+      encodeSavePayload(raw).then(function (z) {
+        window.__CLOUD.put({ t: t, z: z });
+      }).catch(function () {});
+    }, 2500);
+  }
+
+  // Adopt the remote save iff it's newer-or-equal to the local one (last-write-wins).
+  function mergeRemoteSave(remote) {
+    if (!remote || !remote.z) return Promise.resolve(false);
+    return decodeSavePayload(remote.z).then(function (rawRemote) {
+      var parsed = JSON.parse(rawRemote);
+      if (!parsed || !parsed.civs || !parsed.map) return false;
+      var localRaw = localStorage.getItem(STORAGE_KEY);
+      var localT = 0;
+      if (localRaw) { try { localT = JSON.parse(localRaw).t || 0; } catch (e) {} }
+      var remoteT = remote.t || parsed.t || 0;
+      if (!localRaw || remoteT >= localT) {
+        localStorage.setItem(STORAGE_KEY, rawRemote);
+        return true;
+      }
+      return false;
+    }).catch(function () { return false; });
+  }
+
+  // On launch, pull the latest cloud save before the player hits Continue.
+  function cloudInit() {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) return;
+    cloudPullPromise = window.__CLOUD.pull().then(function (remote) {
+      if (!remote) return;
+      return mergeRemoteSave(remote).then(function (adopted) {
+        if (adopted) { setupTitleButtons(); showToast('Cloud save synced', 'success'); }
+      });
+    }).catch(function () {});
+  }
+
+  // Continue: wait for the (usually-fast) cloud pull so we load the merged save.
+  function continueGame() {
+    function go() {
+      if (!hasSave()) return;
+      if (load()) { showScreen('game'); if (audioPrefs.music) startMusic(); }
+    }
+    if (cloudPullPromise) cloudPullPromise.then(go, go); else go();
+  }
+
   function load() {
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
@@ -5937,6 +5997,12 @@
       sub: 'Toggle sound effects',
       do: function () { setSfxEnabled(!audioPrefs.sfx); if (audioPrefs.sfx) sfxSelect(); openOptions(); }
     });
+    if (window.__CLOUD && window.__CLOUD.enabled) {
+      actions.push({
+        icon: '☁', title: 'Cloud Sync', sub: 'Your cross-device save link + status',
+        do: function () { closeModal(); openCloudSync(); }
+      });
+    }
     actions.push({
       icon: '⟳', title: 'Restart Game', danger: true, sub: 'Abandon and start a new game',
       do: function () { closeModal(); clearSave(); showScreen('civ-select'); renderCivCards(); }
@@ -7592,6 +7658,52 @@
     return code;
   }
 
+  function openCloudSync() {
+    var statusEl = document.getElementById('cloud-status');
+    var linkEl = document.getElementById('cloud-link');
+    var qrWrap = document.getElementById('cloud-qr-wrap');
+    var qr = document.getElementById('cloud-qr');
+    var copyBtn = document.getElementById('cloud-copy');
+    var cloud = window.__CLOUD;
+    if (!cloud || !cloud.enabled) {
+      statusEl.className = 'cloud-status warn';
+      statusEl.innerHTML = '⚠ <b>Off</b> — cloud sync isn’t configured. Set <code>cloudUrl</code> in config.js to enable it. Export / Import codes still work.';
+      linkEl.textContent = '';
+      qrWrap.style.display = 'none';
+      copyBtn.style.display = 'none';
+      showModal('cloud-screen');
+      return;
+    }
+    var link = cloud.link();
+    linkEl.textContent = link;
+    qr.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&data=' + encodeURIComponent(link);
+    qrWrap.style.display = '';
+    copyBtn.style.display = '';
+    statusEl.className = 'cloud-status checking';
+    statusEl.innerHTML = '<span class="cloud-dot">●</span> Checking the save worker…';
+    showModal('cloud-screen');
+    cloud.health().then(function (h) {
+      if (h.writable) {
+        statusEl.className = 'cloud-status ok';
+        statusEl.innerHTML = '<span class="cloud-dot ok">●</span> <b>Syncing</b> — your save uploads after each turn and downloads on every device that opens this link.';
+      } else if (h.reachable) {
+        statusEl.className = 'cloud-status warn';
+        statusEl.innerHTML = '<span class="cloud-dot warn">●</span> <b>Read-only right now</b> — the save worker is reachable but refusing writes (likely its free-tier daily limit). Your save isn’t uploading yet; use Export / Import meanwhile. Sync resumes automatically once writes recover.';
+      } else {
+        statusEl.className = 'cloud-status err';
+        statusEl.innerHTML = '<span class="cloud-dot err">●</span> <b>Offline</b> — can’t reach the save worker. Check your connection; Export / Import still works.';
+      }
+    });
+  }
+
+  function copyCloudLink() {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) return;
+    var link = window.__CLOUD.link();
+    copyTextToClipboard(link).then(function (ok) {
+      showToast(ok ? 'Sync link copied' : 'Couldn’t copy — long-press the link to copy', ok ? 'success' : 'error');
+    });
+  }
+
   async function openShareExport() {
     var raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) { showToast('No save to export', 'error'); return; }
@@ -7823,11 +7935,13 @@
         if (audioPrefs.music) startMusic();
         break;
       case 'continue-game':
-        if (!hasSave()) return;
-        if (load()) {
-          showScreen('game');
-          if (audioPrefs.music) startMusic();
-        }
+        continueGame();
+        break;
+      case 'cloud-sync':
+        openCloudSync();
+        break;
+      case 'cloud-copy':
+        copyCloudLink();
         break;
       case 'show-help':
         showScreen('help-screen');
@@ -7907,6 +8021,7 @@
     // device viewport IS 600x600 so this is always 1.0.
     updateAppScale();
     window.addEventListener('resize', updateAppScale);
+    cloudInit();              // pull any newer cloud save before Continue
     setupTitleButtons();
     showScreen('title');
   }

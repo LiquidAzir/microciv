@@ -1,0 +1,9 @@
+name = "microciv-saves"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Created with:  wrangler kv namespace create SAVES
+# then paste the printed id below.
+[[kv_namespaces]]
+binding = "SAVES"
+id = "PASTE_YOUR_KV_NAMESPACE_ID_HERE"
