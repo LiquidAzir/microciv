@@ -5753,7 +5753,7 @@
       if (state.pendingPeace) {
         setTimeout(function () { showPeaceOffer(); }, 400);
       }
-      autoSelectNextUnit();
+      focusFirstUnitNoSelect();   // start each turn with nothing selected
       showTurnSummary();
       aiThinking = false;
       save();
@@ -6062,6 +6062,17 @@
     } else {
       state.selected = null;
     }
+  }
+
+  // Like autoSelectNextUnit but does NOT select — used at turn start so each
+  // turn begins with nothing selected (tapping the ground opens the menu /
+  // moves the cursor instead of commanding a leftover-selected unit). The
+  // cursor is parked on a unit with moves so the view still centres usefully.
+  function focusFirstUnitNoSelect() {
+    state.selected = null;
+    var pl = state.civs.player;
+    var u = pl.units.find(function (x) { return x.moves > 0 && !x.fortified; });
+    if (u) { state.cursor.c = u.c; state.cursor.r = u.r; ensureCursorVisible(); }
   }
 
   // Esc cycles through units that still have moves. If none, deselects.
@@ -8043,6 +8054,17 @@
     // device viewport IS 600x600 so this is always 1.0.
     updateAppScale();
     window.addEventListener('resize', updateAppScale);
+    // Swallow the synthetic "ghost click" a touch tap fires ~300ms later: if a
+    // click lands near a recent canvas tap, it's the ghost (it would otherwise
+    // hit a menu row that opened under the finger) — eat it. Real menu taps are
+    // at a different spot / later, so they pass through.
+    document.addEventListener('click', function (e) {
+      if (!lastTouchTap) return;
+      var dt = Date.now() - lastTouchTap.t;
+      var near = Math.abs(e.clientX - lastTouchTap.x) < 32 && Math.abs(e.clientY - lastTouchTap.y) < 32;
+      lastTouchTap = null;
+      if (dt < 800 && near) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
     cloudInit();              // pull any newer cloud save before Continue
     setupTitleButtons();
     showScreen('title');
@@ -8061,6 +8083,7 @@
   var panState = null;            // { camX, camY, sx, sy, moved }
   var pinchState = null;          // { dist, zoom }
   var TAP_SLOP = 9;               // movement under this (CSS px) still counts as a tap
+  var lastTouchTap = null;        // { x, y, t } — to swallow the synthetic "ghost click"
 
   function ptrList() { return Object.keys(ptrs).map(function (k) { return ptrs[k]; }); }
   function ptrDist(a, b) { var dx = a.x - b.x, dy = a.y - b.y; return Math.sqrt(dx * dx + dy * dy); }
@@ -8125,7 +8148,13 @@
     delete ptrs[e.pointerId];
     if (ptrList().length < 2) pinchState = null;
     if (ptrList().length === 0) {
-      if (wasPan && !wasPan.moved && !inputBlocked()) tapTile(e.clientX, e.clientY);
+      if (wasPan && !wasPan.moved && !inputBlocked()) {
+        // A touch tap that opens a menu would otherwise get a synthetic "ghost
+        // click" ~300ms later at the same spot, landing on whichever menu row
+        // is now there (e.g. Show Yields). Remember the tap so we can swallow it.
+        if (e.pointerType === 'touch') lastTouchTap = { x: e.clientX, y: e.clientY, t: Date.now() };
+        tapTile(e.clientX, e.clientY);
+      }
       panState = null;
     }
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
