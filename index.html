@@ -275,9 +275,14 @@
           <h2>☁ Cloud Sync</h2>
         </header>
         <div id="cloud-status" class="cloud-status">Checking…</div>
+        <p class="share-hint"><b>Set the same sync code on every device</b> (phone, PC, glasses) and they share one save — no scanning needed. Saves upload after each turn and download on launch (newest wins).</p>
+        <div class="cloud-code-row">
+          <input id="cloud-code" class="cloud-code-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="your sync code" maxlength="40" />
+          <button class="nav-item primary small focusable" id="cloud-setcode" data-action="cloud-setcode">Use code</button>
+        </div>
+        <p class="cloud-link-label">…or use the full link / QR:</p>
         <div id="cloud-qr-wrap" class="cloud-qr"><img id="cloud-qr" alt="sync link QR" /></div>
         <div id="cloud-link" class="cloud-link"></div>
-        <p class="share-hint">Open or scan this link on your other device to share this save automatically. Saves upload after each turn and download on launch (newest wins).</p>
         <div class="share-actions">
           <button class="nav-item primary focusable" id="cloud-copy" data-action="cloud-copy">Copy Link</button>
           <button class="nav-item focusable" data-action="back">Done</button>

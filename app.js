@@ -7676,6 +7676,8 @@
     }
     var link = cloud.link();
     linkEl.textContent = link;
+    var codeInput = document.getElementById('cloud-code');
+    if (codeInput && document.activeElement !== codeInput) codeInput.value = cloud.uid;
     qr.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&data=' + encodeURIComponent(link);
     qrWrap.style.display = '';
     copyBtn.style.display = '';
@@ -7701,6 +7703,23 @@
     var link = window.__CLOUD.link();
     copyTextToClipboard(link).then(function (ok) {
       showToast(ok ? 'Sync link copied' : 'Couldn’t copy — long-press the link to copy', ok ? 'success' : 'error');
+    });
+  }
+
+  // Switch this device to a chosen sync code, then reconcile with the cloud
+  // (pull that code's save if newer, push the local save up) — last-write-wins.
+  function setCloudCode() {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) return;
+    var input = document.getElementById('cloud-code');
+    var newId = window.__CLOUD.setUid(input.value);
+    if (!newId) { showToast('Enter a code (letters / numbers)', 'error'); return; }
+    window.__CLOUD.pull().then(function (remote) {
+      return remote ? mergeRemoteSave(remote) : false;
+    }).then(function () {
+      scheduleCloudPush();
+      setupTitleButtons();
+      openCloudSync();
+      showToast('Sync code set: ' + newId, 'success');
     });
   }
 
@@ -7942,6 +7961,9 @@
         break;
       case 'cloud-copy':
         copyCloudLink();
+        break;
+      case 'cloud-setcode':
+        setCloudCode();
         break;
       case 'show-help':
         showScreen('help-screen');

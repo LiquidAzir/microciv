@@ -60,6 +60,17 @@
       try { return location.origin + location.pathname + '?u=' + uid; }
       catch (e) { return '?u=' + uid; }
     },
+    // Switch to a chosen sync code (so the same short code links every device
+    // without QR scanning). Returns the cleaned id, or '' if invalid.
+    setUid: function (code) {
+      var clean = (code || '').replace(/[^a-z0-9]/gi, '').toLowerCase().slice(0, 64);
+      if (!clean) return '';
+      uid = clean;
+      this.uid = uid;
+      lastSent = '';                       // force a re-push under the new id
+      try { localStorage.setItem(UIDKEY, uid); } catch (e) {}
+      return uid;
+    },
     // Pull the remote envelope ({ t, z }) or null on miss/error/timeout.
     pull: function () {
       if (!enabled) return Promise.resolve(null);

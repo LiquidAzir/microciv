@@ -259,7 +259,8 @@ body {
   width: max-content;
   margin: 0 auto 12px;
 }
-.cloud-qr img { display: block; width: 180px; height: 180px; }
+.cloud-qr img { display: block; width: 150px; height: 150px; }
+#cloud-screen .modal-card { overflow-y: auto; }
 .cloud-link {
   font-family: var(--font-num);
   font-size: 12px;
@@ -272,6 +273,21 @@ body {
   padding: 8px 10px;
   margin-bottom: 6px;
 }
+.cloud-code-row { display: flex; gap: 8px; margin: 4px 0 10px; }
+.cloud-code-input {
+  flex: 1; min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 15px;
+  letter-spacing: 1px;
+  padding: 8px 10px;
+}
+.cloud-code-input:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.cloud-code-row .nav-item { flex: 0 0 auto; }
+.cloud-link-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin: 6px 0 4px; }
 
 /* Event log panel */
 .log-body {
@@ -1053,6 +1069,9 @@ body {
   justify-content: center;
   padding: 20px;
   backdrop-filter: blur(2px);
+  /* Sit above the title (its .title-wrap is z-index:1 in the root stacking
+     context) and the in-game HUD (z-index ≤ 9) so modals always fully cover. */
+  z-index: 50;
 }
 .modal-card {
   background: var(--panel-2);
