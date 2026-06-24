@@ -14,6 +14,7 @@ _*.json
 *.log
 node_modules/
 dist/
+worker/.wrangler/
 
 # Store submission artifacts (icons, screenshots, scratch scripts)
 store/node_modules/
