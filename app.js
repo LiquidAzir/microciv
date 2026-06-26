@@ -3974,6 +3974,7 @@
     if (dTile.city && dTile.city.civ === defender.civ) {
       dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
       if (dTile.city.buildings.castle) dBonus += 0.5;   // Castle stacks atop Walls
+      if (dTile.city.buildings.military_academy) dBonus += 0.35;
       if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
     }
     if (dTile.owner === defender.civ) dBonus += 0.10;
@@ -4327,16 +4328,25 @@
     if (city.buildings.harbor) { food += BUILDINGS.harbor.food; gold += BUILDINGS.harbor.gold; }
     if (city.buildings.market) gold += BUILDINGS.market.gold;
     if (city.buildings.bank) gold += BUILDINGS.bank.gold;
+    if (city.buildings.hospital) food += BUILDINGS.hospital.food;
     if (city.buildings.stock_exchange) gold += BUILDINGS.stock_exchange.gold;
+    if (city.buildings.corporation) gold += BUILDINGS.corporation.gold;
     // Production buildings (Workshop / Factory) — the first prod-yielding buildings
     if (city.buildings.workshop) prod += BUILDINGS.workshop.prod;
     if (city.buildings.factory) prod += BUILDINGS.factory.prod;
+    // Mass Production: each Factory also yields +1 prod (mirrors Philosophy/Temple)
+    var wcv = state.civs[city.civ];
+    if (city.buildings.factory && wcv && wcv.techs && wcv.techs.mass_production) prod += 1;
 
     // Adjacency bonuses for gold-buildings (Market / Bank near rivers)
     gold += buildingAdjacency(city).gold;
 
-    // Pyramids — +1 production in every city of the owner
+    // Pyramids / Hoover Dam — +1 production in every city of the owner
     if (wb.pyramids === city.civ) prod += 1;
+    if (wb.hoover_dam === city.civ) prod += 1;
+
+    // Power Plant — multiplies this city's accumulated production (positive only)
+    if (city.buildings.power_plant && prod > 0) prod = Math.round(prod * (1 + BUILDINGS.power_plant.prodMultiplier));
 
     return { food: food, prod: prod, gold: gold };
   }
@@ -4350,6 +4360,7 @@
     if (b.temple)     sci += BUILDINGS.temple.sci;      // +3
     if (b.university) sci += BUILDINGS.university.sci;  // +4
     if (b.observatory) sci += BUILDINGS.observatory.sci; // +5
+    if (b.research_lab) sci += BUILDINGS.research_lab.sci; // +7
     // Philosophy: temples give an extra +1 science
     var civ = state.civs[city.civ];
     if (b.temple && civ && civ.techs && civ.techs.philosophy) sci += 1;
@@ -4361,6 +4372,7 @@
     var wb2 = state.wondersBuilt || {};
     if (wb2.library_of_alex === city.civ) sci += BUILDINGS.library_of_alex.perCitySci;
     if (wb2.university_of_sankore === city.civ) sci += BUILDINGS.university_of_sankore.perCitySci;
+    if (wb2.internet === city.civ) sci += BUILDINGS.internet.perCitySci;
     return sci;
   }
 
@@ -4402,6 +4414,7 @@
     var wb = state.wondersBuilt || {};
     if (wb.notre_dame === civId) c += BUILDINGS.notre_dame.perCityCulture;
     if (wb.sistine_chapel === civId) c += BUILDINGS.sistine_chapel.perCityCulture;
+    if (wb.eiffel_tower === civId) c += BUILDINGS.eiffel_tower.perCityCulture;
     return c;
   }
 
@@ -4608,9 +4621,10 @@
     if (f && f.bonus && f.bonus.atk && !UNITS[unit.type].civilian) bonus += f.bonus.atk;
     // Militaristic city-state ally bonus
     if (!UNITS[unit.type].civilian) bonus += csMilitaryBonus(unit.civ);
-    // Statue of Liberty — +1 ATK on all military units of the owner
-    if (state.wondersBuilt && state.wondersBuilt.statue_liberty === unit.civ && !UNITS[unit.type].civilian) {
-      bonus += BUILDINGS.statue_liberty.militaryAtk;
+    // Statue of Liberty / West Point — +1 ATK on all military units of the owner
+    if (!UNITS[unit.type].civilian && state.wondersBuilt) {
+      if (state.wondersBuilt.statue_liberty === unit.civ) bonus += BUILDINGS.statue_liberty.militaryAtk;
+      if (state.wondersBuilt.west_point === unit.civ) bonus += BUILDINGS.west_point.militaryAtk;
     }
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
@@ -7034,7 +7048,7 @@
     document.getElementById('c-food').textContent = (city.food | 0) + '/' + city.foodCap + ' (+' + (y.food - city.pop * 2) + ')';
     document.getElementById('c-prod').textContent = '+' + y.prod;
     document.getElementById('c-sci').textContent = '+' + cityScience(city);
-    var def = (city.buildings.walls ? 4 : 0) + (city.buildings.castle ? 6 : 0) + (city.pop);
+    var def = (city.buildings.walls ? 4 : 0) + (city.buildings.castle ? 6 : 0) + (city.buildings.military_academy ? 4 : 0) + (city.pop);
     if (state.wondersBuilt && state.wondersBuilt.great_wall === city.civ) def = Math.round(def * 1.5);
     document.getElementById('c-def').textContent = def;
 
@@ -8281,6 +8295,20 @@
     activate();
     draw();
   }
+
+  // Test/debug hook — read-only access to internal state + the yield/effect
+  // helpers, so headless verification can compute deltas on a single city
+  // without UI navigation. Has no effect on gameplay.
+  window.__mc = {
+    get state() { return state; },
+    workableYields: workableYields,
+    cityScience: cityScience,
+    cityCulturePerTurn: cityCulturePerTurn,
+    atkTechBonus: atkTechBonus,
+    availableProducibles: availableProducibles,
+    openCity: openCity,
+    draw: draw
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
