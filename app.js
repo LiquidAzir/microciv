@@ -55,7 +55,10 @@
     copper: { label: 'Copper', terrains: ['hills'],            yield: { prod: 1, gold: 1 }, weight: 2, accent: '#e08c4a', dark: '#5a2810' },
     gold:   { label: 'Gold',   terrains: ['hills','desert'],   yield: { gold: 3 }, weight: 1, accent: '#ffd700', dark: '#7a5a00' },
     gems:   { label: 'Gems',   terrains: ['hills'],            yield: { gold: 3 }, weight: 3, accent: '#b388ff', dark: '#3a1a5a' },
-    horses: { label: 'Horses', terrains: ['plains'],           yield: { food: 1, prod: 1 }, weight: 3, accent: '#d8a87a', dark: '#3a2010' }
+    horses: { label: 'Horses', terrains: ['plains'],           yield: { food: 1, prod: 1 }, weight: 3, accent: '#d8a87a', dark: '#3a2010' },
+    // Strategic resources — soft-gate the top modern units (see UNITS.requires)
+    oil:    { label: 'Oil',    terrains: ['desert','water','tundra'], yield: { prod: 1, gold: 1 }, weight: 1, accent: '#7a6f55', dark: '#14120c' },
+    coal:   { label: 'Coal',   terrains: ['hills','mountain'], yield: { prod: 2 }, weight: 2, accent: '#5a6068', dark: '#101216' }
   };
 
   var UNITS = {
@@ -75,10 +78,19 @@
     rifleman:  { name: 'Rifleman',  cost: 65, hp: 26, atk: 12, def: 8, move: 2, glyph: '☄', tech: 'rifling',    ranged: 2 },
     galley:    { name: 'Galley',    cost: 30, hp: 14, atk: 5, def: 3, move: 3, glyph: '⛵', tech: 'sailing',     naval: true },
     caravel:   { name: 'Caravel',   cost: 42, hp: 18, atk: 7, def: 4, move: 4, glyph: '⛴', tech: 'navigation',  naval: true },
+    // Modern military — the top of each line is soft-gated on oil (always an
+    // ungated option: Infantry needs only common iron).
+    infantry:  { name: 'Infantry',  cost: 75, hp: 30, atk: 16, def: 13, move: 2, glyph: '⛒', tech: 'conscription', ranged: 2, requires: 'iron' },
+    artillery: { name: 'Artillery', cost: 85, hp: 16, atk: 20, def: 3, move: 2, glyph: '☷', tech: 'ballistics',  ranged: 2, siege: true, requires: 'iron' },
+    tank:      { name: 'Tank',      cost: 100, hp: 32, atk: 24, def: 16, move: 4, glyph: '▦', tech: 'combustion', requires: 'oil' },
+    battleship:{ name: 'Battleship',cost: 110, hp: 36, atk: 26, def: 14, move: 4, glyph: '⛟', tech: 'combustion', naval: true, ranged: 2, siege: true, requires: 'oil' },
+    fighter:   { name: 'Fighter',   cost: 90, hp: 20, atk: 18, def: 6, move: 6, glyph: '✈', tech: 'mass_production', ranged: 2, air: true, requires: 'oil' },
     raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true },
     great_general:   { name: 'Great General',   cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚑', tech: null, civilian: true, great: true },
     great_scientist: { name: 'Great Scientist', cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚗', tech: null, civilian: true, great: true },
-    great_engineer:  { name: 'Great Engineer',  cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚙', tech: null, civilian: true, great: true }
+    great_engineer:  { name: 'Great Engineer',  cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚙', tech: null, civilian: true, great: true },
+    great_merchant:  { name: 'Great Merchant',  cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚖', tech: null, civilian: true, great: true },
+    great_artist:    { name: 'Great Artist',    cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '✦', tech: null, civilian: true, great: true }
   };
 
   // Unit upgrade paths: type -> { to, tech, cost }
@@ -89,7 +101,11 @@
     catapult:  { to: 'trebuchet',  tech: 'mathematics', cost: 25 },
     trebuchet: { to: 'cannon',     tech: 'metallurgy',  cost: 30 },
     musketman: { to: 'rifleman',   tech: 'rifling',     cost: 35 },
-    galley:    { to: 'caravel',    tech: 'navigation',  cost: 20 }
+    galley:    { to: 'caravel',    tech: 'navigation',  cost: 20 },
+    rifleman:  { to: 'infantry',   tech: 'conscription', cost: 40 },
+    cannon:    { to: 'artillery',  tech: 'ballistics',  cost: 40 },
+    knight:    { to: 'tank',       tech: 'combustion',  cost: 45 },
+    caravel:   { to: 'battleship', tech: 'combustion',  cost: 45 }
   };
 
   var GP_THRESHOLD = 50;  // base great person points needed
@@ -138,10 +154,15 @@
         return (t.terrain === 'grass' || t.terrain === 'plains') && !t.improvement
           && !(t.resource === 'cattle' || t.resource === 'horses');
       }
+    },
+    oil_well: {
+      name: 'Oil Well',
+      yield: { prod: 2 },
+      suitable: function (t) { return t.resource === 'oil'; }
     }
   };
   // Order = priority. First matching wins.
-  var IMPROVEMENT_ORDER = ['fishing_boats', 'pasture', 'lumber', 'mine', 'quarry', 'farm'];
+  var IMPROVEMENT_ORDER = ['oil_well', 'fishing_boats', 'pasture', 'lumber', 'mine', 'quarry', 'farm'];
 
   function pickImprovement(t) {
     if (!t || t.improvement || t.city) return null;
@@ -199,6 +220,12 @@
     cathedral:    { name: 'Cathedral',     cost: 60, culture: 2, tech: 'acoustics' },
     castle:       { name: 'Castle',        cost: 60, def:  6, tech: 'feudalism' },
     stock_exchange:{name: 'Stock Exchange',cost: 70, gold: 6, tech: 'economics' },
+    // Modern buildings — late ceilings in each lane
+    hospital:        { name: 'Hospital',         cost: 75, food: 3, tech: 'sanitation' },
+    power_plant:     { name: 'Power Plant',      cost: 90, prodMultiplier: 0.25, tech: 'electricity' },
+    military_academy:{ name: 'Military Academy', cost: 75, def: 4, tech: 'conscription' },
+    corporation:     { name: 'Corporation',      cost: 85, gold: 8, tech: 'mass_production' },
+    research_lab:    { name: 'Research Lab',      cost: 90, sci: 7, tech: 'computers' },
     // World Wonders — each unique per game, first civ to finish locks it out
     hanging_gardens:  { name: 'Hanging Gardens',  cost:  90, tech: 'pottery',   wonder: true, perCityFood: 2,
                         lore: '+2 food in every city you own' },
@@ -225,7 +252,16 @@
     university_of_sankore: { name: 'University of Sankore', cost: 170, tech: 'astronomy', wonder: true, perCitySci: 2,
                         lore: '+2 science in every city you own' },
     sistine_chapel:   { name: 'Sistine Chapel',   cost: 180, tech: 'acoustics', wonder: true, perCityCulture: 3,
-                        lore: '+3 culture (great-people) per city, per turn' }
+                        lore: '+3 culture (great-people) per city, per turn' },
+    // Modern wonders — the late prizes
+    hoover_dam:       { name: 'Hoover Dam',       cost: 220, tech: 'electricity', wonder: true, perCityProd: 1,
+                        lore: '+1 production in every city you own' },
+    west_point:       { name: 'West Point',       cost: 200, tech: 'ballistics',  wonder: true, militaryAtk: 1,
+                        lore: '+1 attack on all your military units' },
+    eiffel_tower:     { name: 'Eiffel Tower',     cost: 210, tech: 'mass_production', wonder: true, perCityCulture: 2,
+                        lore: '+2 culture (great-people) per city, per turn' },
+    internet:         { name: 'The Internet',     cost: 260, tech: 'computers',   wonder: true, perCitySci: 3, oneShotScience: 100,
+                        lore: '+3 science in every city, and instantly gain 100 research' }
   };
 
   var TECHS = {
@@ -260,9 +296,18 @@
     acoustics:     { name: 'Acoustics',      cost:  92, req: ['drama','education'],      unlocks: 'Cathedral, Sistine Chapel' },
     metallurgy:    { name: 'Metallurgy',     cost: 100, req: ['steel','mathematics'],    unlocks: 'Cannon' },
     industrialization: { name: 'Industrialization', cost: 150, req: ['construction','economics'], unlocks: 'Factory' },
-    rifling:       { name: 'Rifling',        cost: 135, req: ['gunpowder','metallurgy'], unlocks: 'Rifleman; +1 atk muskets' }
+    rifling:       { name: 'Rifling',        cost: 135, req: ['gunpowder','metallurgy'], unlocks: 'Rifleman; +1 atk muskets' },
+    // Modern age (6th) — industry, modern war, late science. Each gates one
+    // concrete engine-piece; governments hang off conscription / mass production.
+    sanitation:    { name: 'Sanitation',     cost: 150, req: ['industrialization'],      unlocks: 'Hospital' },
+    electricity:   { name: 'Electricity',    cost: 160, req: ['industrialization'],      unlocks: 'Power Plant, Hoover Dam' },
+    conscription:  { name: 'Conscription',   cost: 165, req: ['rifling'],                unlocks: 'Infantry, Military Academy' },
+    ballistics:    { name: 'Ballistics',     cost: 175, req: ['rifling','metallurgy'],   unlocks: 'Artillery, West Point' },
+    combustion:    { name: 'Combustion',     cost: 195, req: ['electricity','ballistics'], unlocks: 'Tank, Battleship (oil)' },
+    mass_production: { name: 'Mass Production', cost: 205, req: ['electricity','conscription'], unlocks: 'Corporation, Fighter' },
+    computers:     { name: 'Computers',      cost: 240, req: ['mass_production','combustion'], unlocks: 'Research Lab, The Internet' }
   };
-  var TECH_ORDER = ['pottery','mining','agriculture','writing','sailing','archery','masonry','husbandry','currency','trade','construction','mathematics','drama','iron','engineering','theology','feudalism','philosophy','navigation','education','steel','chivalry','economics','astronomy','acoustics','gunpowder','banking','metallurgy','industrialization','rifling'];
+  var TECH_ORDER = ['pottery','mining','agriculture','writing','sailing','archery','masonry','husbandry','currency','trade','construction','mathematics','drama','iron','engineering','theology','feudalism','philosophy','navigation','education','steel','chivalry','economics','astronomy','acoustics','gunpowder','banking','metallurgy','industrialization','rifling','sanitation','electricity','conscription','ballistics','combustion','mass_production','computers'];
   // Tier = longest prerequisite chain depth (0 = no prereqs). Drives the tech-tree
   // graph layout: each tier is one row, dependents sit below their requirements.
   var TECH_DEPTH = (function () {
@@ -288,11 +333,12 @@
   // Age thresholds — purely cosmetic + small gold bonus on advancement.
   // Re-spaced over the 30-tech tree so each era gates roughly one fifth.
   var AGES = [
-    { name: 'Ancient',    minTechs: 0 },
-    { name: 'Classical',  minTechs: 6 },
-    { name: 'Medieval',   minTechs: 12 },
-    { name: 'Modern',     minTechs: 18 },
-    { name: 'Industrial', minTechs: 23 }
+    { name: 'Ancient',     minTechs: 0 },
+    { name: 'Classical',   minTechs: 6 },
+    { name: 'Medieval',    minTechs: 12 },
+    { name: 'Renaissance', minTechs: 18 },
+    { name: 'Industrial',  minTechs: 24 },
+    { name: 'Modern',      minTechs: 31 }
   ];
   function getAge(civ) {
     var count = 0;
@@ -2343,7 +2389,8 @@
 
   var RES_RIM = {
     wheat: '#e8b830', cattle: '#e0d8cc', horses: '#caa46a', fish: '#5fc8d8',
-    iron: '#9aa6b2', copper: '#d07a3a', gold: '#ffd84a', gems: '#b06cff'
+    iron: '#9aa6b2', copper: '#d07a3a', gold: '#ffd84a', gems: '#b06cff',
+    oil: '#caa86a', coal: '#8a929c'
   };
   function drawResourceMarker(cx, cy, size, kind) {
     var res = RESOURCES[kind];
@@ -2380,7 +2427,29 @@
       case 'copper': riCopper(P, lod); break;
       case 'gold':   riGold(P, lod); break;
       case 'gems':   riGems(P, lod); break;
+      case 'oil':    riOil(P, lod); break;
+      case 'coal':   riCoal(P, lod); break;
     }
+  }
+
+  function riOil(P, lod) {
+    // A glossy black oil drop with a bright sheen so it reads on the dark badge.
+    var D = '#241f16', BLK = '#0f0d09', HI = '#d8b878';
+    P(-0.5, -2.4, 1, 1, D);                 // tip
+    P(-1.5, -1.4, 3, 1.6, D);
+    P(-2.2, 0, 4.4, 2, D);                  // body
+    P(-1.6, 1.6, 3.2, 1, D);                // base
+    P(-1.4, -0.6, 2.4, 1.6, BLK);           // dark core
+    P(-1.2, -0.4, 0.9, 1, HI);              // sheen
+  }
+  function riCoal(P, lod) {
+    // A chunky coal lump cluster with lit top facets.
+    var D = '#22262c', M = '#3a414a', HI = '#9aa4ae';
+    P(-2.2, -0.6, 2.2, 2.4, D);
+    P(0, 0, 2.2, 2, D);
+    P(-1.2, -1.8, 2.2, 1.8, M);
+    P(-2, -0.6, 2, 0.6, HI);                // lit top-left
+    P(-0.8, -1.8, 1.6, 0.5, HI);            // lit top
   }
 
   function riWheat(P, lod) {
@@ -3622,10 +3691,18 @@
     cannon:    drawCatapult,    // siege
     rifleman:  drawMusketman,   // gunpowder infantry
     caravel:   drawGalley,      // ship
+    // Modern units reuse the closest thematic sprite
+    infantry:  drawMusketman,   // gunpowder infantry line
+    artillery: drawCatapult,    // siege
+    tank:      drawSwordsman,   // armored ground apex
+    battleship:drawGalley,      // ship
+    fighter:   drawArcher,      // fast ranged
     raider:    drawWarrior,  // reuses warrior sprite; civ color makes it grey
     great_general:   drawGreatPerson,
     great_scientist: drawGreatPerson,
-    great_engineer:  drawGreatPerson
+    great_engineer:  drawGreatPerson,
+    great_merchant:  drawGreatPerson,
+    great_artist:    drawGreatPerson
   };
 
   function drawGreatPerson(cx, cy, size, civ) {
@@ -4080,11 +4157,12 @@
     if (ageEl) {
       ageEl.textContent = age.name.toUpperCase();
       var cell = ageEl.parentElement;
-      cell.classList.remove('classical', 'medieval', 'modern', 'industrial');
+      cell.classList.remove('classical', 'medieval', 'renaissance', 'modern', 'industrial');
       if (age.name === 'Classical') cell.classList.add('classical');
       if (age.name === 'Medieval') cell.classList.add('medieval');
-      if (age.name === 'Modern') cell.classList.add('modern');
+      if (age.name === 'Renaissance') cell.classList.add('renaissance');
       if (age.name === 'Industrial') cell.classList.add('industrial');
+      if (age.name === 'Modern') cell.classList.add('modern');
     }
 
     // CIV chip (top HUD)
@@ -5049,10 +5127,10 @@
     // never softlocks if its preferred path is empty.
     var per = AI_PERSONALITIES[civ.personality];
     if (!per) return avail[0];
-    var SCI_TECHS = { writing: 1, philosophy: 1, education: 1, astronomy: 1, drama: 1, acoustics: 1 };
-    var GOLD_TECHS = { currency: 1, banking: 1, trade: 1, economics: 1 };
-    var MIL_TECHS = { archery: 1, husbandry: 1, iron: 1, steel: 1, gunpowder: 1, engineering: 1, mathematics: 1, feudalism: 1, chivalry: 1, navigation: 1, metallurgy: 1, industrialization: 1, rifling: 1 };
-    var BAL_TECHS = { pottery: 1, masonry: 1, theology: 1, sailing: 1, mining: 1, agriculture: 1, construction: 1 };
+    var SCI_TECHS = { writing: 1, philosophy: 1, education: 1, astronomy: 1, drama: 1, acoustics: 1, computers: 1 };
+    var GOLD_TECHS = { currency: 1, banking: 1, trade: 1, economics: 1, mass_production: 1 };
+    var MIL_TECHS = { archery: 1, husbandry: 1, iron: 1, steel: 1, gunpowder: 1, engineering: 1, mathematics: 1, feudalism: 1, chivalry: 1, navigation: 1, metallurgy: 1, industrialization: 1, rifling: 1, conscription: 1, ballistics: 1, combustion: 1 };
+    var BAL_TECHS = { pottery: 1, masonry: 1, theology: 1, sailing: 1, mining: 1, agriculture: 1, construction: 1, sanitation: 1, electricity: 1 };
     avail.sort(function (a, b) {
       var pri = function (k) {
         if (per.techPreference === 'science'  && SCI_TECHS[k])  return 3;
