@@ -1127,6 +1127,22 @@
       }
     }
 
+    // Guarantee a minimum of the late-game strategic resources so Modern-age
+    // units are always reachable, even on small maps where the weighted scatter
+    // (oil/coal are rare) might skip them entirely.
+    function ensureResource(kind, minCount) {
+      var have = 0, spots = [];
+      for (var er = 0; er < MAP_H; er++) for (var ec = 0; ec < MAP_W; ec++) {
+        var et = map[er][ec];
+        if (et.resource === kind) have++;
+        else if (!et.resource && RESOURCES[kind].terrains.indexOf(et.terrain) >= 0) spots.push(et);
+      }
+      for (var i = spots.length - 1; i > 0; i--) { var j = Math.floor(rnd() * (i + 1)); var tmp = spots[i]; spots[i] = spots[j]; spots[j] = tmp; }
+      while (have < minCount && spots.length) { spots.pop().resource = kind; have++; }
+    }
+    ensureResource('oil', Math.max(3, Math.round(MAP_W / 6)));
+    ensureResource('coal', Math.max(2, Math.round(MAP_W / 8)));
+
     // Natural wonders — scale with map size so big maps aren't covered by just
     // one volcano. Small 1 · Normal 2 · Large 3 · Huge 4 · Massive 5 of each.
     var wonderCount = MAP_W >= 28 ? 5 : MAP_W >= 24 ? 4 : MAP_W >= 20 ? 3 : MAP_W <= 12 ? 1 : 2;
@@ -1790,6 +1806,25 @@
         if (best) state.map[r][c].owner = best.civ;
       }
     }
+
+    // Tally each civ's strategic resources — the count of owned tiles bearing
+    // each resource. Production soft-gates units whose `requires` resource a
+    // civ doesn't yet control (e.g. Tank needs Oil, Infantry needs Iron).
+    CIV_SIDES.forEach(function (id) { state.civs[id].resources = {}; });
+    for (var rr = 0; rr < MAP_H; rr++) {
+      for (var cc = 0; cc < MAP_W; cc++) {
+        var tt = state.map[rr][cc];
+        if (!tt.owner || !tt.resource) continue;
+        var res = state.civs[tt.owner] && state.civs[tt.owner].resources;
+        if (res) res[tt.resource] = (res[tt.resource] || 0) + 1;
+      }
+    }
+  }
+
+  // Soft strategic-resource check: a civ can build a `requires` unit once it
+  // controls at least one tile bearing that resource.
+  function civHasResource(civ, res) {
+    return !res || !!(civ.resources && civ.resources[res] > 0);
   }
 
   // =====================================================================
@@ -5005,6 +5040,13 @@
         return regBldgs[0];
       }
       // Best available offensive unit first; siege/naval mixed in occasionally.
+      // Modern apex units lead (availableProducibles already hides any whose
+      // oil/iron the civ doesn't control).
+      if (available.indexOf('tank') >= 0) return 'tank';
+      if (available.indexOf('artillery') >= 0 && rnd() < 0.25) return 'artillery';
+      if (available.indexOf('fighter') >= 0 && rnd() < 0.2) return 'fighter';
+      if (available.indexOf('infantry') >= 0) return 'infantry';
+      if (available.indexOf('battleship') >= 0 && isCoastalCity(city) && rnd() < 0.25) return 'battleship';
       if (available.indexOf('rifleman') >= 0) return 'rifleman';
       if (available.indexOf('musketman') >= 0) return 'musketman';
       if (available.indexOf('knight') >= 0) return 'knight';
@@ -5031,6 +5073,7 @@
       if (u.barb) continue;             // raiders aren't trainable
       if (u.great) continue;            // great people aren't trainable
       if (u.naval && city && !isCoastalCity(city)) continue; // naval only at coastal cities
+      if (u.requires && !civHasResource(civ, u.requires)) continue; // strategic resource gate
       out.push(k);
     }
     for (var k in BUILDINGS) {
@@ -7148,6 +7191,23 @@
       wrap.appendChild(qBtn);
       list.appendChild(wrap);
     });
+
+    // Resource-locked units: teched, but the required strategic resource isn't
+    // controlled yet. Shown greyed so the player knows to expand toward it.
+    for (var lk in UNITS) {
+      var lu = UNITS[lk];
+      if (lu.barb || lu.great) continue;
+      if (lu.tech && !civ.techs[lu.tech]) continue;
+      if (lu.naval && !isCoastalCity(city)) continue;
+      if (!lu.requires || civHasResource(civ, lu.requires)) continue;
+      var resLbl = (RESOURCES[lu.requires] && RESOURCES[lu.requires].label) || lu.requires;
+      var lrow = document.createElement('div');
+      lrow.className = 'action-row disabled';
+      lrow.innerHTML = '<div class="action-icon">' + lu.glyph + '</div>' +
+        '<div class="action-body"><div class="action-title">' + lu.name + '</div>' +
+        '<div class="action-sub">Needs ' + resLbl + ' in your territory · ' + lu.cost + ' prod</div></div>';
+      list.appendChild(lrow);
+    }
 
     showModal('city-screen');
   }
