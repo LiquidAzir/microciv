@@ -356,6 +356,77 @@
     return 20 + idx * 15;
   }
 
+  // GOVERNMENTS — a switchable, empire-wide stance unlocked by tech. Exactly one
+  // is active per civ. Switching costs 2 turns of "anarchy" (positive gold/sci
+  // halved) before the new bonuses apply. Bonuses are small (+1/+2 per city),
+  // mutually exclusive, so no government snowballs.
+  var GOVERNMENTS = {
+    despotism: { name: 'Despotism', tech: null },
+    monarchy:  { name: 'Monarchy',  tech: 'currency',        perCityGold: 2 },
+    republic:  { name: 'Republic',  tech: 'philosophy',      perCitySci: 1 },
+    theocracy: { name: 'Theocracy', tech: 'theology',        perCityCulture: 1, eraPointMult: 1.25 },
+    autocracy: { name: 'Autocracy', tech: 'conscription',    unitAtk: 1, perCityProd: 1 },
+    democracy: { name: 'Democracy', tech: 'mass_production', perCityGold: 1, perCitySci: 1 }
+  };
+  var GOVERNMENT_ORDER = ['despotism', 'monarchy', 'republic', 'theocracy', 'autocracy', 'democracy'];
+  var ANARCHY_TURNS = 2;          // commitment cost when switching government
+
+  // GOLDEN AGES — banked "Era Points" (culture + a slice of gold/sci surplus)
+  // cross a rising threshold to fire a timed empire-wide yield surge. Also
+  // triggerable by a Great Artist or by capturing a city (Conquest Surge).
+  var GOLDEN_AGE_BASE = 60;       // first golden-age threshold
+  var GOLDEN_AGE_STEP = 40;       // threshold rises this much each time
+  var GOLDEN_AGE_LENGTH = 8;      // turns a triggered golden age lasts
+  var GOLDEN_AGE_YIELD = 1;       // +1 to each worked-tile yield bucket while active
+  var CONQUEST_SURGE_LENGTH = 5;  // shorter surge granted by capturing a city
+  function goldenAgeThreshold(civ) { return GOLDEN_AGE_BASE + (civ.goldenAgesHad || 0) * GOLDEN_AGE_STEP; }
+
+  // The government whose bonuses currently apply — none during anarchy.
+  function activeGovernment(civ) {
+    if (!civ || civ.governmentTurns > 0) return null;
+    return GOVERNMENTS[civ.government] || GOVERNMENTS.despotism;
+  }
+  // Switch a civ's government, paying the anarchy commitment cost. No-op if the
+  // target isn't unlocked or is already the settled government.
+  function setGovernment(civ, id) {
+    var g = GOVERNMENTS[id];
+    if (!civ || !g) return false;
+    if (g.tech && !civ.techs[g.tech]) return false;
+    if (civ.government === id && civ.governmentTurns <= 0) return false;
+    civ.government = id;
+    civ.governmentTurns = ANARCHY_TURNS;
+    if (civ.id === 'player') {
+      showToast('Anarchy: ' + ANARCHY_TURNS + ' turns → ' + g.name, 'error');
+      logEvent('Adopting ' + g.name + ' (anarchy ' + ANARCHY_TURNS + ' turns)');
+    }
+    return true;
+  }
+  // Extra empire-wide culture/turn from the active government (Theocracy).
+  function govCulturePerTurn(civ) {
+    var g = activeGovernment(civ);
+    return (g && g.perCityCulture ? g.perCityCulture : 0) * civ.cities.length;
+  }
+  // AI adopts the best government its tech allows, by personality. Idempotent
+  // once settled on its top pick; switches (paying anarchy) when a better one
+  // unlocks. No-op while already in anarchy.
+  function aiPickGovernment(civ) {
+    if (!civ || civ.governmentTurns > 0) return;
+    var pref;
+    switch (civ.personality) {
+      case 'aggressive': case 'warmonger': pref = ['autocracy', 'monarchy']; break;
+      case 'economic': pref = ['democracy', 'monarchy']; break;
+      case 'scientific': pref = ['democracy', 'republic']; break;
+      case 'peaceful': pref = ['theocracy', 'republic', 'monarchy']; break;
+      default: pref = ['monarchy'];
+    }
+    var best = null;
+    for (var i = 0; i < pref.length; i++) {
+      var g = GOVERNMENTS[pref[i]];
+      if (g && (!g.tech || civ.techs[g.tech])) { best = pref[i]; break; }
+    }
+    if (best && civ.government !== best) setGovernment(civ, best);
+  }
+
   // Selectable factions. Each gives ONE small bonus.
   var FACTIONS = {
     solaris: {
@@ -1474,6 +1545,12 @@
       greatPeopleSpawned: 0,
       generalBonus: null,
       economicCountdown: 0,
+      // Government / Civics + Golden Ages (Modern-era strategic systems)
+      government: 'despotism',
+      governmentTurns: 0,         // anarchy countdown (>0 = switching)
+      eraPoints: 0,
+      goldenAgeTurns: 0,          // >0 = golden age active
+      goldenAgesHad: 0,           // drives the rising era-point threshold
       // Dynamic grievance toward each other civ id (0 = cordial, higher = angrier).
       // Only AIs act on it; the player's map is unused.
       tension: {},
@@ -1721,6 +1798,12 @@
         if (cv.generalBonus === undefined) cv.generalBonus = null;
         if (cv.economicCountdown === undefined) cv.economicCountdown = 0;
         if (!Array.isArray(cv.researchQueue)) cv.researchQueue = [];
+        // Government / Golden-age fields (round-2 expansion) — backfill safely.
+        if (typeof cv.government !== 'string') cv.government = 'despotism';
+        if (typeof cv.governmentTurns !== 'number') cv.governmentTurns = 0;
+        if (typeof cv.eraPoints !== 'number') cv.eraPoints = 0;
+        if (typeof cv.goldenAgeTurns !== 'number') cv.goldenAgeTurns = 0;
+        if (typeof cv.goldenAgesHad !== 'number') cv.goldenAgesHad = 0;
       });
       // Backfill AI personalities — old saves get random ones
       AI_SIDES.forEach(function (id) {
@@ -4380,6 +4463,10 @@
     if (wb.pyramids === city.civ) prod += 1;
     if (wb.hoover_dam === city.civ) prod += 1;
 
+    // Autocracy government — +1 production in every city (settled only)
+    var cgov = activeGovernment(state.civs[city.civ]);
+    if (cgov && cgov.perCityProd) prod += cgov.perCityProd;
+
     // Power Plant — multiplies this city's accumulated production (positive only)
     if (city.buildings.power_plant && prod > 0) prod = Math.round(prod * (1 + BUILDINGS.power_plant.prodMultiplier));
 
@@ -4478,6 +4565,17 @@
     // amplifies a deficit, since "+30% income" shouldn't make you bleed faster)
     if (state.wondersBuilt && state.wondersBuilt.big_ben === civId && gpt > 0) {
       gpt = Math.round(gpt * (1 + BUILDINGS.big_ben.goldMultiplier));
+    }
+    // Government — settled bonuses, or the anarchy tax while switching. Positive-
+    // only halving so a deficit isn't amplified (mirrors the Big Ben guard).
+    var gov = activeGovernment(civ);
+    if (gov) {
+      var nCities = civ.cities.length;
+      if (gov.perCityGold) gpt += gov.perCityGold * nCities;
+      if (gov.perCitySci)  spt += gov.perCitySci * nCities;
+    } else if (civ.governmentTurns > 0) {
+      if (gpt > 0) gpt = Math.round(gpt * 0.5);
+      if (spt > 0) spt = Math.round(spt * 0.5);
     }
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
@@ -4660,6 +4758,11 @@
     if (!UNITS[unit.type].civilian && state.wondersBuilt) {
       if (state.wondersBuilt.statue_liberty === unit.civ) bonus += BUILDINGS.statue_liberty.militaryAtk;
       if (state.wondersBuilt.west_point === unit.civ) bonus += BUILDINGS.west_point.militaryAtk;
+    }
+    // Autocracy government — +1 ATK on all military units (settled only)
+    if (!UNITS[unit.type].civilian) {
+      var ugov = activeGovernment(state.civs[unit.civ]);
+      if (ugov && ugov.unitAtk) bonus += ugov.unitAtk;
     }
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
@@ -5681,6 +5784,53 @@
     renderDiplomacyActions(actions, 'Diplomacy');
   }
 
+  // Short one-line summary of a government's bonuses for the picker.
+  function governmentBonusText(g) {
+    var p = [];
+    if (g.perCityGold)    p.push('+' + g.perCityGold + ' gold/city');
+    if (g.perCitySci)     p.push('+' + g.perCitySci + ' sci/city');
+    if (g.perCityProd)    p.push('+' + g.perCityProd + ' prod/city');
+    if (g.perCityCulture) p.push('+' + g.perCityCulture + ' culture/city');
+    if (g.unitAtk)        p.push('+' + g.unitAtk + ' unit atk');
+    if (g.eraPointMult)   p.push('+' + Math.round((g.eraPointMult - 1) * 100) + '% era pts');
+    return p.join(', ');
+  }
+
+  // Government picker — reuses the diplomacy action-row renderer (D-pad + tap).
+  function openGovernment() {
+    var civ = state.civs.player;
+    var cur = GOVERNMENTS[civ.government] || GOVERNMENTS.despotism;
+    var actions = [];
+    var status = civ.governmentTurns > 0
+      ? 'Anarchy — ' + civ.governmentTurns + ' turn' + (civ.governmentTurns > 1 ? 's' : '') + ' until ' + cur.name
+      : 'Current: ' + cur.name;
+    actions.push({ header: true, icon: '⚖', title: status, sub: 'Switching costs ' + ANARCHY_TURNS + ' turns of anarchy (gold & science halved)' });
+    GOVERNMENT_ORDER.forEach(function (id) {
+      var g = GOVERNMENTS[id];
+      var locked = g.tech && !civ.techs[g.tech];
+      var isCurrent = civ.government === id && civ.governmentTurns <= 0;
+      var bonus = governmentBonusText(g);
+      var sub;
+      if (locked) sub = 'Needs ' + (TECHS[g.tech] ? TECHS[g.tech].name : g.tech);
+      else if (isCurrent) sub = bonus ? bonus + ' · active' : 'Active';
+      else sub = bonus || 'No bonus';
+      actions.push({
+        icon: isCurrent ? '★' : '◆',
+        title: g.name + (isCurrent ? ' ✓' : ''),
+        sub: sub,
+        disabled: locked || isCurrent,
+        primary: isCurrent,
+        do: (locked || isCurrent) ? null : function () {
+          if (setGovernment(civ, id)) { recomputeIncome('player'); updateHud(); save(); }
+          closeModal();
+          draw();
+        }
+      });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Government');
+  }
+
   function playerOfferPeace(aiId) {
     var aiCiv = state.civs[aiId];
     var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
@@ -5783,6 +5933,7 @@
     progressTech(pl);
     // Great people culture points (temples + culture buildings + wonders)
     pl.cities.forEach(function (ct) { pl.greatPoints.culture += cityCulturePerTurn(ct, 'player'); });
+    pl.greatPoints.culture += govCulturePerTurn(pl);    // Theocracy bonus
     checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
@@ -5805,20 +5956,25 @@
         progressTech(c);
         // Great people culture points for AI
         c.cities.forEach(function (ct) { c.greatPoints.culture += cityCulturePerTurn(ct, c.id); });
+        c.greatPoints.culture += govCulturePerTurn(c);    // Theocracy bonus
         checkGreatPeople(id);
         // AI auto-upgrades
         c.units.slice().forEach(function (u) {
           if (canUpgrade(u)) upgradeUnit(u);
         });
+        // AI adopts the best government its tech + personality allow
+        aiPickGovernment(c);
       });
 
-      // Decay general bonuses for all civs
+      // Decay general bonuses + tick down government anarchy for all civs
       CIV_SIDES.forEach(function (id) {
-        var gb = state.civs[id].generalBonus;
+        var cv = state.civs[id];
+        var gb = cv.generalBonus;
         if (gb) {
           gb.turnsLeft--;
-          if (gb.turnsLeft <= 0) state.civs[id].generalBonus = null;
+          if (gb.turnsLeft <= 0) cv.generalBonus = null;
         }
+        if (cv.governmentTurns > 0) cv.governmentTurns--;   // anarchy countdown
       });
 
       // Check player elimination — no cities and no settlers means defeat
@@ -7028,6 +7184,15 @@
         do: function () { closeModal(); openDiplomacy(); }
       });
     }
+
+    // Government — switchable empire-wide stance
+    var curGov = GOVERNMENTS[civPl.government] || GOVERNMENTS.despotism;
+    actions.push({
+      icon: '⚖',
+      title: 'Government',
+      sub: civPl.governmentTurns > 0 ? 'Anarchy · ' + civPl.governmentTurns + 'T → ' + curGov.name : curGov.name + ' · tap to change',
+      do: function () { closeModal(); openGovernment(); }
+    });
 
     // Tile yield overlay toggle
     actions.push({ icon: '⬡', title: showYieldOverlay ? 'Hide Yields' : 'Show Yields', sub: 'Food / prod / gold per tile', do: function () { showYieldOverlay = !showYieldOverlay; showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF'); closeModal(); draw(); } });
@@ -8367,7 +8532,12 @@
     atkTechBonus: atkTechBonus,
     availableProducibles: availableProducibles,
     openCity: openCity,
-    draw: draw
+    draw: draw,
+    setGovernment: setGovernment,
+    aiPickGovernment: aiPickGovernment,
+    recomputeIncome: recomputeIncome,
+    activeGovernment: activeGovernment,
+    openGovernment: openGovernment
   };
 
   if (document.readyState === 'loading') {
