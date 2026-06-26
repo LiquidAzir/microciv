@@ -427,6 +427,41 @@
     if (best && civ.government !== best) setGovernment(civ, best);
   }
 
+  // Bank Era Points (culture output + a slice of gold/sci surplus, scaled by the
+  // government's era-point multiplier). Crossing the rising threshold fires a
+  // timed Golden Age. Call once per civ per turn after income is recomputed.
+  function accrueEraPoints(civ, isPlayer) {
+    if (!civ || !civ.cities || !civ.cities.length) return;
+    var culture = 0;
+    civ.cities.forEach(function (ct) { culture += cityCulturePerTurn(ct, civ.id); });
+    culture += govCulturePerTurn(civ);
+    var gain = culture + Math.max(0, Math.floor(civ.goldPerTurn / 4)) + Math.max(0, Math.floor(civ.sciPerTurn / 4));
+    var g = activeGovernment(civ);
+    if (g && g.eraPointMult) gain = Math.round(gain * g.eraPointMult);
+    civ.eraPoints += gain;
+    if (civ.goldenAgeTurns <= 0 && civ.eraPoints >= goldenAgeThreshold(civ)) {
+      civ.goldenAgeTurns = GOLDEN_AGE_LENGTH;
+      civ.eraPoints = 0;
+      civ.goldenAgesHad++;
+      if (isPlayer) {
+        showToast('☀ Golden Age! +1 to every yield for ' + GOLDEN_AGE_LENGTH + ' turns', 'success');
+        logEvent('A Golden Age dawns — every city gains +1 food/prod/gold/sci for ' + GOLDEN_AGE_LENGTH + ' turns', 'success');
+      } else {
+        logEvent((CIVS[civ.id] ? CIVS[civ.id].name : civ.id) + ' entered a Golden Age');
+      }
+    }
+  }
+  // Start (or extend) a Golden Age immediately — used by the Great Artist and the
+  // Conquest Surge. `length` lets the surge run a shorter timer than a full age.
+  function triggerGoldenAge(civ, length, isPlayer, reason) {
+    if (!civ) return;
+    civ.goldenAgeTurns = Math.max(civ.goldenAgeTurns || 0, length);
+    if (isPlayer) {
+      showToast('☀ ' + (reason || 'Golden Age') + '! +1 to every yield', 'success');
+      logEvent((reason || 'A Golden Age') + ' — +1 to every yield for ' + length + ' turns', 'success');
+    }
+  }
+
   // Selectable factions. Each gives ONE small bonus.
   var FACTIONS = {
     solaris: {
@@ -4312,6 +4347,18 @@
       uPill.classList.toggle('empty', movesCount === 0);
     }
 
+    // ERA chip — Golden-age countdown when active, else Era-Point progress.
+    var eraPill = document.getElementById('era-pill');
+    if (eraPill) {
+      var pc = state.civs.player;
+      var inGolden = pc.goldenAgeTurns > 0;
+      eraPill.querySelector('.chip-lbl').textContent = inGolden ? 'GOLD' : 'ERA';
+      eraPill.querySelector('.chip-val').textContent = inGolden
+        ? '☀' + pc.goldenAgeTurns
+        : (pc.eraPoints || 0) + '/' + goldenAgeThreshold(pc);
+      eraPill.classList.toggle('golden', inGolden);
+    }
+
     var hint = document.getElementById('hud-hint');
     var selUnit = state.selected && tileAt(state.selected.c, state.selected.r);
     selUnit = selUnit && selUnit.unit;
@@ -4467,6 +4514,10 @@
     var cgov = activeGovernment(state.civs[city.civ]);
     if (cgov && cgov.perCityProd) prod += cgov.perCityProd;
 
+    // Golden Age — flat +1 to each worked-tile yield bucket while active
+    var gaCiv = state.civs[city.civ];
+    if (gaCiv && gaCiv.goldenAgeTurns > 0) { food += GOLDEN_AGE_YIELD; prod += GOLDEN_AGE_YIELD; gold += GOLDEN_AGE_YIELD; }
+
     // Power Plant — multiplies this city's accumulated production (positive only)
     if (city.buildings.power_plant && prod > 0) prod = Math.round(prod * (1 + BUILDINGS.power_plant.prodMultiplier));
 
@@ -4488,6 +4539,8 @@
     if (b.temple && civ && civ.techs && civ.techs.philosophy) sci += 1;
     // Astronomy: coastal cities study the stars and seas — +2 science
     if (civ && civ.techs && civ.techs.astronomy && isCoastalCity(city)) sci += 2;
+    // Golden Age — +1 science per city while active
+    if (civ && civ.goldenAgeTurns > 0) sci += GOLDEN_AGE_YIELD;
     // Adjacency bonuses for science buildings
     sci += buildingAdjacency(city).sci;
     // Per-city wonder science: Library of Alexandria + University of Sankore
@@ -4919,6 +4972,11 @@
         }
       }
     }
+    // Conquest Surge — capturing a city rewards the aggressor with a short
+    // Golden Age, reusing the same timer (rewards the domination path).
+    if (CIV_SIDES.indexOf(newOwnerId) >= 0) {
+      triggerGoldenAge(state.civs[newOwnerId], CONQUEST_SURGE_LENGTH, newOwnerId === 'player', 'Conquest Surge');
+    }
     recomputeBorders();
     recomputeVisibility(newOwnerId);
     recomputeVisibility(oldOwnerId);            // old owner loses sight around the lost city
@@ -5335,6 +5393,38 @@
   // =====================================================================
   // GREAT PEOPLE
   // =====================================================================
+  // Weighted culture pool — the engine pair (scientist/engineer) plus the new
+  // merchant (gold + city-state ally) and artist (instant Golden Age).
+  var GREAT_PEOPLE_POOL = [
+    { type: 'great_scientist', weight: 3 },
+    { type: 'great_engineer',  weight: 3 },
+    { type: 'great_merchant',  weight: 2 },
+    { type: 'great_artist',    weight: 2 }
+  ];
+  function pickGreatPerson() {
+    var total = 0;
+    GREAT_PEOPLE_POOL.forEach(function (g) { total += g.weight; });
+    var roll = rnd() * total;
+    for (var i = 0; i < GREAT_PEOPLE_POOL.length; i++) {
+      roll -= GREAT_PEOPLE_POOL[i].weight;
+      if (roll <= 0) return GREAT_PEOPLE_POOL[i].type;
+    }
+    return 'great_scientist';
+  }
+  // A Great Merchant on or beside a city-state allies it to the merchant's civ.
+  function merchantAllyCityState(unit) {
+    if (!state.civs.cs) return false;
+    var tiles = [[unit.c, unit.r]].concat(neighbors(unit.c, unit.r));
+    for (var i = 0; i < tiles.length; i++) {
+      var t = tileAt(tiles[i][0], tiles[i][1]);
+      if (t && t.city && t.city.isCityState && t.city.ally !== unit.civ) {
+        t.city.ally = unit.civ;
+        return true;
+      }
+    }
+    return false;
+  }
+
   function checkGreatPeople(civId) {
     var civ = state.civs[civId];
     if (!civ.greatPoints) return;
@@ -5344,7 +5434,7 @@
     if (civ.greatPoints.culture >= threshold) {
       civ.greatPoints.culture -= threshold;
       civ.greatPeopleSpawned++;
-      var gpType = rnd() < 0.5 ? 'great_scientist' : 'great_engineer';
+      var gpType = pickGreatPerson();
       spawnGreatPerson(civId, gpType);
     }
     // Recompute threshold after culture spawn may have incremented counter
@@ -5408,6 +5498,10 @@
         var cost = UNITS[p] ? UNITS[p].cost : (BUILDINGS[p] ? BUILDINGS[p].cost : 0);
         best.prod = cost;  // will complete next processCity
       }
+    } else if (type === 'great_merchant') {
+      civ.gold += 120;                          // a windfall (auto-activated, no CS targeting)
+    } else if (type === 'great_artist') {
+      triggerGoldenAge(civ, GOLDEN_AGE_LENGTH, false, 'Great Artist');
     }
   }
 
@@ -5438,6 +5532,14 @@
         showToast('Must be in your city', 'error');
         return;
       }
+    } else if (unit.type === 'great_merchant') {
+      civ.gold += 120;
+      var allied = merchantAllyCityState(unit);
+      if (allied) recomputeIncome(unit.civ);
+      showToast('Great Merchant: +120 gold' + (allied ? ' & city-state ally!' : ''), 'success');
+      logEvent('Great Merchant earned +120 gold' + (allied ? ' and allied a city-state' : ''), 'success');
+    } else if (unit.type === 'great_artist') {
+      triggerGoldenAge(civ, GOLDEN_AGE_LENGTH, true, 'Great Artist');
     }
     killUnit(unit);
   }
@@ -5831,6 +5933,26 @@
     renderDiplomacyActions(actions, 'Government');
   }
 
+  // Era / Golden-Age info screen (opened from the ERA HUD chip).
+  function openEra() {
+    var civ = state.civs.player;
+    var gov = GOVERNMENTS[civ.government] || GOVERNMENTS.despotism;
+    var actions = [];
+    if (civ.goldenAgeTurns > 0) {
+      actions.push({ header: true, icon: '☀', title: 'Golden Age — ' + civ.goldenAgeTurns + ' turn' + (civ.goldenAgeTurns > 1 ? 's' : '') + ' left', sub: '+1 food / prod / gold / science in every city' });
+    } else {
+      actions.push({ header: true, icon: '◔', title: 'Era Points: ' + (civ.eraPoints || 0) + ' / ' + goldenAgeThreshold(civ), sub: 'Bank culture + a slice of gold/sci surplus to ignite a Golden Age' });
+    }
+    actions.push({
+      icon: '⚖',
+      title: 'Government: ' + gov.name + (civ.governmentTurns > 0 ? ' (anarchy ' + civ.governmentTurns + ')' : ''),
+      sub: 'Tap to change your empire stance',
+      do: function () { closeModal(); openGovernment(); }
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Era & Government');
+  }
+
   function playerOfferPeace(aiId) {
     var aiCiv = state.civs[aiId];
     var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
@@ -5934,6 +6056,7 @@
     // Great people culture points (temples + culture buildings + wonders)
     pl.cities.forEach(function (ct) { pl.greatPoints.culture += cityCulturePerTurn(ct, 'player'); });
     pl.greatPoints.culture += govCulturePerTurn(pl);    // Theocracy bonus
+    accrueEraPoints(pl, true);                          // bank Era Points / fire Golden Age
     checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
@@ -5957,6 +6080,7 @@
         // Great people culture points for AI
         c.cities.forEach(function (ct) { c.greatPoints.culture += cityCulturePerTurn(ct, c.id); });
         c.greatPoints.culture += govCulturePerTurn(c);    // Theocracy bonus
+        accrueEraPoints(c, false);                        // bank Era Points / fire Golden Age
         checkGreatPeople(id);
         // AI auto-upgrades
         c.units.slice().forEach(function (u) {
@@ -5975,6 +6099,7 @@
           if (gb.turnsLeft <= 0) cv.generalBonus = null;
         }
         if (cv.governmentTurns > 0) cv.governmentTurns--;   // anarchy countdown
+        if (cv.goldenAgeTurns > 0) cv.goldenAgeTurns--;     // golden-age countdown
       });
 
       // Check player elimination — no cities and no settlers means defeat
@@ -6332,6 +6457,7 @@
       row.innerHTML =
         '<div class="rep-name" style="color:' + color + '">' + nameLine + (alive ? '' : ' — defeated') + '</div>' +
         '<div class="rep-stats">🏛 ' + civ.cities.length + '  ·  ⚔ ' + mil + '  ·  ● ' + Math.round(civ.gold) + 'g  ·  ◆ ' + techCount + '/' + totalTechs + '  ·  ✦ ' + wonders + '</div>' +
+        '<div class="rep-stats">⌛ ' + getAge(civ).name + '  ·  ⚖ ' + ((GOVERNMENTS[civ.government] || GOVERNMENTS.despotism).name) + (civ.goldenAgeTurns > 0 ? '  ·  ☀ Golden Age ' + civ.goldenAgeTurns : '') + '</div>' +
         '<div class="rep-vic">' +
           '<span class="rep-vbar">Culture ' + wonders + '/' + CULTURE_VICTORY_WONDERS + '</span>' +
           '<span class="rep-vbar">Science ' + techCount + '/' + totalTechs + '</span>' +
@@ -7074,7 +7200,10 @@
       if (def.great) {
         var gpLabel = u.type === 'great_general' ? 'Inspire Army (+2 ATK, 8 turns)' :
                       u.type === 'great_scientist' ? 'Free Technology' :
-                      'Rush City Production';
+                      u.type === 'great_engineer' ? 'Rush City Production' :
+                      u.type === 'great_merchant' ? '+120 Gold · ally adjacent city-state' :
+                      u.type === 'great_artist' ? 'Trigger a Golden Age (8 turns)' :
+                      'Activate';
         actions.push({ icon: '✦', primary: true, title: 'Activate', sub: gpLabel, do: function () { closeModal(); activateGreatPerson(u); draw(); } });
       }
       // Unit upgrade
@@ -8334,6 +8463,10 @@
         if (openModal || state.victory) break;
         openActionMenu();
         break;
+      case 'open-era':
+        if (openModal || state.victory) break;
+        openEra();
+        break;
       case 'end-turn':
         if (openModal || state.victory) break;
         endTurn();
@@ -8537,7 +8670,14 @@
     aiPickGovernment: aiPickGovernment,
     recomputeIncome: recomputeIncome,
     activeGovernment: activeGovernment,
-    openGovernment: openGovernment
+    openGovernment: openGovernment,
+    accrueEraPoints: accrueEraPoints,
+    triggerGoldenAge: triggerGoldenAge,
+    pickGreatPerson: pickGreatPerson,
+    merchantAllyCityState: merchantAllyCityState,
+    activateGreatPersonAI: activateGreatPersonAI,
+    openEra: openEra,
+    goldenAgeThreshold: goldenAgeThreshold
   };
 
   if (document.readyState === 'loading') {

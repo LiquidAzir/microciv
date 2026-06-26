@@ -892,6 +892,17 @@ body {
 .units-pill .chip-val { color: var(--green); }
 .units-pill.empty { opacity: 0.5; }
 .units-pill.empty .chip-val { color: var(--muted); }
+/* ERA chip — Era-Point progress, glows gold during a Golden Age */
+.era-pill { cursor: pointer; }
+.era-pill .chip-val { color: var(--warm); }
+.era-pill.golden {
+  color: #ffd34d;
+  border-color: rgba(255,211,77,0.6);
+  background: rgba(255,211,77,0.12);
+  box-shadow: 0 0 8px rgba(255,211,77,0.35);
+}
+.era-pill.golden .chip-lbl,
+.era-pill.golden .chip-val { color: #ffd34d; }
 /* MENU chip — visible entry point to the global menu (clickable on phone/PC) */
 .menu-chip {
   cursor: pointer;
