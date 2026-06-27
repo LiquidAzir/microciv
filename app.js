@@ -1841,6 +1841,7 @@
         stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
         diplomacy: state.diplomacy,
         pendingPeace: state.pendingPeace || null,
+        pendingDilemma: state.pendingDilemma || null,
         freetech: state.freetech || false,
         log: state.log || [],
         lastEventTurn: state.lastEventTurn || 0
@@ -6427,15 +6428,18 @@
       maybeFireWorldEvent();
 
       sfxTurnStart();
-      // Show peace offer from AI if pending
-      if (state.pendingPeace) {
-        setTimeout(function () { showPeaceOffer(); }, 400);
-      }
       focusFirstUnitNoSelect();   // start each turn with nothing selected
       showTurnSummary();
       aiThinking = false;
       save();
       draw();
+      // Turn-start modal: a pending dilemma takes priority; otherwise a pending
+      // peace offer. (One at a time so they never clobber each other.)
+      if (state.pendingDilemma) {
+        setTimeout(function () { presentDilemma(); }, 450);
+      } else if (state.pendingPeace) {
+        setTimeout(function () { showPeaceOffer(); }, 400);
+      }
     }, 300);
   }
 
@@ -6615,12 +6619,80 @@
     } }
   ];
 
+  // DILEMMAS — a slice of world events become a 2-3 choice modal with real
+  // tradeoffs (the most glasses-native interaction there is). Each choice's
+  // apply() reuses existing mutators and returns a result string. Every dilemma
+  // includes a low-risk option so it never forces a bad outcome.
+  var DILEMMA_CHANCE = 0.4;   // share of fired events that become a choice
+  var DILEMMAS = [
+    { id: 'scholars', prompt: 'Wandering scholars seek your patronage.', choices: [
+      { label: 'Fund their academy', sub: '−40 gold · big research boost', apply: function () {
+        var civ = state.civs.player; if (civ.gold < 40) return 'You lacked the 40 gold to fund them.';
+        civ.gold -= 40; if (civ.currentTech) { var cost = TECHS[civ.currentTech].cost; civ.techProgress = Math.min(cost, civ.techProgress + Math.ceil(cost * 0.5)); }
+        return 'The academy flourishes — research surges ahead.'; } },
+      { label: 'Put them to work', sub: '+25 era points · a little unrest', apply: function () {
+        var civ = state.civs.player; civ.eraPoints += 25; var c = randomPlayerCity(); if (c) c.unrest = (c.unrest || 0) + 3;
+        return 'Their works inspire the realm (+25 era points).'; } },
+      { label: 'Send them away', sub: 'no cost', apply: function () { return 'You send the scholars on their way.'; } }
+    ] },
+    { id: 'raiders', prompt: 'Raiders mass in the wilds and demand tribute.', choices: [
+      { label: 'Pay them off', sub: '−35 gold · they disperse', apply: function () {
+        var civ = state.civs.player; var pay = Math.min(civ.gold, 35); civ.gold -= pay; return 'You buy off the raiders for ' + pay + ' gold.'; } },
+      { label: 'Stand firm', sub: 'risk a raid · +20 era points', apply: function () {
+        var civ = state.civs.player; civ.eraPoints += 20; var c = randomPlayerCity(); var raided = c && spawnBarbNear(c);
+        return raided ? 'You refuse — and raiders strike near ' + c.name + '!' : 'You refuse; the raiders melt away.'; } }
+    ] },
+    { id: 'harvest', prompt: 'A bumper harvest fills the granaries.', choices: [
+      { label: 'Store the grain', sub: '+1 pop in a city', apply: function () {
+        var c = randomPlayerCity(); if (!c) return null; c.pop += 1; c.food = 0; c.foodCap = 8 + c.pop * 5; return c.name + ' grows to pop ' + c.pop + '.'; } },
+      { label: 'Hold festivals', sub: 'calm every city · +15 era points', apply: function () {
+        var civ = state.civs.player; civ.cities.forEach(function (c) { c.unrest = Math.max(0, (c.unrest || 0) - 4); }); civ.eraPoints += 15; return 'Festivals calm the realm (+15 era points).'; } }
+    ] },
+    { id: 'ruins', prompt: 'Explorers uncover ancient ruins.', choices: [
+      { label: 'Excavate (gamble)', sub: 'treasure… or danger', apply: function () {
+        var civ = state.civs.player; if (rnd() < 0.6) { var g = 40 + Math.floor(rnd() * 40); civ.gold += g; return 'Treasure! (+' + g + ' gold).'; }
+        var c = randomPlayerCity(); var b = c && spawnBarbNear(c); return b ? 'You disturb a barbarian camp near ' + c.name + '!' : 'The ruins lay empty.'; } },
+      { label: 'Seal it safely', sub: '+20 gold, no risk', apply: function () { state.civs.player.gold += 20; return 'You catalogue the site carefully (+20 gold).'; } }
+    ] },
+    { id: 'engineer', prompt: 'A master engineer offers her services.', choices: [
+      { label: 'Hire her', sub: '−50 gold · rush capital production', apply: function () {
+        var civ = state.civs.player; if (civ.gold < 50) return 'You cannot meet her 50-gold fee.'; civ.gold -= 50;
+        var c = civ.cities[0]; if (!c) return null; var p = c.producing; var cost = UNITS[p] ? UNITS[p].cost : (BUILDINGS[p] ? BUILDINGS[p].cost : 0); c.prod = Math.max(c.prod, cost);
+        return 'Production in ' + c.name + ' is rushed to completion.'; } },
+      { label: 'Decline', sub: 'no cost', apply: function () { return 'You thank her and decline.'; } }
+    ] }
+  ];
+
+  // Present the pending dilemma as a choice modal (reuses the action renderer).
+  function presentDilemma() {
+    var d = null;
+    for (var i = 0; i < DILEMMAS.length; i++) if (DILEMMAS[i].id === state.pendingDilemma) { d = DILEMMAS[i]; break; }
+    if (!d) { state.pendingDilemma = null; return; }
+    var actions = [{ header: true, disabled: true, icon: '❖', title: 'A Decision', sub: d.prompt }];
+    d.choices.forEach(function (ch) {
+      actions.push({ icon: '◆', title: ch.label, sub: ch.sub, do: function () {
+        state.pendingDilemma = null;
+        var msg = null; try { msg = ch.apply(); } catch (e) { msg = null; }
+        if (msg) { logEvent('Event — ' + msg, 'info'); showToast(msg); }
+        recomputeBorders(); recomputeVisibility('player'); recomputeIncome('player');
+        closeModal(); updateHud(); save(); draw();
+      } });
+    });
+    renderDiplomacyActions(actions, 'Crossroads');
+  }
+
   function maybeFireWorldEvent() {
     if (state.victory) return;
     if (state.civs.player.cities.length === 0) return;
     if (state.turn < EVENT_START_TURN) return;
     if (state.lastEventTurn && state.turn - state.lastEventTurn < EVENT_COOLDOWN) return;
     if (rnd() >= EVENT_CHANCE) return;
+    // A share of events become an interactive dilemma, presented at turn start.
+    if (rnd() < DILEMMA_CHANCE) {
+      state.pendingDilemma = DILEMMAS[Math.floor(rnd() * DILEMMAS.length)].id;
+      state.lastEventTurn = state.turn;
+      return;
+    }
     var order = WORLD_EVENTS.slice().sort(function () { return rnd() - 0.5; });
     for (var i = 0; i < order.length; i++) {
       var msg = order[i].run();
@@ -8974,7 +9046,10 @@
     aiPickEdict: aiPickEdict,
     activeEdict: activeEdict,
     edictEff: edictEff,
-    openEdicts: openEdicts
+    openEdicts: openEdicts,
+    DILEMMAS: DILEMMAS,
+    presentDilemma: presentDilemma,
+    maybeFireWorldEvent: maybeFireWorldEvent
   };
 
   if (document.readyState === 'loading') {
