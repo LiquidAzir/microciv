@@ -554,6 +554,69 @@
   // unless its faction is themed that way.
   var PERSONALITY_ORDER = ['aggressive', 'peaceful', 'scientific', 'economic'];
 
+  // Named leaders — one per faction, looked up by civ.faction. Pure flavor +
+  // a face for the diplomacy screen, log lines, and the Chronicle.
+  var LEADERS = {
+    solaris: { name: 'Aurelia',        title: 'the Radiant',  motto: 'The sun favors the bold.' },
+    umbra:   { name: 'Kael',           title: 'the Veiled',   motto: 'What you cannot see still cuts.' },
+    tellus:  { name: 'Borin',          title: 'Stonehand',    motto: 'Deep roots weather any storm.' },
+    ferrum:  { name: 'General Crassus', title: 'the Unyielding', motto: 'Peace is merely forged between wars.' },
+    vorne:   { name: 'Khanum Vora',    title: 'the Red',      motto: 'The horde does not wait.' },
+    myrr:    { name: 'Nerith',         title: 'of the Tides', motto: 'Every current leads to coin.' }
+  };
+  function leaderOf(civId) {
+    var civ = state.civs[civId];
+    return (civ && LEADERS[civ.faction]) || { name: (CIVS[civId] ? CIVS[civId].name : civId), title: '', motto: '' };
+  }
+
+  // AGENDAS — a hidden-then-revealed disposition rolled per AI. Each turn it adds
+  // a small extra tension delta toward civs that offend it, feeding the SAME
+  // tension model that drives peace/alliance acceptance (no new AI decision code).
+  // eval(ai, other) returns a per-turn tension delta (positive = more annoyed,
+  // negative = calmed). Keep magnitudes small so it nudges, never dominates.
+  var AGENDAS = {
+    expansionist: { name: 'Expansionist', desc: 'Covets land; resents larger empires.',
+      eval: function (ai, other) { var d = other.cities.length - ai.cities.length; return d > 0 ? Math.min(1.6, d * 0.4) : 0; } },
+    cultured: { name: 'Cultured', desc: 'Bristles at rivals who hoard wonders.',
+      eval: function (ai, other) { var d = wondersOwnedBy(other.id) - wondersOwnedBy(ai.id); return d > 0 ? Math.min(1.8, d * 0.6) : 0; } },
+    supremacist: { name: 'Supremacist', desc: 'Rivals only the strongest.',
+      eval: function (ai, other) { return strongestCivId() === other.id && other.id !== ai.id ? 1.0 : 0; } },
+    technophile: { name: 'Technophile', desc: 'Envies those ahead in science.',
+      eval: function (ai, other) { var d = techCountOf(other) - techCountOf(ai); return d > 0 ? Math.min(1.5, d * 0.25) : 0; } },
+    mercantilist: { name: 'Mercantilist', desc: 'Distrusts the conspicuously wealthy.',
+      eval: function (ai, other) { return other.gold > ai.gold * 1.5 + 40 ? 0.8 : 0; } },
+    isolationist: { name: 'Isolationist', desc: 'Wants its neighbors at arm’s length.',
+      eval: function (ai, other) {
+        for (var i = 0; i < ai.cities.length; i++) for (var j = 0; j < other.cities.length; j++)
+          if (hexDist([ai.cities[i].c, ai.cities[i].r], [other.cities[j].c, other.cities[j].r]) <= TENSION_PROX_RANGE) return 0.7;
+        return 0; } },
+    ideologue: { name: 'Ideologue', desc: 'Disdains foreign forms of government.',
+      eval: function (ai, other) { return other.government && other.government !== 'despotism' && other.government !== ai.government ? 0.7 : 0; } },
+    peacekeeper: { name: 'Peacekeeper', desc: 'Abhors warmongers; warms to the peaceful.',
+      eval: function (ai, other) {
+        var wars = 0; CIV_SIDES.forEach(function (z) { if (z !== other.id && relation(other.id, z) === 'war') wars++; });
+        return wars > 0 ? Math.min(1.6, wars * 0.5) : -0.3; } }
+  };
+  var AGENDA_ORDER = ['expansionist', 'cultured', 'supremacist', 'technophile', 'mercantilist', 'isolationist', 'ideologue', 'peacekeeper'];
+  var MEMORY_MAX = 8;   // capped per-civ ledger of notable dealings with the player
+
+  function techCountOf(civ) { var n = 0; for (var i = 0; i < TECH_ORDER.length; i++) if (civ.techs[TECH_ORDER[i]]) n++; return n; }
+  function strongestCivId() {
+    var best = null, bestP = -1;
+    CIV_SIDES.forEach(function (id) { var c = state.civs[id]; if (!c || !c.cities.length) return; var pw = civPower(c); if (pw > bestP) { bestP = pw; best = id; } });
+    return best;
+  }
+  // Record a notable dealing in an AI's memory of the player, and apply its
+  // (optional) lasting tension nudge — friendly acts calm, betrayals anger.
+  function remember(aiId, text, tensionDelta) {
+    var c = state.civs[aiId];
+    if (!c || AI_SIDES.indexOf(aiId) < 0) return;
+    if (!Array.isArray(c.memory)) c.memory = [];
+    c.memory.push({ turn: state.turn, text: text });
+    if (c.memory.length > MEMORY_MAX) c.memory.shift();
+    if (tensionDelta) addTension(aiId, 'player', tensionDelta, 'memory');
+  }
+
   // City name pools per faction
   var CITY_NAMES = {
     solaris: ['Helios','Aurora','Vega','Lyra','Sirius','Polaris','Orion','Caelum'],
@@ -977,6 +1040,7 @@
     // The target of a war declaration resents the declarer.
     if (typeof addTension === 'function' && AI_SIDES.indexOf(b) >= 0) {
       addTension(b, a, TENSION_WAR_SPIKE, 'war');
+      if (a === 'player') remember(b, 'You declared war on us');
     }
     var aName = CIVS[a] ? CIVS[a].name : a;
     var bName = CIVS[b] ? CIVS[b].name : b;
@@ -1479,9 +1543,12 @@
       if (fac && fac.lean && AI_PERSONALITIES[fac.lean]) return fac.lean;
       return bag.shift() || 'aggressive';
     }
+    var agendaBag = AGENDA_ORDER.slice();
+    agendaBag.sort(function () { return Math.random() - 0.5; });
     aiIds.forEach(function (id, i) {
       state.civs[id].currentTech = i === 0 ? 'archery' : 'pottery';
       state.civs[id].personality = assignPersonality(id);
+      state.civs[id].agenda = agendaBag.shift() || 'expansionist';
     });
 
     // City-states scale with map size — denser worlds have more neutrals to court
@@ -1586,6 +1653,10 @@
       eraPoints: 0,
       goldenAgeTurns: 0,          // >0 = golden age active
       goldenAgesHad: 0,           // drives the rising era-point threshold
+      // Rival character: a rolled agenda (AIs only) + a capped memory ledger of
+      // dealings with the player. Leader is derived from faction via leaderOf().
+      agenda: null,
+      memory: [],
       // Dynamic grievance toward each other civ id (0 = cordial, higher = angrier).
       // Only AIs act on it; the player's map is unused.
       tension: {},
@@ -1839,7 +1910,20 @@
         if (typeof cv.eraPoints !== 'number') cv.eraPoints = 0;
         if (typeof cv.goldenAgeTurns !== 'number') cv.goldenAgeTurns = 0;
         if (typeof cv.goldenAgesHad !== 'number') cv.goldenAgesHad = 0;
+        if (!Array.isArray(cv.memory)) cv.memory = [];
       });
+      // Backfill AI agendas — old saves get a distinct random one
+      (function () {
+        var taken = {};
+        AI_SIDES.forEach(function (id) { if (state.civs[id] && state.civs[id].agenda) taken[state.civs[id].agenda] = 1; });
+        AI_SIDES.forEach(function (id) {
+          var cv = state.civs[id];
+          if (!cv || cv.agenda) return;
+          var pool = AGENDA_ORDER.filter(function (a) { return !taken[a]; });
+          var pick = (pool.length ? pool : AGENDA_ORDER)[Math.floor(rnd() * (pool.length ? pool.length : AGENDA_ORDER.length))];
+          cv.agenda = pick; taken[pick] = 1;
+        });
+      })();
       // Backfill AI personalities — old saves get random ones
       AI_SIDES.forEach(function (id) {
         if (state.civs[id] && !state.civs[id].personality) {
@@ -4923,6 +5007,7 @@
     // Losing a city to someone is the deepest grievance there is.
     if (AI_SIDES.indexOf(oldOwnerId) >= 0 && oldOwnerId !== newOwnerId) {
       addTension(oldOwnerId, newOwnerId, TENSION_CAPTURE_SPIKE, 'capture');
+      if (newOwnerId === 'player') remember(oldOwnerId, 'You stormed our city of ' + city.name);
     }
     // Barbarian raiders pillage and burn — they don't keep cities.
     if (newOwnerId === 'barb') {
@@ -5634,7 +5719,11 @@
         });
         var ratio = civPower(other) / Math.max(1, civPower(ai));
         var threatAdd = ratio > TENSION_THREAT_R ? (ratio - TENSION_THREAT_R) * TENSION_THREAT_W : 0;
-        var add = proxAdd + threatAdd;
+        // Agenda disposition — a small extra nudge based on this AI's character.
+        var agendaAdd = 0;
+        var ag = AGENDAS[ai.agenda];
+        if (ag) { try { agendaAdd = ag.eval(ai, other) || 0; } catch (e) { agendaAdd = 0; } }
+        var add = proxAdd + threatAdd + agendaAdd;
         // Apply decay first, then route the fresh friction through addTension so
         // band-crossing alerts toward the player fire as relations sour.
         ai.tension[otherId] = Math.max(0, prev - TENSION_DECAY);
@@ -5834,11 +5923,21 @@
       var pctPeace    = Math.round(acceptChance(per.acceptPeace,    ten, ACCEPT_SENS.peace)    * 100);
       var pctTrade    = Math.round(acceptChance(per.acceptTrade,    ten, ACCEPT_SENS.trade)    * 100);
 
-      // Header row (informational) — personality + live attitude
+      // Header row (informational) — leader + personality + live attitude
+      var ldr = leaderOf(aiId);
+      var ldrName = ldr.name + (ldr.title ? ' ' + ldr.title : '');
       actions.push({
         header: true, disabled: true,
-        icon: '⬢', title: aiName + ' — ' + relationLabel(rel),
+        icon: '⬢', title: ldrName + ' of ' + aiName + ' — ' + relationLabel(rel),
         sub: perLabel + ' · ' + attitude
+      });
+      // Agenda + the most recent memory of how you've treated them
+      var agInfo = AGENDAS[aiCiv.agenda];
+      var memLine = (aiCiv.memory && aiCiv.memory.length) ? '“' + aiCiv.memory[aiCiv.memory.length - 1].text + '”' : 'No notable history yet';
+      actions.push({
+        header: true, disabled: true,
+        icon: '◷', title: agInfo ? 'Agenda: ' + agInfo.name : 'Agenda: —',
+        sub: (agInfo ? agInfo.desc + ' · ' : '') + memLine
       });
 
       if (rel === 'war') {
@@ -5851,7 +5950,7 @@
         actions.push({
           icon: '✕', danger: true, title: 'Renounce Alliance',
           sub: 'Back to peace; either side may then declare war',
-          do: function () { setRelation('player', aiId, 'peace'); showToast('Alliance with ' + aiName + ' renounced', 'error'); logEvent('Renounced alliance with ' + aiName, 'error'); closeModal(); draw(); }
+          do: function () { setRelation('player', aiId, 'peace'); remember(aiId, 'You abandoned our alliance', 10); showToast('Alliance with ' + aiName + ' renounced', 'error'); logEvent('Renounced alliance with ' + aiName, 'error'); closeModal(); draw(); }
         });
         actions.push({
           icon: '⚗', title: 'Trade for Tech',
@@ -5959,6 +6058,7 @@
     var chance = acceptChance(per.acceptPeace, tensionOf(aiId, 'player'), ACCEPT_SENS.peace);
     if (rnd() < chance) {
       makePeace('player', aiId);
+      remember(aiId, 'We made peace', -4);
       logEvent(CIVS[aiId].name + ' accepted peace', 'success');
     } else {
       showToast(CIVS[aiId].name + ' refuses peace', 'error');
@@ -5972,6 +6072,7 @@
     var chance = acceptChance(per.acceptAlliance, tensionOf(aiId, 'player'), ACCEPT_SENS.alliance);
     if (rnd() < chance) {
       setRelation('player', aiId, 'allied');   // also wipes their tension toward you
+      remember(aiId, 'We forged an alliance', -8);
       sfxAlly();
       showToast('Alliance with ' + CIVS[aiId].name + '!', 'success');
       logEvent('Allied with ' + CIVS[aiId].name + ' (' + (per.label || 'Rival') + ')', 'success');
@@ -5993,6 +6094,7 @@
       aiCiv.gold += TRADE_GOLD_COST;
       civPl.techProgress = Math.min((TECHS[civPl.currentTech].cost), civPl.techProgress + TRADE_SCI_GAIN);
       addTension(aiId, 'player', -6);   // a fair deal warms relations a little
+      remember(aiId, 'We shared knowledge');
       sfxResearch();
       showToast('Trade with ' + CIVS[aiId].name + ': +' + TRADE_SCI_GAIN + ' science', 'success');
       logEvent('Traded ' + TRADE_GOLD_COST + 'g for ' + TRADE_SCI_GAIN + ' science via ' + CIVS[aiId].name, 'success');
@@ -8677,7 +8779,13 @@
     merchantAllyCityState: merchantAllyCityState,
     activateGreatPersonAI: activateGreatPersonAI,
     openEra: openEra,
-    goldenAgeThreshold: goldenAgeThreshold
+    goldenAgeThreshold: goldenAgeThreshold,
+    leaderOf: leaderOf,
+    remember: remember,
+    updateTensions: updateTensions,
+    tensionOf: tensionOf,
+    openDiplomacy: openDiplomacy,
+    AGENDAS: AGENDAS
   };
 
   if (document.readyState === 'loading') {
