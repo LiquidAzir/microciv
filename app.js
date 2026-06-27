@@ -208,7 +208,7 @@
     walls:    { name: 'Walls',      cost: 40, def:  4, tech: 'masonry'  },
     market:   { name: 'Market',     cost: 50, gold: 3, tech: 'currency' },
     aqueduct: { name: 'Aqueduct',   cost: 45, food: 3, tech: 'engineering' },
-    temple:   { name: 'Temple',     cost: 40, sci:  3, tech: 'theology' },
+    temple:   { name: 'Temple',     cost: 40, sci:  3, content: 2, tech: 'theology' },
     university:{name: 'University', cost: 70, sci:  4, tech: 'education' },
     bank:     { name: 'Bank',       cost: 55, gold: 4, tech: 'banking' },
     // Expansion buildings — production, economy, culture, science, defense lanes
@@ -216,8 +216,8 @@
     factory:      { name: 'Factory',       cost: 90, prod: 4, tech: 'industrialization' },
     harbor:       { name: 'Harbor',        cost: 45, food: 2, gold: 2, tech: 'trade', coastal: true },
     observatory:  { name: 'Observatory',   cost: 65, sci:  5, tech: 'astronomy' },
-    amphitheater: { name: 'Amphitheater',  cost: 35, culture: 1, tech: 'drama' },
-    cathedral:    { name: 'Cathedral',     cost: 60, culture: 2, tech: 'acoustics' },
+    amphitheater: { name: 'Amphitheater',  cost: 35, culture: 1, content: 2, tech: 'drama' },
+    cathedral:    { name: 'Cathedral',     cost: 60, culture: 2, content: 3, tech: 'acoustics' },
     castle:       { name: 'Castle',        cost: 60, def:  6, tech: 'feudalism' },
     stock_exchange:{name: 'Stock Exchange',cost: 70, gold: 6, tech: 'economics' },
     // Modern buildings — late ceilings in each lane
@@ -362,9 +362,9 @@
   // mutually exclusive, so no government snowballs.
   var GOVERNMENTS = {
     despotism: { name: 'Despotism', tech: null },
-    monarchy:  { name: 'Monarchy',  tech: 'currency',        perCityGold: 2 },
+    monarchy:  { name: 'Monarchy',  tech: 'currency',        perCityGold: 2, contentment: 1 },
     republic:  { name: 'Republic',  tech: 'philosophy',      perCitySci: 1 },
-    theocracy: { name: 'Theocracy', tech: 'theology',        perCityCulture: 1, eraPointMult: 1.25 },
+    theocracy: { name: 'Theocracy', tech: 'theology',        perCityCulture: 1, eraPointMult: 1.25, contentment: 2 },
     autocracy: { name: 'Autocracy', tech: 'conscription',    unitAtk: 1, perCityProd: 1 },
     democracy: { name: 'Democracy', tech: 'mass_production', perCityGold: 1, perCitySci: 1 }
   };
@@ -380,6 +380,32 @@
   var GOLDEN_AGE_YIELD = 1;       // +1 to each worked-tile yield bucket while active
   var CONQUEST_SURGE_LENGTH = 5;  // shorter surge granted by capturing a city
   function goldenAgeThreshold(civ) { return GOLDEN_AGE_BASE + (civ.goldenAgesHad || 0) * GOLDEN_AGE_STEP; }
+
+  // STABILITY / UNREST — a soft ceiling on the grow-and-conquer loop. Cities bank
+  // unrest from size + war + fresh conquest, offset by content buildings, the
+  // Theocracy/Monarchy stance, and Golden Ages. A city that stays over the
+  // revolt line halts production and spits out a rebel on your soil.
+  var UNREST_REVOLT_MULT = 3;    // revolt threshold = pop * this
+  var UNREST_CAPTURE_SPIKE = 6;  // one-time discontent when a city is taken
+  var UNREST_CAP_MULT = 6;       // unrest never banks past pop * this
+  function civAtWarAny(civId) {
+    for (var i = 0; i < CIV_SIDES.length; i++) { var o = CIV_SIDES[i]; if (o !== civId && relation(civId, o) === 'war') return true; }
+    return state.civs.barb && atWar(civId, 'barb') ? false : false;  // barb war is constant; don't count it
+  }
+  // Net per-turn unrest change for a city (positive = rising discontent).
+  function cityUnrestDelta(city) {
+    var civ = state.civs[city.civ];
+    var d = Math.max(0, city.pop - 3);              // size strain
+    if (civAtWarAny(city.civ)) d += 2;              // wartime discontent
+    var b = city.buildings || {};
+    var content = 0;
+    ['temple', 'amphitheater', 'cathedral'].forEach(function (k) { if (b[k] && BUILDINGS[k].content) content += BUILDINGS[k].content; });
+    var gov = activeGovernment(civ);
+    if (gov && gov.contentment) content += gov.contentment;
+    if (civ && civ.goldenAgeTurns > 0) content += 2;
+    return d - content;
+  }
+  function cityRevolting(city) { return (city.unrest || 0) >= city.pop * UNREST_REVOLT_MULT; }
 
   // The government whose bonuses currently apply — none during anarchy.
   function activeGovernment(civ) {
@@ -5028,6 +5054,8 @@
     city.civ = newOwnerId;
     city.pop = Math.max(1, city.pop - 1);
     city.producing = 'warrior';
+    city.unrest = (city.unrest || 0) + UNREST_CAPTURE_SPIKE;   // fresh conquest is restless
+    city.revoltTurns = 0;
     if (wasCityState) {
       // Strip city-state flavour — it's now a normal city
       city.kind = null;
@@ -5105,6 +5133,17 @@
   function processCity(city) {
     var y = workableYields(city);
 
+    // Stability / unrest — bank the net change, clamp, and track open revolt.
+    if (typeof city.unrest !== 'number') city.unrest = 0;
+    city.unrest = Math.max(0, Math.min(city.pop * UNREST_CAP_MULT, city.unrest + cityUnrestDelta(city)));
+    var revolting = cityRevolting(city);
+    if (revolting) {
+      if (!city.revoltTurns && city.civ === 'player') showToast(city.name + ' is on the brink of revolt!', 'error');
+      city.revoltTurns = (city.revoltTurns || 0) + 1;
+    } else {
+      city.revoltTurns = 0;
+    }
+
     // Growth
     city.food += (y.food - city.pop * 2);
     if (city.food < 0) {
@@ -5119,8 +5158,8 @@
       if (city.civ === 'player') logEvent(city.name + ' grew to pop ' + city.pop, 'success');
     }
 
-    // Production
-    city.prod += y.prod;
+    // Production — a city in open revolt produces nothing this turn.
+    city.prod += revolting ? 0 : y.prod;
     var p = city.producing;
     var cost = 0, isBuilding = false;
     if (UNITS[p]) cost = UNITS[p].cost;
@@ -5169,6 +5208,28 @@
         city.producing = pickNextProduction(city);
       }
     }
+
+    // Sustained revolt (2+ turns over the line) spawns a rebel and vents the
+    // pressure, so unrest is a managed hazard, not a permanent lock.
+    if (city.revoltTurns >= 2 && spawnRebelNear(city)) {
+      city.revoltTurns = 0;
+      city.unrest = Math.floor(city.pop * UNREST_REVOLT_MULT * 0.6);
+      if (city.civ === 'player') { logEvent('Rebels rise up near ' + city.name + '!', 'error'); showToast('Revolt! Rebels near ' + city.name, 'error'); }
+      else logEvent('Rebels rise against ' + (CIVS[city.civ] ? CIVS[city.civ].name : city.civ) + ' near ' + city.name, 'info');
+    }
+  }
+
+  // Spawn a barbarian rebel on a free tile next to a revolting city.
+  function spawnRebelNear(city) {
+    var ns = neighbors(city.c, city.r);
+    for (var i = 0; i < ns.length; i++) {
+      var t = tileAt(ns[i][0], ns[i][1]);
+      if (t && !t.unit && !t.city && !TERRAIN[t.terrain].impassable && t.terrain !== 'water') {
+        spawnUnit('barb', 'raider', ns[i][0], ns[i][1]);
+        return true;
+      }
+    }
+    return false;
   }
 
   // City bombardment — each city fires at one adjacent enemy per turn
@@ -5274,8 +5335,11 @@
         var SCI_BLDGS = { library: 1, university: 1, temple: 1, observatory: 1 };
         var GOLD_BLDGS = { market: 1, bank: 1, harbor: 1, stock_exchange: 1 };
         var DEF_BLDGS = { walls: 1, castle: 1 };
+        // If this city is restless, prioritise content buildings to quell it.
+        var restless = (city.unrest || 0) >= city.pop * UNREST_REVOLT_MULT * 0.5;
         regBldgs.sort(function (a, b) {
           var pri = function (k) {
+            if (restless && BUILDINGS[k] && BUILDINGS[k].content) return 4;
             if (civ.personality === 'scientific' && SCI_BLDGS[k]) return 3;
             if (civ.personality === 'economic'  && GOLD_BLDGS[k]) return 3;
             if ((civ.personality === 'aggressive' || civ.personality === 'warmonger') && DEF_BLDGS[k]) return 3;
@@ -5993,6 +6057,7 @@
     if (g.perCityProd)    p.push('+' + g.perCityProd + ' prod/city');
     if (g.perCityCulture) p.push('+' + g.perCityCulture + ' culture/city');
     if (g.unitAtk)        p.push('+' + g.unitAtk + ' unit atk');
+    if (g.contentment)    p.push('+' + g.contentment + ' stability/city');
     if (g.eraPointMult)   p.push('+' + Math.round((g.eraPointMult - 1) * 100) + '% era pts');
     return p.join(', ');
   }
@@ -7490,6 +7555,18 @@
     var def = (city.buildings.walls ? 4 : 0) + (city.buildings.castle ? 6 : 0) + (city.buildings.military_academy ? 4 : 0) + (city.pop);
     if (state.wondersBuilt && state.wondersBuilt.great_wall === city.civ) def = Math.round(def * 1.5);
     document.getElementById('c-def').textContent = def;
+    // Mood / stability — Content, Restless, or in open Revolt
+    var moodEl = document.getElementById('c-mood');
+    if (moodEl) {
+      var u = city.unrest || 0, thr = city.pop * UNREST_REVOLT_MULT;
+      var delta = cityUnrestDelta(city);
+      var label, col;
+      if (u >= thr) { label = 'REVOLT'; col = '#ff5a5a'; }
+      else if (u >= thr * 0.5) { label = 'Restless ' + u + '/' + thr; col = '#ffb14d'; }
+      else { label = 'Content'; col = '#7bdc8a'; }
+      moodEl.textContent = label + (delta > 0 ? ' ▲' : delta < 0 ? ' ▼' : '');
+      moodEl.style.color = col;
+    }
 
     // Current production
     var p = city.producing;
@@ -8785,7 +8862,10 @@
     updateTensions: updateTensions,
     tensionOf: tensionOf,
     openDiplomacy: openDiplomacy,
-    AGENDAS: AGENDAS
+    AGENDAS: AGENDAS,
+    cityUnrestDelta: cityUnrestDelta,
+    cityRevolting: cityRevolting,
+    processCity: processCity
   };
 
   if (document.readyState === 'loading') {
