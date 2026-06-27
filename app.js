@@ -1842,6 +1842,7 @@
         diplomacy: state.diplomacy,
         pendingPeace: state.pendingPeace || null,
         pendingDilemma: state.pendingDilemma || null,
+        eraReached: state.eraReached || 0,
         freetech: state.freetech || false,
         log: state.log || [],
         lastEventTurn: state.lastEventTurn || 0
@@ -6207,6 +6208,9 @@
       sub: ed ? ed.desc : 'Proclaim a timed stance',
       do: function () { closeModal(); openEdicts(); }
     });
+    if (state.lastCrisis) {
+      actions.push({ header: true, disabled: true, icon: '⚠', title: 'Last Crisis: ' + state.lastCrisis.name, sub: state.lastCrisis.age + ' world · turn ' + state.lastCrisis.turn });
+    }
     actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
     renderDiplomacyActions(actions, 'Era & Government');
   }
@@ -6364,6 +6368,9 @@
         if (cv.goldenAgeTurns > 0) cv.goldenAgeTurns--;     // golden-age countdown
         if (cv.edictTurns > 0) { cv.edictTurns--; if (cv.edictTurns <= 0) cv.edict = null; }  // edict lapses
       });
+
+      // Lead-scaled era crisis when the world crosses into a new high age
+      maybeFireEraCrisis();
 
       // Check player elimination — no cities and no settlers means defeat
       if (!state.victory) {
@@ -6707,6 +6714,84 @@
         return;
       }
     }
+  }
+
+  // =====================================================================
+  // ERA CRISES — a shared, lead-scaled hazard layer for the late game. Crossing
+  // a new high age (Industrial+) fires ONE crisis that hits the frontrunner
+  // hardest and can hand the trailing civ a leg up — a rubber-band that keeps
+  // the lead tense to hold. Affects ALL civs, so AIs finally feel world events.
+  // A civ in a Golden Age is immune to that crisis (Era Points = a real shield).
+  // =====================================================================
+  var ERA_CRISIS_MIN_AGE = 4;    // crises begin once any civ reaches Industrial (idx 4)
+  function leadScore(civ) {
+    if (!civ || !civ.cities.length) return 0;
+    return civ.cities.length * 2 + wondersOwnedBy(civ.id) * 3 + techCountOf(civ) + Math.floor(civ.gold / 60) + (civ.goldenAgesHad || 0);
+  }
+  function biggestCity(civ) {
+    var best = null; civ.cities.forEach(function (c) { if (!best || c.pop > best.pop) best = c; }); return best;
+  }
+  var ERA_CRISES = [
+    { id: 'recession', name: 'Global Recession', run: function (scores, leadV) {
+      CIV_SIDES.forEach(function (id) {
+        var c = state.civs[id]; if (!c || !c.cities.length || c.goldenAgeTurns > 0) return;
+        var f = 0.12 + 0.22 * (scores[id] / Math.max(1, leadV));     // leader bleeds most
+        c.gold = Math.max(0, Math.round(c.gold * (1 - f)));
+      });
+      return 'markets crash worldwide — the wealthiest empires bleed the most gold.';
+    } },
+    { id: 'pandemic', name: 'Pandemic', run: function (scores, leadV) {
+      CIV_SIDES.forEach(function (id) {
+        var c = state.civs[id]; if (!c || !c.cities.length || c.goldenAgeTurns > 0) return;
+        var big = biggestCity(c); if (!big) return;
+        var loss = scores[id] >= leadV ? 2 : 1; big.pop = Math.max(1, big.pop - loss);
+      });
+      return 'a pandemic sweeps the continents, striking the largest cities.';
+    } },
+    { id: 'unrest', name: 'Wave of Unrest', run: function (scores, leadV) {
+      CIV_SIDES.forEach(function (id) {
+        var c = state.civs[id]; if (!c || !c.cities.length || c.goldenAgeTurns > 0) return;
+        var add = Math.round(3 + 4 * (scores[id] / Math.max(1, leadV)));
+        c.cities.forEach(function (ct) { ct.unrest = (ct.unrest || 0) + add; });
+      });
+      return 'discontent spreads — sprawling empires seethe with unrest.';
+    } },
+    { id: 'refugees', name: 'Refugee Surge', run: function (scores, leadV, lowId) {
+      var c = state.civs[lowId]; if (!c || !c.cities.length) return 'displaced peoples wander, but find no haven.';
+      var home = c.cities[0]; home.pop += 1; home.food = 0; home.foodCap = 8 + home.pop * 5;
+      var spot = findSpawnTile(home, 'worker'); if (spot) spawnUnit(lowId, 'worker', spot[0], spot[1]);
+      return 'refugees flock to the struggling ' + (CIVS[lowId] ? CIVS[lowId].name : lowId) + ', bolstering them.';
+    } }
+  ];
+
+  // Fire one crisis the first time the world crosses into a new high era.
+  function maybeFireEraCrisis() {
+    if (state.victory) return;
+    var maxIdx = 0;
+    CIV_SIDES.forEach(function (id) {
+      var c = state.civs[id]; if (!c || !c.cities.length) return;
+      var a = AGES.indexOf(getAge(c)); if (a > maxIdx) maxIdx = a;
+    });
+    if (maxIdx < ERA_CRISIS_MIN_AGE) return;
+    if (typeof state.eraReached !== 'number') state.eraReached = ERA_CRISIS_MIN_AGE - 1;
+    if (maxIdx <= state.eraReached) return;   // already fired for this era — one-shot lock
+    state.eraReached = maxIdx;
+
+    var scores = {}, leadV = -1, leadId = null, lowV = Infinity, lowId = null;
+    CIV_SIDES.forEach(function (id) {
+      var c = state.civs[id]; if (!c || !c.cities.length) return;
+      var s = leadScore(c); scores[id] = s;
+      if (s > leadV) { leadV = s; leadId = id; }
+      if (s < lowV) { lowV = s; lowId = id; }
+    });
+    if (leadId === null) return;
+    var crisis = ERA_CRISES[Math.floor(rnd() * ERA_CRISES.length)];
+    var tail = crisis.run(scores, leadV, lowId) || '';
+    var ageName = AGES[maxIdx] ? AGES[maxIdx].name : 'a new era';
+    logEvent('Era Crisis — ' + crisis.name + ': ' + tail, 'error');
+    showToast('⚠ ' + crisis.name + ' grips the ' + ageName + ' world!', 'error');
+    state.lastCrisis = { turn: state.turn, name: crisis.name, age: ageName };
+    recomputeIncome('player');
   }
 
   // =====================================================================
@@ -9049,7 +9134,10 @@
     openEdicts: openEdicts,
     DILEMMAS: DILEMMAS,
     presentDilemma: presentDilemma,
-    maybeFireWorldEvent: maybeFireWorldEvent
+    maybeFireWorldEvent: maybeFireWorldEvent,
+    maybeFireEraCrisis: maybeFireEraCrisis,
+    leadScore: leadScore,
+    ERA_CRISES: ERA_CRISES
   };
 
   if (document.readyState === 'loading') {
