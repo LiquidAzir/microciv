@@ -484,6 +484,21 @@
     }
     return null;
   }
+  // Queue a civic + its unmet prereqs, prereq-first (player planning).
+  function enqueueCivicWithPrereqs(civ, target) {
+    if (!Array.isArray(civ.civicQueue)) civ.civicQueue = [];
+    var chain = [];
+    (function add(k) {
+      if ((civ.civics && civ.civics[k]) || k === civ.currentCivic || chain.indexOf(k) >= 0) return;
+      CIVICS[k].req.forEach(add);
+      chain.push(k);
+    })(target);
+    chain.forEach(function (k) {
+      if (civ.civicQueue.indexOf(k) >= 0 || civ.civicQueue.length >= 12) return;
+      civ.civicQueue.push(k);
+    });
+    if (!civ.currentCivic) popQueuedCivic(civ);
+  }
   // Advance the adopted civic by this turn's culture; completing it grants the
   // civic and can win a Cultural Ascendancy victory. Mirrors progressTech.
   function progressCivic(civ) {
@@ -7903,6 +7918,7 @@
 
     // Global actions (always at bottom)
     actions.push({ icon: '◆', title: 'Research', sub: civPl.currentTech ? TECHS[civPl.currentTech].name + ' · ' + civPl.techProgress + '/' + TECHS[civPl.currentTech].cost : 'Choose research', do: function () { closeModal(); openTech(); } });
+    actions.push({ icon: '♪', title: 'Civics', sub: civPl.currentCivic ? CIVICS[civPl.currentCivic].name + ' · ' + civPl.civicProgress + '/' + CIVICS[civPl.currentCivic].cost : (civicsAdopted(civPl) + '/' + CIVIC_ORDER.length + ' adopted'), do: function () { closeModal(); openCivics(); } });
 
     // Diplomacy — unified menu (alliances, war, peace, trade)
     var hasRival = AI_SIDES.some(function (id) {
@@ -8289,6 +8305,99 @@
           var path = document.createElementNS(SVG_NS, 'path');
           path.setAttribute('d', 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + my + ' ' + x2 + ',' + my + ' ' + x2 + ',' + y2);
           path.setAttribute('stroke', civ.techs[rq] ? 'rgba(110,210,150,0.75)' : 'rgba(150,170,190,0.30)');
+          path.setAttribute('stroke-width', '2');
+          path.setAttribute('fill', 'none');
+          svg.appendChild(path);
+        });
+      });
+    });
+  }
+
+  // The CIVICS tree screen — mirrors openTech, fuelled by culture/turn.
+  function openCivics() {
+    var civ = state.civs.player;
+    var cur = document.getElementById('civic-current');
+    if (civ.currentCivic) {
+      var cdef = CIVICS[civ.currentCivic];
+      var pct = (civ.civicProgress / cdef.cost) * 100;
+      cur.innerHTML = '<b>' + cdef.name + '</b> — ' + civ.civicProgress + '/' + cdef.cost + ' (+' + (civ.culPerTurn || 0) + ' culture/turn)<br>' +
+        '<span style="color:#888;font-size:11px">' + cdef.lore + '</span>' +
+        '<div class="bar" style="margin-top:6px"><i style="width:' + Math.min(100, pct) + '%"></i></div>';
+    } else {
+      cur.innerHTML = 'No civic in progress — pick one. <span style="color:#888;font-size:11px">(' + civicsAdopted(civ) + '/' + CIVIC_ORDER.length + ' adopted · +' + (civ.culPerTurn || 0) + ' culture/turn)</span>';
+    }
+    var list = document.getElementById('civic-list');
+    list.innerHTML = '';
+
+    var tiers = [];
+    CIVIC_ORDER.forEach(function (k) { var d = CIVIC_DEPTH[k] || 0; (tiers[d] = tiers[d] || []).push(k); });
+
+    var SVG_NS = 'http://www.w3.org/2000/svg';
+    var graph = document.createElement('div');
+    graph.className = 'tech-graph';
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'tech-edges');
+    graph.appendChild(svg);
+
+    var nodeEls = {};
+    tiers.forEach(function (tier) {
+      if (!tier) return;
+      var row = document.createElement('div');
+      row.className = 'tier-row';
+      tier.forEach(function (k) {
+        var def = CIVICS[k];
+        var done = !!(civ.civics && civ.civics[k]);
+        var isCur = k === civ.currentCivic;
+        var canAdopt = canAdoptCivic(civ, k);
+        var qIdx = civ.civicQueue ? civ.civicQueue.indexOf(k) : -1;
+        var stateCls = done ? 'done' : isCur ? 'cur' : canAdopt ? 'avail' : (qIdx >= 0 ? 'queued' : 'locked');
+        var node = document.createElement('button');
+        node.className = 'tech-node ' + stateCls + ' focusable';
+        if (done || isCur) node.setAttribute('disabled', '');
+        var badge = done ? '✓' : isCur ? '▶' : canAdopt ? def.cost + '♪' : (qIdx >= 0 ? (qIdx + 1) + '' : '🔒');
+        var sub = isCur ? civ.civicProgress + '/' + def.cost : def.lore;
+        var bar = isCur ? '<div class="tn-bar"><i style="width:' + Math.min(100, (civ.civicProgress / def.cost) * 100) + '%"></i></div>' : '';
+        node.innerHTML =
+          '<div class="tn-badge">' + badge + '</div>' +
+          '<div class="tn-name">' + def.name + '</div>' +
+          '<div class="tn-sub">' + sub + '</div>' + bar;
+        (function (k2, can2, done2, cur2) {
+          node.addEventListener('click', function () {
+            if (can2) { civ.currentCivic = k2; civ.civicProgress = 0; showToast('Adopting ' + CIVICS[k2].name); openCivics(); updateHud(); save(); return; }
+            if (done2 || cur2) return;
+            enqueueCivicWithPrereqs(civ, k2);
+            if (typeof sfxSelect === 'function') sfxSelect();
+            openCivics(); updateHud(); save();
+          });
+        })(k, canAdopt, done, isCur);
+        row.appendChild(node);
+        nodeEls[k] = node;
+      });
+      graph.appendChild(row);
+    });
+
+    list.appendChild(graph);
+    showModal('civics-screen');
+
+    requestAnimationFrame(function () {
+      var W = graph.offsetWidth, H = graph.offsetHeight;
+      if (!W || !H) return;
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      svg.setAttribute('width', W);
+      svg.setAttribute('height', H);
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      CIVIC_ORDER.forEach(function (k) {
+        var el = nodeEls[k];
+        if (!el) return;
+        var x2 = el.offsetLeft + el.offsetWidth / 2, y2 = el.offsetTop;
+        CIVICS[k].req.forEach(function (rq) {
+          var pe = nodeEls[rq];
+          if (!pe) return;
+          var x1 = pe.offsetLeft + pe.offsetWidth / 2, y1 = pe.offsetTop + pe.offsetHeight;
+          var my = (y1 + y2) / 2;
+          var path = document.createElementNS(SVG_NS, 'path');
+          path.setAttribute('d', 'M' + x1 + ',' + y1 + ' C' + x1 + ',' + my + ' ' + x2 + ',' + my + ' ' + x2 + ',' + y2);
+          path.setAttribute('stroke', (civ.civics && civ.civics[rq]) ? 'rgba(200,140,255,0.75)' : 'rgba(150,170,190,0.30)');
           path.setAttribute('stroke-width', '2');
           path.setAttribute('fill', 'none');
           svg.appendChild(path);
@@ -9339,6 +9448,8 @@
     canAdoptCivic: canAdoptCivic,
     progressCivic: progressCivic,
     pickAiCivic: pickAiCivic,
+    enqueueCivicWithPrereqs: enqueueCivicWithPrereqs,
+    openCivics: openCivics,
     civCulturePerTurn: civCulturePerTurn,
     cityCulturePerTurn: cityCulturePerTurn
   };
