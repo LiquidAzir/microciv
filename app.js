@@ -6473,8 +6473,9 @@
       var civ = state.civs[id];
       // Eliminated civs (no cities, no settler) can't win — skip them
       if (civ.cities.length === 0 && !civ.units.some(function (u) { return u.type === 'settler'; })) continue;
-      // Culture victory: own enough World Wonders
-      if (wondersOwnedBy(id) >= CULTURE_VICTORY_WONDERS) {
+      // Cultural Ascendancy victory: adopt the entire Civics tree.
+      // (Also fires from progressCivic on adoption; this catches loaded saves.)
+      if (civicsComplete(civ)) {
         return declareVictory(id, 'culture');
       }
       // Economic victory: hold the threshold for N consecutive turns
@@ -7078,7 +7079,7 @@
         '<div class="rep-stats">🏛 ' + civ.cities.length + '  ·  ⚔ ' + mil + '  ·  ● ' + Math.round(civ.gold) + 'g  ·  ◆ ' + techCount + '/' + totalTechs + '  ·  ✦ ' + wonders + '</div>' +
         '<div class="rep-stats">⌛ ' + getAge(civ).name + '  ·  ⚖ ' + ((GOVERNMENTS[civ.government] || GOVERNMENTS.despotism).name) + (civ.goldenAgeTurns > 0 ? '  ·  ☀ Golden Age ' + civ.goldenAgeTurns : '') + '</div>' +
         '<div class="rep-vic">' +
-          '<span class="rep-vbar">Culture ' + wonders + '/' + CULTURE_VICTORY_WONDERS + '</span>' +
+          '<span class="rep-vbar">Civics ' + civicsAdopted(civ) + '/' + CIVIC_ORDER.length + '</span>' +
           '<span class="rep-vbar">Science ' + techCount + '/' + totalTechs + '</span>' +
           '<span class="rep-vbar">Gold ' + Math.round(civ.gold) + '/' + ECONOMIC_VICTORY_GOLD + '</span>' +
         '</div>';
@@ -8415,13 +8416,13 @@
     var VICTORY_MSG_WIN = {
       domination: 'You captured every rival capital.',
       science:    'You researched every technology.',
-      culture:    'You completed ' + CULTURE_VICTORY_WONDERS + ' World Wonders.',
+      culture:    'You adopted every civic — a Cultural Ascendancy.',
       economic:   'You held ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.'
     };
     var VICTORY_MSG_LOSS = {
       domination: ' captured all rival capitals.',
       science:    ' completed all research first.',
-      culture:    ' completed ' + CULTURE_VICTORY_WONDERS + ' World Wonders first.',
+      culture:    ' achieved a Cultural Ascendancy first.',
       economic:   ' amassed ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.'
     };
     if (winner === 'player') {
@@ -9450,6 +9451,7 @@
     pickAiCivic: pickAiCivic,
     enqueueCivicWithPrereqs: enqueueCivicWithPrereqs,
     openCivics: openCivics,
+    openStandings: openStandings,
     civCulturePerTurn: civCulturePerTurn,
     cityCulturePerTurn: cityCulturePerTurn
   };
