@@ -503,6 +503,21 @@
       popQueuedCivic(civ);
     }
   }
+  // AI picks its next civic by personality, falling back to the earliest one
+  // whose prereqs are met (so it always advances toward the full tree).
+  function pickAiCivic(civ) {
+    var avail = CIVIC_ORDER.filter(function (id) { return canAdoptCivic(civ, id); });
+    if (!avail.length) return null;
+    var wants = {
+      scientific: ['enlightenment', 'mass_media', 'aesthetics', 'guilds'],
+      economic:   ['guilds', 'urbanization', 'civil_service', 'aesthetics'],
+      aggressive: ['nationalism', 'code_of_laws', 'patronage'],
+      warmonger:  ['nationalism', 'code_of_laws', 'patronage'],
+      peaceful:   ['oral_tradition', 'drama_poetry', 'patronage', 'aesthetics']
+    }[civ.personality] || [];
+    for (var i = 0; i < wants.length; i++) if (avail.indexOf(wants[i]) >= 0) return wants[i];
+    return avail[0];
+  }
 
   // GOLDEN AGES — banked "Era Points" (culture + a slice of gold/sci surplus)
   // cross a rising threshold to fire a timed empire-wide yield surge. Also
@@ -536,6 +551,7 @@
     var gov = activeGovernment(civ);
     if (gov && gov.contentment) content += gov.contentment;
     content += edictEff(civ, 'contentment');   // Festivals +2 / Mass Levy -1
+    content += civicSum(civ, 'perCityStability');   // Code of Laws / Urbanization
     if (civ && civ.goldenAgeTurns > 0) content += 2;
     return d - content;
   }
@@ -554,7 +570,7 @@
     if (g.tech && !civ.techs[g.tech]) return false;
     if (civ.government === id && civ.governmentTurns <= 0) return false;
     civ.government = id;
-    civ.governmentTurns = ANARCHY_TURNS;
+    civ.governmentTurns = Math.max(0, ANARCHY_TURNS - civicSum(civ, 'anarchyReduce'));   // Civil Service eases switches
     if (civ.id === 'player') {
       showToast('Anarchy: ' + ANARCHY_TURNS + ' turns → ' + g.name, 'error');
       logEvent('Adopting ' + g.name + ' (anarchy ' + ANARCHY_TURNS + ' turns)');
@@ -605,10 +621,11 @@
     culture += govCulturePerTurn(civ);
     var gain = culture + Math.max(0, Math.floor(civ.goldPerTurn / 4)) + Math.max(0, Math.floor(civ.sciPerTurn / 4));
     var g = activeGovernment(civ);
-    if (g && g.eraPointMult) gain = Math.round(gain * g.eraPointMult);
+    var eraMult = (g && g.eraPointMult ? g.eraPointMult : 1) * (1 + civicSum(civ, 'eraPointMult'));  // Theocracy x Mass Media
+    if (eraMult !== 1) gain = Math.round(gain * eraMult);
     civ.eraPoints += gain;
     if (civ.goldenAgeTurns <= 0 && civ.eraPoints >= goldenAgeThreshold(civ)) {
-      civ.goldenAgeTurns = GOLDEN_AGE_LENGTH;
+      civ.goldenAgeTurns = GOLDEN_AGE_LENGTH + civicSum(civ, 'goldenAgeBonus');   // Patronage extends
       civ.eraPoints = 0;
       civ.goldenAgesHad++;
       if (isPlayer) {
@@ -624,7 +641,7 @@
   // Conquest Surge. `length` lets the surge run a shorter timer than a full age.
   function triggerGoldenAge(civ, length, isPlayer, reason) {
     if (!civ) return;
-    civ.goldenAgeTurns = Math.max(civ.goldenAgeTurns || 0, length);
+    civ.goldenAgeTurns = Math.max(civ.goldenAgeTurns || 0, length + civicSum(civ, 'goldenAgeBonus'));
     if (isPlayer) {
       showToast('☀ ' + (reason || 'Golden Age') + '! +1 to every yield', 'success');
       logEvent((reason || 'A Golden Age') + ' — +1 to every yield for ' + length + ' turns', 'success');
@@ -4800,6 +4817,8 @@
     // Golden Age — flat +1 to each worked-tile yield bucket while active
     var gaCiv = state.civs[city.civ];
     if (gaCiv && gaCiv.goldenAgeTurns > 0) { food += GOLDEN_AGE_YIELD; prod += GOLDEN_AGE_YIELD; gold += GOLDEN_AGE_YIELD; }
+    // Adopted civics — Agrarianism +food per city
+    if (gaCiv) food += civicSum(gaCiv, 'perCityFood');
 
     // Power Plant — multiplies this city's accumulated production (positive only)
     if (city.buildings.power_plant && prod > 0) prod = Math.round(prod * (1 + BUILDINGS.power_plant.prodMultiplier));
@@ -4824,6 +4843,8 @@
     if (civ && civ.techs && civ.techs.astronomy && isCoastalCity(city)) sci += 2;
     // Golden Age — +1 science per city while active
     if (civ && civ.goldenAgeTurns > 0) sci += GOLDEN_AGE_YIELD;
+    // Adopted civics (Enlightenment) — +science per city
+    if (civ) sci += civicSum(civ, 'perCitySci');
     // Adjacency bonuses for science buildings
     sci += buildingAdjacency(city).sci;
     // Per-city wonder science: Library of Alexandria + University of Sankore
@@ -4920,6 +4941,9 @@
       gpt += edictEff(civ, 'perCityGold') * civ.cities.length;
       spt += edictEff(civ, 'perCitySci') * civ.cities.length;
     }
+    // Adopted civics (Guilds/Urbanization gold, Enlightenment science)
+    gpt += civicSum(civ, 'perCityGold') * civ.cities.length;
+    spt += civicSum(civ, 'perCitySci') * civ.cities.length;
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
   }
@@ -5102,11 +5126,12 @@
       if (state.wondersBuilt.statue_liberty === unit.civ) bonus += BUILDINGS.statue_liberty.militaryAtk;
       if (state.wondersBuilt.west_point === unit.civ) bonus += BUILDINGS.west_point.militaryAtk;
     }
-    // Autocracy government + War Footing edict — +ATK on all military units
+    // Autocracy government + War Footing edict + Nationalism civic — +ATK on military
     if (!UNITS[unit.type].civilian) {
       var ugov = activeGovernment(state.civs[unit.civ]);
       if (ugov && ugov.unitAtk) bonus += ugov.unitAtk;
       bonus += edictEff(state.civs[unit.civ], 'unitAtk');
+      bonus += civicSum(state.civs[unit.civ], 'unitAtk');
     }
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
@@ -6464,7 +6489,7 @@
     progressTech(pl);
     // Great people culture points (temples + culture buildings + wonders)
     var plCpt = civCulturePerTurn(pl);
-    pl.greatPoints.culture += plCpt;                    // Great People pool (unchanged total)
+    pl.greatPoints.culture += Math.round(plCpt * (1 + civicSum(pl, 'gpMult')));  // Monastic Orders speeds GP
     pl.culPerTurn = plCpt;                              // drives the Civics track + HUD
     accrueEraPoints(pl, true);                          // bank Era Points / fire Golden Age
     progressCivic(pl);                                  // advance the adopted civic
@@ -6490,9 +6515,10 @@
         progressTech(c);
         // Great people culture points for AI
         var cCpt = civCulturePerTurn(c);
-        c.greatPoints.culture += cCpt;                    // Great People pool (unchanged total)
+        c.greatPoints.culture += Math.round(cCpt * (1 + civicSum(c, 'gpMult')));  // Monastic Orders speeds GP
         c.culPerTurn = cCpt;                              // drives the Civics track
         accrueEraPoints(c, false);                        // bank Era Points / fire Golden Age
+        if (!c.currentCivic) { var nci = pickAiCivic(c); if (nci) { c.currentCivic = nci; c.civicProgress = 0; } }
         progressCivic(c);                                 // advance the adopted civic
         checkGreatPeople(id);
         // AI auto-upgrades
@@ -9312,6 +9338,7 @@
     civicsComplete: civicsComplete,
     canAdoptCivic: canAdoptCivic,
     progressCivic: progressCivic,
+    pickAiCivic: pickAiCivic,
     civCulturePerTurn: civCulturePerTurn,
     cityCulturePerTurn: cityCulturePerTurn
   };
