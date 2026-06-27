@@ -827,6 +827,7 @@ body {
 }
 .hud-ico.g { color: var(--gold); }
 .hud-ico.s { color: var(--sci); }
+.hud-ico.cu { color: #c98bff; }
 
 .hud-bottom {
   position: absolute;

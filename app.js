@@ -208,7 +208,8 @@
     walls:    { name: 'Walls',      cost: 40, def:  4, tech: 'masonry'  },
     market:   { name: 'Market',     cost: 50, gold: 3, tech: 'currency' },
     aqueduct: { name: 'Aqueduct',   cost: 45, food: 3, tech: 'engineering' },
-    temple:   { name: 'Temple',     cost: 40, sci:  3, content: 2, tech: 'theology' },
+    temple:   { name: 'Temple',     cost: 40, sci:  3, content: 2, culture: 3, tech: 'theology' },
+    monument: { name: 'Monument',   cost: 25, culture: 2 },
     university:{name: 'University', cost: 70, sci:  4, tech: 'education' },
     bank:     { name: 'Bank',       cost: 55, gold: 4, tech: 'banking' },
     // Expansion buildings — production, economy, culture, science, defense lanes
@@ -218,6 +219,8 @@
     observatory:  { name: 'Observatory',   cost: 65, sci:  5, tech: 'astronomy' },
     amphitheater: { name: 'Amphitheater',  cost: 35, culture: 1, content: 2, tech: 'drama' },
     cathedral:    { name: 'Cathedral',     cost: 60, culture: 2, content: 3, tech: 'acoustics' },
+    museum:       { name: 'Museum',        cost: 70, culture: 4, tech: 'acoustics' },
+    broadcast_tower:{ name: 'Broadcast Tower', cost: 95, culture: 6, tech: 'computers' },
     castle:       { name: 'Castle',        cost: 60, def:  6, tech: 'feudalism' },
     stock_exchange:{name: 'Stock Exchange',cost: 70, gold: 6, tech: 'economics' },
     // Modern buildings — late ceilings in each lane
@@ -418,6 +421,89 @@
     for (var i = 0; i < pref.length; i++) { var e = EDICTS[pref[i]]; if (e && (!e.tech || civ.techs[e.tech])) { setEdict(civ, pref[i]); return; } }
   }
 
+  // CIVICS — a SEPARATE culture tree (its own dependency graph, fuelled by
+  // culture/turn, distinct from the tech tree). Each adopted civic grants a
+  // permanent bonus on a cultural axis that COMPOSES with governments/edicts.
+  // Completing the whole tree wins a Cultural Ascendancy victory.
+  var CIVICS = {
+    // Tier 0
+    oral_tradition:  { name: 'Oral Tradition',  cost: 30,  req: [], eff: { perCityCulture: 1 }, lore: '+1 culture in every city' },
+    code_of_laws:    { name: 'Code of Laws',    cost: 30,  req: [], eff: { perCityStability: 1 }, lore: '+1 stability in every city' },
+    agrarianism:     { name: 'Agrarianism',     cost: 30,  req: [], eff: { perCityFood: 1 }, lore: '+1 food in every city' },
+    // Tier 1
+    drama_poetry:    { name: 'Drama & Poetry',  cost: 60,  req: ['oral_tradition'], eff: { perCityCulture: 1 }, lore: '+1 culture in every city' },
+    monastic_orders: { name: 'Monastic Orders', cost: 60,  req: ['oral_tradition'], eff: { gpMult: 0.2 }, lore: '+20% Great People' },
+    guilds:          { name: 'Guilds',          cost: 60,  req: ['code_of_laws'], eff: { perCityGold: 1 }, lore: '+1 gold in every city' },
+    // Tier 2
+    aesthetics:      { name: 'Aesthetics',      cost: 100, req: ['drama_poetry'], eff: { perCityCulture: 2 }, lore: '+2 culture in every city' },
+    patronage:       { name: 'Patronage',       cost: 100, req: ['drama_poetry', 'monastic_orders'], eff: { goldenAgeBonus: 3 }, lore: 'Golden Ages last +3 turns' },
+    civil_service:   { name: 'Civil Service',   cost: 100, req: ['guilds', 'code_of_laws'], eff: { anarchyReduce: 1 }, lore: '-1 anarchy turn switching government' },
+    // Tier 3
+    enlightenment:   { name: 'Enlightenment',   cost: 150, req: ['aesthetics', 'civil_service'], eff: { perCitySci: 1, perCityCulture: 1 }, lore: '+1 science & +1 culture in every city' },
+    nationalism:     { name: 'Nationalism',     cost: 150, req: ['patronage'], eff: { unitAtk: 1 }, lore: '+1 attack on all military units' },
+    urbanization:    { name: 'Urbanization',    cost: 150, req: ['civil_service'], eff: { perCityStability: 1, perCityGold: 1 }, lore: '+1 stability & +1 gold in every city' },
+    // Tier 4
+    cultural_hegemony: { name: 'Cultural Hegemony', cost: 220, req: ['enlightenment', 'nationalism'], eff: { perCityCulture: 3 }, lore: '+3 culture in every city' },
+    mass_media:      { name: 'Mass Media',      cost: 220, req: ['urbanization', 'enlightenment'], eff: { eraPointMult: 0.3, perCityCulture: 2 }, lore: '+30% Era Points & +2 culture in every city' }
+  };
+  var CIVIC_ORDER = ['oral_tradition', 'code_of_laws', 'agrarianism', 'drama_poetry', 'monastic_orders', 'guilds', 'aesthetics', 'patronage', 'civil_service', 'enlightenment', 'nationalism', 'urbanization', 'cultural_hegemony', 'mass_media'];
+  // Tier = longest prereq-chain depth (drives the civics-graph row layout).
+  var CIVIC_DEPTH = (function () {
+    var d = {};
+    function dep(k) {
+      if (d[k] != null) return d[k];
+      var r = CIVICS[k].req;
+      if (!r.length) { d[k] = 0; return 0; }
+      var m = 0; r.forEach(function (x) { m = Math.max(m, dep(x)); });
+      d[k] = m + 1; return d[k];
+    }
+    CIVIC_ORDER.forEach(dep);
+    return d;
+  })();
+  // Sum an effect key across all of a civ's ADOPTED civics (0 if none).
+  function civicSum(civ, key) {
+    if (!civ || !civ.civics) return 0;
+    var s = 0;
+    for (var id in civ.civics) { if (civ.civics[id] && CIVICS[id] && CIVICS[id].eff && CIVICS[id].eff[key]) s += CIVICS[id].eff[key]; }
+    return s;
+  }
+  function civicsAdopted(civ) { var n = 0; for (var i = 0; i < CIVIC_ORDER.length; i++) if (civ.civics && civ.civics[CIVIC_ORDER[i]]) n++; return n; }
+  function civicsComplete(civ) { return civicsAdopted(civ) >= CIVIC_ORDER.length; }
+  function canAdoptCivic(civ, id) {
+    if (!CIVICS[id] || (civ.civics && civ.civics[id])) return false;
+    return CIVICS[id].req.every(function (r) { return civ.civics && civ.civics[r]; });
+  }
+  // Pull the next still-valid civic off the player's plan into currentCivic.
+  function popQueuedCivic(civ) {
+    if (!Array.isArray(civ.civicQueue)) { civ.civicQueue = []; return null; }
+    while (civ.civicQueue.length) {
+      var k = civ.civicQueue.shift();
+      if (!CIVICS[k] || (civ.civics && civ.civics[k]) || k === civ.currentCivic) continue;
+      if (!canAdoptCivic(civ, k)) continue;
+      civ.currentCivic = k; civ.civicProgress = 0; return k;
+    }
+    return null;
+  }
+  // Advance the adopted civic by this turn's culture; completing it grants the
+  // civic and can win a Cultural Ascendancy victory. Mirrors progressTech.
+  function progressCivic(civ) {
+    if (!civ.currentCivic) popQueuedCivic(civ);
+    if (!civ.currentCivic) return;
+    var def = CIVICS[civ.currentCivic];
+    if (!def) { civ.currentCivic = null; return; }
+    civ.civicProgress = (civ.civicProgress || 0) + (civ.culPerTurn || 0);
+    if (civ.civicProgress >= def.cost) {
+      if (!civ.civics) civ.civics = {};
+      civ.civics[civ.currentCivic] = true;
+      civ.civicProgress = 0;
+      var nm = def.name;
+      civ.currentCivic = null;
+      if (civ.id === 'player') { logEvent('Adopted ' + nm + ' (civic)', 'success'); chronicle('Adopted the civic of ' + nm + '.'); }
+      if (civicsComplete(civ)) { declareVictory(civ.id, 'culture'); return; }
+      popQueuedCivic(civ);
+    }
+  }
+
   // GOLDEN AGES — banked "Era Points" (culture + a slice of gold/sci surplus)
   // cross a rising threshold to fire a timed empire-wide yield surge. Also
   // triggerable by a Great Artist or by capturing a city (Conquest Surge).
@@ -479,6 +565,14 @@
   function govCulturePerTurn(civ) {
     var g = activeGovernment(civ);
     return (g && g.perCityCulture ? g.perCityCulture : 0) * civ.cities.length;
+  }
+  // Total culture/turn for a civ = every city's culture + the government bonus.
+  // This single figure feeds BOTH the Great People pool (unchanged) and the new
+  // Civics track + culture stockpile (no double counting — one source).
+  function civCulturePerTurn(civ) {
+    var c = 0;
+    (civ.cities || []).forEach(function (ct) { c += cityCulturePerTurn(ct, civ.id); });
+    return c + govCulturePerTurn(civ);
   }
   // AI adopts the best government its tech allows, by personality. Idempotent
   // once settled on its top pick; switches (paying anarchy) when a better one
@@ -1740,6 +1834,12 @@
       // Active edict (reactive timed stance)
       edict: null,
       edictTurns: 0,
+      // Civics — the culture tree (research-style, fuelled by culPerTurn)
+      civics: {},
+      currentCivic: null,
+      civicProgress: 0,
+      civicQueue: [],
+      culPerTurn: 0,
       // Dynamic grievance toward each other civ id (0 = cordial, higher = angrier).
       // Only AIs act on it; the player's map is unused.
       tension: {},
@@ -1999,6 +2099,11 @@
         if (!Array.isArray(cv.memory)) cv.memory = [];
         if (typeof cv.edict !== 'string') cv.edict = null;
         if (typeof cv.edictTurns !== 'number') cv.edictTurns = 0;
+        if (!cv.civics || typeof cv.civics !== 'object') cv.civics = {};
+        if (typeof cv.currentCivic !== 'string') cv.currentCivic = null;
+        if (typeof cv.civicProgress !== 'number') cv.civicProgress = 0;
+        if (!Array.isArray(cv.civicQueue)) cv.civicQueue = [];
+        if (typeof cv.culPerTurn !== 'number') cv.culPerTurn = 0;
       });
       // Backfill AI agendas — old saves get a distinct random one
       (function () {
@@ -4473,6 +4578,10 @@
     document.getElementById('hud-sci').textContent = civ.currentTech
       ? civ.techProgress + '/' + TECHS[civ.currentTech].cost
       : '—';
+    var culEl = document.getElementById('hud-cul');
+    if (culEl) culEl.textContent = civ.currentCivic
+      ? civ.civicProgress + '/' + CIVICS[civ.currentCivic].cost
+      : '+' + (civ.culPerTurn || 0);
     document.getElementById('hud-tech-name').textContent = civ.currentTech
       ? TECHS[civ.currentTech].name
       : 'No research';
@@ -4757,13 +4866,15 @@
   function cityCulturePerTurn(ct, civId) {
     var c = 0;
     var b = ct.buildings || {};
-    if (b.temple) c += 3;
-    if (b.amphitheater) c += BUILDINGS.amphitheater.culture;
-    if (b.cathedral) c += BUILDINGS.cathedral.culture;
+    // Data-driven: any building with a `culture` field contributes it.
+    for (var k in b) { if (b[k] && BUILDINGS[k] && BUILDINGS[k].culture) c += BUILDINGS[k].culture; }
     var wb = state.wondersBuilt || {};
     if (wb.notre_dame === civId) c += BUILDINGS.notre_dame.perCityCulture;
     if (wb.sistine_chapel === civId) c += BUILDINGS.sistine_chapel.perCityCulture;
     if (wb.eiffel_tower === civId) c += BUILDINGS.eiffel_tower.perCityCulture;
+    // Adopted civics that boost culture in every city
+    var civ = state.civs[civId];
+    if (civ) c += civicSum(civ, 'perCityCulture');
     return c;
   }
 
@@ -6352,9 +6463,11 @@
     pl.gold += pl.goldPerTurn;
     progressTech(pl);
     // Great people culture points (temples + culture buildings + wonders)
-    pl.cities.forEach(function (ct) { pl.greatPoints.culture += cityCulturePerTurn(ct, 'player'); });
-    pl.greatPoints.culture += govCulturePerTurn(pl);    // Theocracy bonus
+    var plCpt = civCulturePerTurn(pl);
+    pl.greatPoints.culture += plCpt;                    // Great People pool (unchanged total)
+    pl.culPerTurn = plCpt;                              // drives the Civics track + HUD
     accrueEraPoints(pl, true);                          // bank Era Points / fire Golden Age
+    progressCivic(pl);                                  // advance the adopted civic
     checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
@@ -6376,9 +6489,11 @@
         c.gold += c.goldPerTurn;
         progressTech(c);
         // Great people culture points for AI
-        c.cities.forEach(function (ct) { c.greatPoints.culture += cityCulturePerTurn(ct, c.id); });
-        c.greatPoints.culture += govCulturePerTurn(c);    // Theocracy bonus
+        var cCpt = civCulturePerTurn(c);
+        c.greatPoints.culture += cCpt;                    // Great People pool (unchanged total)
+        c.culPerTurn = cCpt;                              // drives the Civics track
         accrueEraPoints(c, false);                        // bank Era Points / fire Golden Age
+        progressCivic(c);                                 // advance the adopted civic
         checkGreatPeople(id);
         // AI auto-upgrades
         c.units.slice().forEach(function (u) {
@@ -7934,6 +8049,7 @@
         if (BUILDINGS[k].food) parts.push('+' + BUILDINGS[k].food + ' food');
         if (BUILDINGS[k].gold) parts.push('+' + BUILDINGS[k].gold + ' gold');
         if (BUILDINGS[k].sci)  parts.push('+' + BUILDINGS[k].sci + ' sci');
+        if (BUILDINGS[k].culture) parts.push('+' + BUILDINGS[k].culture + ' culture');
         if (BUILDINGS[k].def)  parts.push('+' + BUILDINGS[k].def + ' def');
         sub = (parts.length ? parts.join(', ') : 'Building') + ' · ' + u.cost + ' prod';
       } else {
@@ -9187,7 +9303,17 @@
     leadScore: leadScore,
     ERA_CRISES: ERA_CRISES,
     chronicle: chronicle,
-    openChronicle: openChronicle
+    openChronicle: openChronicle,
+    CIVICS: CIVICS,
+    CIVIC_ORDER: CIVIC_ORDER,
+    CIVIC_DEPTH: CIVIC_DEPTH,
+    civicSum: civicSum,
+    civicsAdopted: civicsAdopted,
+    civicsComplete: civicsComplete,
+    canAdoptCivic: canAdoptCivic,
+    progressCivic: progressCivic,
+    civCulturePerTurn: civCulturePerTurn,
+    cityCulturePerTurn: cityCulturePerTurn
   };
 
   if (document.readyState === 'loading') {
