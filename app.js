@@ -520,6 +520,7 @@
       if (isPlayer) {
         showToast('☀ Golden Age! +1 to every yield for ' + GOLDEN_AGE_LENGTH + ' turns', 'success');
         logEvent('A Golden Age dawns — every city gains +1 food/prod/gold/sci for ' + GOLDEN_AGE_LENGTH + ' turns', 'success');
+        chronicle('A Golden Age dawned across the realm.');
       } else {
         logEvent((CIVS[civ.id] ? CIVS[civ.id].name : civ.id) + ' entered a Golden Age');
       }
@@ -533,6 +534,7 @@
     if (isPlayer) {
       showToast('☀ ' + (reason || 'Golden Age') + '! +1 to every yield', 'success');
       logEvent((reason || 'A Golden Age') + ' — +1 to every yield for ' + length + ' turns', 'success');
+      chronicle((reason || 'A Golden Age') + ' began.');
     }
   }
 
@@ -1104,8 +1106,10 @@
     var aName = CIVS[a] ? CIVS[a].name : a;
     var bName = CIVS[b] ? CIVS[b].name : b;
     if (a === 'player' || b === 'player') {
+      var peaceId = a === 'player' ? b : a;
       showToast('Peace with ' + (a === 'player' ? bName : aName) + '!', 'success');
       logEvent('Peace treaty with ' + (a === 'player' ? bName : aName), 'success');
+      chronicle('Made peace with ' + leaderOf(peaceId).name + ' of ' + (a === 'player' ? bName : aName) + '.');
     }
   }
   function declareWarOn(a, b) {
@@ -1120,8 +1124,10 @@
     var bName = CIVS[b] ? CIVS[b].name : b;
     if (a === 'player' || b === 'player') {
       var enemy = a === 'player' ? bName : aName;
+      var enemyId = a === 'player' ? b : a;
       showToast('War declared on ' + enemy + '!', 'error');
       logEvent('War with ' + enemy + '!', 'error');
+      chronicle((a === 'player' ? 'Declared war on ' : 'War declared by ') + leaderOf(enemyId).name + ' of ' + enemy + '.');
     }
   }
 
@@ -1843,6 +1849,7 @@
         pendingPeace: state.pendingPeace || null,
         pendingDilemma: state.pendingDilemma || null,
         eraReached: state.eraReached || 0,
+        chronicle: state.chronicle || [],
         freetech: state.freetech || false,
         log: state.log || [],
         lastEventTurn: state.lastEventTurn || 0
@@ -5073,6 +5080,7 @@
     killUnit(unit);
     recomputeBorders();
     showToast('Founded ' + name, 'success');
+    if (unit.civ === 'player') chronicle(isCapital ? 'Founded your first city, ' + name + '.' : 'Founded the city of ' + name + '.');
     // Planting a city next to a rival's territory irritates them right away.
     AI_SIDES.forEach(function (aiId) {
       if (aiId === unit.civ) return;
@@ -5098,6 +5106,8 @@
       addTension(oldOwnerId, newOwnerId, TENSION_CAPTURE_SPIKE, 'capture');
       if (newOwnerId === 'player') remember(oldOwnerId, 'You stormed our city of ' + city.name);
     }
+    if (newOwnerId === 'player' && oldOwnerId !== 'player') chronicle('Conquered ' + city.name + ' from ' + leaderOf(oldOwnerId).name + '.');
+    else if (oldOwnerId === 'player' && newOwnerId !== 'player') chronicle('Lost ' + city.name + ' to ' + leaderOf(newOwnerId).name + '.');
     // Barbarian raiders pillage and burn — they don't keep cities.
     if (newOwnerId === 'barb') {
       var idx0 = oldOwner.cities.indexOf(city);
@@ -5240,12 +5250,12 @@
             // pop a free warrior the next turn). Pick a sensible default.
             city.prod = 0;
             city.producing = 'warrior';
-            if (city.civ === 'player') logEvent('Lost the race for ' + bdef.name, 'error');
+            if (city.civ === 'player') { logEvent('Lost the race for ' + bdef.name, 'error'); chronicle('Lost the race to build ' + bdef.name + '.'); }
           } else {
             city.buildings[p] = true;
             state.wondersBuilt[p] = city.civ;
             applyWonderOneShot(city, p);
-            if (city.civ === 'player') { logEvent(city.name + ' built ' + bdef.name + ' (wonder)', 'success'); sfxWonder(); }
+            if (city.civ === 'player') { logEvent(city.name + ' built ' + bdef.name + ' (wonder)', 'success'); chronicle('Completed the wonder of ' + bdef.name + ' in ' + city.name + '.'); sfxWonder(); }
             else logEvent(CIVS[city.civ].name + ' built ' + bdef.name, 'error');
           }
         } else {
@@ -5519,6 +5529,7 @@
         if (civ.id === 'player') {
           logEvent('Entered the ' + ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
           showToast(ageAfter.name + ' Age! +' + ageGold + ' gold', 'success');
+          chronicle('Ushered in the ' + ageAfter.name + ' Age.');
           sfxAgeUp();
         }
       }
@@ -5675,6 +5686,7 @@
     sfxBuild();
     showToast(UNITS[type].name + ' has been born!', 'success');
     logEvent(UNITS[type].name + ' appeared near ' + home.name, 'success');
+    chronicle('A ' + UNITS[type].name + ' arose among your people.');
   }
 
   function activateGreatPersonAI(civId, type) {
@@ -6215,6 +6227,25 @@
     renderDiplomacyActions(actions, 'Era & Government');
   }
 
+  // The Chronicle — a scrollable, age-grouped recap of the game's milestones.
+  function openChronicle() {
+    var ch = state.chronicle || [];
+    var actions = [];
+    if (!ch.length) {
+      actions.push({ header: true, disabled: true, icon: '📜', title: 'The Chronicle', sub: 'Your saga has yet to begin.' });
+    } else {
+      var lastAge = null;
+      ch.forEach(function (e) {
+        if (e.age !== lastAge) { actions.push({ header: true, disabled: true, icon: '❖', title: 'The ' + e.age + ' Age' }); lastAge = e.age; }
+        // Entry rows are focusable (no-op) so the D-pad can scroll the saga.
+        actions.push({ icon: '•', title: e.text, sub: 'Turn ' + e.turn, do: function () {} });
+      });
+    }
+    // After the game ends, Back returns to the end screen (which holds New Game).
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); if (state.victory) showModal('end-screen'); } });
+    renderDiplomacyActions(actions, 'The Chronicle');
+  }
+
   function playerOfferPeace(aiId) {
     var aiCiv = state.civs[aiId];
     var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.aggressive;
@@ -6269,6 +6300,8 @@
 
   function declareVictory(civId, kind) {
     state.victory = civId;
+    var who = civId === 'player' ? 'You' : (leaderOf(civId).name + ' of ' + (CIVS[civId] ? CIVS[civId].name : civId));
+    chronicle(who + ' achieved a ' + kind + ' victory.');
     showEndScreen(civId, kind);
   }
 
@@ -6506,6 +6539,16 @@
     if (!state.log) state.log = [];
     state.log.push({ turn: state.turn, msg: msg, kind: kind || 'info' });
     if (state.log.length > 90) state.log.splice(0, state.log.length - 90);
+  }
+
+  // THE CHRONICLE — a curated, age-stamped narrative of the game's defining
+  // moments (NOT the spammy log). One push per genuine milestone; capped so the
+  // save stays small. Renders as your "saga" recap, grouped by age.
+  function chronicle(text) {
+    if (!state.chronicle) state.chronicle = [];
+    var age = state.civs.player ? getAge(state.civs.player).name : 'Ancient';
+    state.chronicle.push({ turn: state.turn, age: age, text: text });
+    if (state.chronicle.length > 80) state.chronicle.shift();
   }
 
   function showTurnSummary() {
@@ -6790,6 +6833,7 @@
     var ageName = AGES[maxIdx] ? AGES[maxIdx].name : 'a new era';
     logEvent('Era Crisis — ' + crisis.name + ': ' + tail, 'error');
     showToast('⚠ ' + crisis.name + ' grips the ' + ageName + ' world!', 'error');
+    chronicle('Era Crisis: ' + crisis.name + ' struck the ' + ageName + ' world.');
     state.lastCrisis = { turn: state.turn, name: crisis.name, age: ageName };
     recomputeIncome('player');
   }
@@ -7754,8 +7798,9 @@
     // Tile yield overlay toggle
     actions.push({ icon: '⬡', title: showYieldOverlay ? 'Hide Yields' : 'Show Yields', sub: 'Food / prod / gold per tile', do: function () { showYieldOverlay = !showYieldOverlay; showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF'); closeModal(); draw(); } });
 
-    // Event log
+    // Event log + the Chronicle (curated saga)
     actions.push({ icon: '📜', title: 'Event Log', sub: 'Recent history & notifications', do: function () { closeModal(); openLog(); } });
+    actions.push({ icon: '📖', title: 'Chronicle', sub: 'Your saga so far', do: function () { closeModal(); openChronicle(); } });
 
     // World report (standings) + options
     actions.push({ icon: '🏆', title: 'World Report', sub: 'Standings & victory progress', do: function () { closeModal(); openStandings(); } });
@@ -8907,6 +8952,9 @@
         if (openModal || state.victory) break;
         openEra();
         break;
+      case 'open-chronicle':
+        openChronicle();
+        break;
       case 'end-turn':
         if (openModal || state.victory) break;
         endTurn();
@@ -9137,7 +9185,9 @@
     maybeFireWorldEvent: maybeFireWorldEvent,
     maybeFireEraCrisis: maybeFireEraCrisis,
     leadScore: leadScore,
-    ERA_CRISES: ERA_CRISES
+    ERA_CRISES: ERA_CRISES,
+    chronicle: chronicle,
+    openChronicle: openChronicle
   };
 
   if (document.readyState === 'loading') {
