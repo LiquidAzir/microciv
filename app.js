@@ -371,6 +371,53 @@
   var GOVERNMENT_ORDER = ['despotism', 'monarchy', 'republic', 'theocracy', 'autocracy', 'democracy'];
   var ANARCHY_TURNS = 2;          // commitment cost when switching government
 
+  // EDICTS — a fast, reactive lever (vs. governments, which are a slow identity
+  // pick). Exactly one active at a time; it runs for a fixed duration then
+  // lapses. Each is a single sharp +x/-y tradeoff on the SAME effect fields the
+  // government bonuses use, so it folds into the same income/yield/atk sites.
+  var EDICTS = {
+    war_footing: { name: 'War Footing', tech: null,        turns: 6, eff: { unitAtk: 1, perCityGold: -1 }, desc: '+1 unit attack · -1 gold/city' },
+    mobilization:{ name: 'Mobilization', tech: 'iron',      turns: 6, eff: { perCityProd: 1, perCitySci: -1 }, desc: '+1 prod/city · -1 sci/city' },
+    free_market: { name: 'Free Market', tech: 'currency',   turns: 6, eff: { perCityGold: 2, perCityProd: -1 }, desc: '+2 gold/city · -1 prod/city' },
+    scholarship: { name: 'Scholarship', tech: 'writing',    turns: 6, eff: { perCitySci: 2, perCityGold: -1 }, desc: '+2 science/city · -1 gold/city' },
+    festivals:   { name: 'Festivals',   tech: 'drama',      turns: 6, eff: { contentment: 2, perCityGold: -1 }, desc: '+2 stability/city · -1 gold/city' },
+    levy:        { name: 'Mass Levy',   tech: 'feudalism',  turns: 6, eff: { perCityProd: 1, contentment: -1 }, desc: '+1 prod/city · -1 stability/city' }
+  };
+  var EDICT_ORDER = ['war_footing', 'mobilization', 'free_market', 'scholarship', 'festivals', 'levy'];
+  // The active edict's def, or null when none is running.
+  function activeEdict(civ) {
+    if (!civ || !(civ.edictTurns > 0) || !civ.edict) return null;
+    return EDICTS[civ.edict] || null;
+  }
+  // Signed value an active edict contributes for a given effect key (0 if none).
+  function edictEff(civ, key) {
+    var e = activeEdict(civ);
+    return (e && e.eff && e.eff[key]) ? e.eff[key] : 0;
+  }
+  // Proclaim an edict for its full duration (replaces any current one).
+  function setEdict(civ, id) {
+    var e = EDICTS[id];
+    if (!civ || !e) return false;
+    if (e.tech && !civ.techs[e.tech]) return false;
+    civ.edict = id;
+    civ.edictTurns = e.turns;
+    if (civ.id === 'player') { showToast('Edict: ' + e.name + ' (' + e.turns + ' turns)', 'success'); logEvent('Proclaimed ' + e.name + ' — ' + e.desc, 'success'); }
+    return true;
+  }
+  // AI proclaims a fitting edict when none is active, by personality.
+  function aiPickEdict(civ) {
+    if (!civ || civ.edictTurns > 0) return;
+    var pref;
+    switch (civ.personality) {
+      case 'aggressive': case 'warmonger': pref = ['war_footing', 'mobilization', 'levy']; break;
+      case 'economic': pref = ['free_market', 'mobilization']; break;
+      case 'scientific': pref = ['scholarship', 'free_market']; break;
+      case 'peaceful': pref = ['festivals', 'scholarship']; break;
+      default: pref = ['mobilization'];
+    }
+    for (var i = 0; i < pref.length; i++) { var e = EDICTS[pref[i]]; if (e && (!e.tech || civ.techs[e.tech])) { setEdict(civ, pref[i]); return; } }
+  }
+
   // GOLDEN AGES — banked "Era Points" (culture + a slice of gold/sci surplus)
   // cross a rising threshold to fire a timed empire-wide yield surge. Also
   // triggerable by a Great Artist or by capturing a city (Conquest Surge).
@@ -402,6 +449,7 @@
     ['temple', 'amphitheater', 'cathedral'].forEach(function (k) { if (b[k] && BUILDINGS[k].content) content += BUILDINGS[k].content; });
     var gov = activeGovernment(civ);
     if (gov && gov.contentment) content += gov.contentment;
+    content += edictEff(civ, 'contentment');   // Festivals +2 / Mass Levy -1
     if (civ && civ.goldenAgeTurns > 0) content += 2;
     return d - content;
   }
@@ -1683,6 +1731,9 @@
       // dealings with the player. Leader is derived from faction via leaderOf().
       agenda: null,
       memory: [],
+      // Active edict (reactive timed stance)
+      edict: null,
+      edictTurns: 0,
       // Dynamic grievance toward each other civ id (0 = cordial, higher = angrier).
       // Only AIs act on it; the player's map is unused.
       tension: {},
@@ -1937,6 +1988,8 @@
         if (typeof cv.goldenAgeTurns !== 'number') cv.goldenAgeTurns = 0;
         if (typeof cv.goldenAgesHad !== 'number') cv.goldenAgesHad = 0;
         if (!Array.isArray(cv.memory)) cv.memory = [];
+        if (typeof cv.edict !== 'string') cv.edict = null;
+        if (typeof cv.edictTurns !== 'number') cv.edictTurns = 0;
       });
       // Backfill AI agendas — old saves get a distinct random one
       (function () {
@@ -4623,6 +4676,8 @@
     // Autocracy government — +1 production in every city (settled only)
     var cgov = activeGovernment(state.civs[city.civ]);
     if (cgov && cgov.perCityProd) prod += cgov.perCityProd;
+    // Active edict production modifier (e.g. Mobilization +1 / Free Market -1)
+    prod += edictEff(state.civs[city.civ], 'perCityProd');
 
     // Golden Age — flat +1 to each worked-tile yield bucket while active
     var gaCiv = state.civs[city.civ];
@@ -4739,6 +4794,11 @@
     } else if (civ.governmentTurns > 0) {
       if (gpt > 0) gpt = Math.round(gpt * 0.5);
       if (spt > 0) spt = Math.round(spt * 0.5);
+    }
+    // Active edict — applies independently of government/anarchy.
+    if (activeEdict(civ)) {
+      gpt += edictEff(civ, 'perCityGold') * civ.cities.length;
+      spt += edictEff(civ, 'perCitySci') * civ.cities.length;
     }
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
@@ -4922,10 +4982,11 @@
       if (state.wondersBuilt.statue_liberty === unit.civ) bonus += BUILDINGS.statue_liberty.militaryAtk;
       if (state.wondersBuilt.west_point === unit.civ) bonus += BUILDINGS.west_point.militaryAtk;
     }
-    // Autocracy government — +1 ATK on all military units (settled only)
+    // Autocracy government + War Footing edict — +ATK on all military units
     if (!UNITS[unit.type].civilian) {
       var ugov = activeGovernment(state.civs[unit.civ]);
       if (ugov && ugov.unitAtk) bonus += ugov.unitAtk;
+      bonus += edictEff(state.civs[unit.civ], 'unitAtk');
     }
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
@@ -6097,6 +6158,31 @@
     renderDiplomacyActions(actions, 'Government');
   }
 
+  // Edict picker — a fast reactive stance with a single sharp tradeoff.
+  function openEdicts() {
+    var civ = state.civs.player;
+    var cur = activeEdict(civ);
+    var actions = [];
+    actions.push({
+      header: true, disabled: true, icon: '✶',
+      title: cur ? 'Active: ' + cur.name + ' — ' + civ.edictTurns + ' turn' + (civ.edictTurns > 1 ? 's' : '') + ' left' : 'No edict in force',
+      sub: 'One at a time · runs its term, then lapses'
+    });
+    EDICT_ORDER.forEach(function (id) {
+      var e = EDICTS[id];
+      var locked = e.tech && !civ.techs[e.tech];
+      var isCurrent = civ.edict === id && civ.edictTurns > 0;
+      var sub = locked ? 'Needs ' + (TECHS[e.tech] ? TECHS[e.tech].name : e.tech) : e.desc + (isCurrent ? ' · active' : '');
+      actions.push({
+        icon: isCurrent ? '★' : '◆', title: e.name + (isCurrent ? ' ✓' : ''), sub: sub,
+        disabled: locked || isCurrent, primary: isCurrent,
+        do: (locked || isCurrent) ? null : function () { if (setEdict(civ, id)) { recomputeIncome('player'); updateHud(); save(); } closeModal(); draw(); }
+      });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Edicts');
+  }
+
   // Era / Golden-Age info screen (opened from the ERA HUD chip).
   function openEra() {
     var civ = state.civs.player;
@@ -6112,6 +6198,13 @@
       title: 'Government: ' + gov.name + (civ.governmentTurns > 0 ? ' (anarchy ' + civ.governmentTurns + ')' : ''),
       sub: 'Tap to change your empire stance',
       do: function () { closeModal(); openGovernment(); }
+    });
+    var ed = activeEdict(civ);
+    actions.push({
+      icon: '✶',
+      title: 'Edict: ' + (ed ? ed.name + ' (' + civ.edictTurns + 'T)' : 'none'),
+      sub: ed ? ed.desc : 'Proclaim a timed stance',
+      do: function () { closeModal(); openEdicts(); }
     });
     actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
     renderDiplomacyActions(actions, 'Era & Government');
@@ -6255,6 +6348,7 @@
         });
         // AI adopts the best government its tech + personality allow
         aiPickGovernment(c);
+        aiPickEdict(c);
       });
 
       // Decay general bonuses + tick down government anarchy for all civs
@@ -6267,6 +6361,7 @@
         }
         if (cv.governmentTurns > 0) cv.governmentTurns--;   // anarchy countdown
         if (cv.goldenAgeTurns > 0) cv.goldenAgeTurns--;     // golden-age countdown
+        if (cv.edictTurns > 0) { cv.edictTurns--; if (cv.edictTurns <= 0) cv.edict = null; }  // edict lapses
       });
 
       // Check player elimination — no cities and no settlers means defeat
@@ -7488,6 +7583,15 @@
       title: 'Government',
       sub: civPl.governmentTurns > 0 ? 'Anarchy · ' + civPl.governmentTurns + 'T → ' + curGov.name : curGov.name + ' · tap to change',
       do: function () { closeModal(); openGovernment(); }
+    });
+
+    // Edicts — fast reactive stance
+    var curEd = activeEdict(civPl);
+    actions.push({
+      icon: '✶',
+      title: 'Edicts',
+      sub: curEd ? curEd.name + ' · ' + civPl.edictTurns + 'T left' : 'Proclaim a timed stance',
+      do: function () { closeModal(); openEdicts(); }
     });
 
     // Tile yield overlay toggle
@@ -8865,7 +8969,12 @@
     AGENDAS: AGENDAS,
     cityUnrestDelta: cityUnrestDelta,
     cityRevolting: cityRevolting,
-    processCity: processCity
+    processCity: processCity,
+    setEdict: setEdict,
+    aiPickEdict: aiPickEdict,
+    activeEdict: activeEdict,
+    edictEff: edictEff,
+    openEdicts: openEdicts
   };
 
   if (document.readyState === 'loading') {
