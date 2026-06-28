@@ -2124,6 +2124,7 @@
         diplomacy: state.diplomacy,
         pendingPeace: state.pendingPeace || null,
         pendingDilemma: state.pendingDilemma || null,
+        pendingCrisis: state.pendingCrisis || null,
         eraReached: state.eraReached || 0,
         chronicle: state.chronicle || [],
         freetech: state.freetech || false,
@@ -2211,6 +2212,7 @@
       if (state.civs.cs) state.civs.cs.cities.forEach(function (csc) { if (!csc.quest) csc.quest = makeCsQuest(); });
       state.difficulty = state.difficulty || 'normal';
       if (state.pendingPeace === undefined) state.pendingPeace = null;
+      if (state.pendingCrisis === undefined) state.pendingCrisis = null;
       if (state.freetech === undefined) state.freetech = false;
       // Restore map dimensions from save (or default to 14x14 for old saves)
       MAP_W = state.mapW || 14;
@@ -6990,6 +6992,8 @@
       // turns and minor nudges (idle units) never pop a modal. (One at a time.)
       if (findPendingPromoUnit()) {
         setTimeout(function () { maybePresentPromotion(); }, 400);
+      } else if (state.pendingCrisis) {
+        setTimeout(function () { presentCrisisDilemma(); }, 450);
       } else if (state.pendingDilemma) {
         setTimeout(function () { presentDilemma(); }, 450);
       } else if (state.pendingPeace) {
@@ -7376,36 +7380,83 @@
   function biggestCity(civ) {
     var best = null; civ.cities.forEach(function (c) { if (!best || c.pop > best.pop) best = c; }); return best;
   }
+  // Each crisis: run() applies the silent baseline effect to civs (skipping the
+  // player when affectPlayer===false, because the player instead gets a choice
+  // via dilemma()). A weaponize choice is only added when the frontrunner is an
+  // AI (no point ganging up on yourself).
+  function leaderName(ctx) { return (CIVS[ctx.leadId] ? CIVS[ctx.leadId].name : 'the frontrunner'); }
+  function leaderIsRival(ctx) { return !!(ctx.leadId && ctx.leadId !== 'player' && state.civs[ctx.leadId]); }
   var ERA_CRISES = [
-    { id: 'recession', name: 'Global Recession', run: function (scores, leadV) {
+    { id: 'recession', name: 'Global Recession', run: function (scores, leadV, lowId, affectPlayer) {
       CIV_SIDES.forEach(function (id) {
+        if (id === 'player' && affectPlayer === false) return;
         var c = state.civs[id]; if (!c || !c.cities.length || c.goldenAgeTurns > 0) return;
         var f = 0.12 + 0.22 * (scores[id] / Math.max(1, leadV));     // leader bleeds most
         c.gold = Math.max(0, Math.round(c.gold * (1 - f)));
       });
       return 'markets crash worldwide — the wealthiest empires bleed the most gold.';
+    }, dilemma: function (ctx) {
+      var p = state.civs.player;
+      var ch = [
+        { label: 'Austerity', sub: 'Lose 10% gold — steady and safe', apply: function () { var l = Math.round(p.gold * 0.10); p.gold -= l; return 'austerity steadies the books (-' + l + ' gold).'; } },
+        { label: 'Stimulus gamble', sub: '50/50: a boom (+120g) or a deeper crash (-30%)', apply: function () { if (rnd() < 0.5) { p.gold += 120; return 'the stimulus sparks a boom (+120 gold)!'; } var l = Math.round(p.gold * 0.30); p.gold -= l; return 'the gamble backfires (-' + l + ' gold).'; } }
+      ];
+      if (leaderIsRival(ctx)) ch.push({ label: 'Profiteer off the chaos', weaponize: true, sub: leaderName(ctx) + ' loses 25% gold; you lose 12%', apply: function () { var l = Math.round(p.gold * 0.12); p.gold -= l; var L = state.civs[ctx.leadId]; var ll = 0; if (L) { ll = Math.round(L.gold * 0.25); L.gold = Math.max(0, L.gold - ll); recomputeIncome(ctx.leadId); } return 'you profiteer — ' + leaderName(ctx) + ' loses ' + ll + 'g, you lose ' + l + 'g.'; } });
+      return { prompt: 'Markets crash worldwide. How does your treasury respond?', choices: ch };
     } },
-    { id: 'pandemic', name: 'Pandemic', run: function (scores, leadV) {
+    { id: 'pandemic', name: 'Pandemic', run: function (scores, leadV, lowId, affectPlayer) {
       CIV_SIDES.forEach(function (id) {
+        if (id === 'player' && affectPlayer === false) return;
         var c = state.civs[id]; if (!c || !c.cities.length || c.goldenAgeTurns > 0) return;
         var big = biggestCity(c); if (!big) return;
         var loss = scores[id] >= leadV ? 2 : 1; big.pop = Math.max(1, big.pop - loss);
       });
       return 'a pandemic sweeps the continents, striking the largest cities.';
+    }, dilemma: function (ctx) {
+      var p = state.civs.player;
+      var ch = [
+        { label: 'Quarantine', sub: 'Your largest city loses 1 pop', apply: function () { var b = biggestCity(p); if (b) b.pop = Math.max(1, b.pop - 1); return 'quarantine limits the toll (largest city -1 pop).'; } },
+        { label: 'Rush a cure', sub: 'Pay 80g · 60% no loss, else -2 pop', apply: function () { p.gold = Math.max(0, p.gold - 80); if (rnd() < 0.6) return 'the cure holds — no lives lost (-80 gold).'; var b = biggestCity(p); if (b) b.pop = Math.max(1, b.pop - 2); return 'the cure fails (-80 gold, largest city -2 pop).'; } }
+      ];
+      if (leaderIsRival(ctx)) ch.push({ label: 'Let it spread to rivals', weaponize: true, sub: 'Every rival’s largest city -1 pop; yours -1', apply: function () { var b = biggestCity(p); if (b) b.pop = Math.max(1, b.pop - 1); AI_SIDES.forEach(function (id) { var c = state.civs[id]; if (!c || !c.cities.length) return; var bb = biggestCity(c); if (bb) bb.pop = Math.max(1, bb.pop - 1); }); return 'you let the plague spread — rivals’ largest cities -1 pop, yours -1.'; } });
+      return { prompt: 'A pandemic reaches your cities. Your response?', choices: ch };
     } },
-    { id: 'unrest', name: 'Wave of Unrest', run: function (scores, leadV) {
+    { id: 'unrest', name: 'Wave of Unrest', run: function (scores, leadV, lowId, affectPlayer) {
       CIV_SIDES.forEach(function (id) {
+        if (id === 'player' && affectPlayer === false) return;
         var c = state.civs[id]; if (!c || !c.cities.length || c.goldenAgeTurns > 0) return;
         var add = Math.round(3 + 4 * (scores[id] / Math.max(1, leadV)));
         c.cities.forEach(function (ct) { ct.unrest = (ct.unrest || 0) + add; });
       });
       return 'discontent spreads — sprawling empires seethe with unrest.';
+    }, dilemma: function (ctx) {
+      var p = state.civs.player;
+      var ch = [
+        { label: 'Appease with festivals', sub: 'Pay 60g · no unrest', apply: function () { p.gold = Math.max(0, p.gold - 60); return 'festivals calm the people (-60 gold, no unrest).'; } },
+        { label: 'Tough it out', sub: '60% calm, else +6 unrest per city', apply: function () { if (rnd() < 0.6) return 'the unrest fizzles out on its own.'; p.cities.forEach(function (ct) { ct.unrest = (ct.unrest || 0) + 6; }); return 'the unrest boils over (+6 unrest in every city).'; } }
+      ];
+      if (leaderIsRival(ctx)) ch.push({ label: 'Incite revolts abroad', weaponize: true, sub: 'Every rival +5 unrest/city; you +2/city', apply: function () { p.cities.forEach(function (ct) { ct.unrest = (ct.unrest || 0) + 2; }); AI_SIDES.forEach(function (id) { var c = state.civs[id]; if (!c) return; c.cities.forEach(function (ct) { ct.unrest = (ct.unrest || 0) + 5; }); }); return 'you fan the flames abroad — rivals +5 unrest/city, you +2.'; } });
+      return { prompt: 'Discontent spreads through your empire.', choices: ch };
     } },
-    { id: 'refugees', name: 'Refugee Surge', run: function (scores, leadV, lowId) {
-      var c = state.civs[lowId]; if (!c || !c.cities.length) return 'displaced peoples wander, but find no haven.';
+    { id: 'refugees', name: 'Refugee Surge', run: function (scores, leadV, lowId, affectPlayer) {
+      var tid = lowId;
+      if (affectPlayer === false && tid === 'player') {   // player handles theirs via the dilemma; help the lowest AI
+        tid = null; var lv = Infinity;
+        AI_SIDES.forEach(function (id) { var c = state.civs[id]; if (c && c.cities.length && scores[id] < lv) { lv = scores[id]; tid = id; } });
+      }
+      if (!tid) return 'displaced peoples wander, but find no haven.';
+      var c = state.civs[tid]; if (!c || !c.cities.length) return 'displaced peoples wander, but find no haven.';
       var home = c.cities[0]; home.pop += 1; home.food = 0; home.foodCap = 8 + home.pop * 5;
-      var spot = findSpawnTile(home, 'worker'); if (spot) spawnUnit(lowId, 'worker', spot[0], spot[1]);
-      return 'refugees flock to the struggling ' + (CIVS[lowId] ? CIVS[lowId].name : lowId) + ', bolstering them.';
+      var spot = findSpawnTile(home, 'worker'); if (spot) spawnUnit(tid, 'worker', spot[0], spot[1]);
+      return 'refugees flock to the struggling ' + (CIVS[tid] ? CIVS[tid].name : tid) + ', bolstering them.';
+    }, dilemma: function (ctx) {
+      var p = state.civs.player;
+      function cap() { return p.cities[0]; }
+      return { prompt: 'A surge of refugees reaches your borders.', choices: [
+        { label: 'Welcome them', sub: 'Capital +1 pop and a free Worker', apply: function () { var h = cap(); if (h) { h.pop += 1; h.food = 0; h.foodCap = 8 + h.pop * 5; var s = findSpawnTile(h, 'worker'); if (s) spawnUnit('player', 'worker', s[0], s[1]); } return 'you welcome the refugees (capital +1 pop, free Worker).'; } },
+        { label: 'Settle the frontier', sub: 'Capital +2 pop, but +6 unrest there', apply: function () { var h = cap(); if (h) { h.pop += 2; h.food = 0; h.foodCap = 8 + h.pop * 5; h.unrest = (h.unrest || 0) + 6; } return 'a crowded influx — capital +2 pop but restless (+6 unrest).'; } },
+        { label: 'Charge for passage', sub: '+70 gold, no new citizens', apply: function () { p.gold += 70; return 'you charge for safe passage (+70 gold).'; } }
+      ] };
     } }
   ];
 
@@ -7431,13 +7482,41 @@
     });
     if (leadId === null) return;
     var crisis = ERA_CRISES[Math.floor(rnd() * ERA_CRISES.length)];
-    var tail = crisis.run(scores, leadV, lowId) || '';
     var ageName = AGES[maxIdx] ? AGES[maxIdx].name : 'a new era';
+    // The player gets a CHOICE (presented at turn start) instead of the silent
+    // hit; the AI civs still feel the baseline effect (affectPlayer=false).
+    var playerAlive = state.civs.player && state.civs.player.cities.length > 0;
+    var hasDilemma = playerAlive && !!crisis.dilemma;
+    var tail = crisis.run(scores, leadV, lowId, !hasDilemma) || '';
     logEvent('Era Crisis — ' + crisis.name + ': ' + tail, 'error');
     showToast('⚠ ' + crisis.name + ' grips the ' + ageName + ' world!', 'error');
     chronicle('Era Crisis: ' + crisis.name + ' struck the ' + ageName + ' world.');
     state.lastCrisis = { turn: state.turn, name: crisis.name, age: ageName };
+    if (hasDilemma) state.pendingCrisis = { id: crisis.id, scores: scores, leadV: leadV, lowId: lowId, leadId: leadId };
     recomputeIncome('player');
+  }
+
+  // Present the player's Era-Crisis choice (set by maybeFireEraCrisis, shown at
+  // turn start so it never collides with the AI-turn processing).
+  function presentCrisisDilemma() {
+    var pc = state.pendingCrisis;
+    if (!pc) return;
+    var crisis = null;
+    for (var i = 0; i < ERA_CRISES.length; i++) if (ERA_CRISES[i].id === pc.id) { crisis = ERA_CRISES[i]; break; }
+    if (!crisis || !crisis.dilemma) { state.pendingCrisis = null; return; }
+    var ctx = { scores: pc.scores || {}, leadV: pc.leadV, lowId: pc.lowId, leadId: pc.leadId };
+    var d = crisis.dilemma(ctx);
+    var actions = [{ header: true, disabled: true, icon: '⚠', title: 'Era Crisis — ' + crisis.name, sub: d.prompt }];
+    d.choices.forEach(function (ch) {
+      actions.push({ icon: ch.weaponize ? '☠' : '◆', primary: !ch.weaponize, danger: ch.weaponize, title: ch.label, sub: ch.sub, do: function () {
+        state.pendingCrisis = null;
+        var msg = null; try { msg = ch.apply(); } catch (e) { msg = null; }
+        if (msg) { logEvent('Crisis — ' + msg, 'info'); showToast(msg); chronicle('Era Crisis: ' + msg); }
+        recomputeBorders(); recomputeVisibility('player'); recomputeIncome('player');
+        closeModal(); updateHud(); save(); draw();
+      } });
+    });
+    renderDiplomacyActions(actions, 'Era Crisis');
   }
 
   // =====================================================================
@@ -9993,7 +10072,8 @@
     PROMOTIONS: PROMOTIONS,
     factionEff: factionEff,
     factionUnitFor: factionUnitFor,
-    FACTIONS: FACTIONS
+    FACTIONS: FACTIONS,
+    presentCrisisDilemma: presentCrisisDilemma
   };
 
   if (document.readyState === 'loading') {
