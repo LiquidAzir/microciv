@@ -47,15 +47,18 @@
   // `weight` biases the per-tile random pick so distribution stays balanced
   // regardless of how common each terrain is (gold was flooding via the large
   // desert biome). Higher weight = more likely when its terrain rolls a resource.
+  // `luxury: true` resources also grant empire-wide CONTENTMENT — one per DISTINCT
+  // luxury a civ controls (see distinctLuxuries / cityUnrestDelta). They're the
+  // "nice things" a populace enjoys, and a spare copy is tradeable with rivals.
   var RESOURCES = {
     wheat:  { label: 'Wheat',  terrains: ['grass'],            yield: { food: 2 }, weight: 3, accent: '#ffd34d', dark: '#7a4f10' },
-    cattle: { label: 'Cattle', terrains: ['plains','grass'],   yield: { food: 1, prod: 1 }, weight: 2, accent: '#c08a55', dark: '#3a2410' },
-    fish:   { label: 'Fish',   terrains: ['water'],            yield: { food: 2, gold: 1 }, weight: 2, accent: '#5ad4e6', dark: '#1a4a5a' },
+    cattle: { label: 'Cattle', terrains: ['plains','grass'],   yield: { food: 1, prod: 1 }, weight: 2, luxury: true, accent: '#c08a55', dark: '#3a2410' },
+    fish:   { label: 'Fish',   terrains: ['water'],            yield: { food: 2, gold: 1 }, weight: 2, luxury: true, accent: '#5ad4e6', dark: '#1a4a5a' },
     iron:   { label: 'Iron',   terrains: ['hills'],            yield: { prod: 2 }, weight: 4, accent: '#c8c8d4', dark: '#3a3a48' },
     copper: { label: 'Copper', terrains: ['hills'],            yield: { prod: 1, gold: 1 }, weight: 2, accent: '#e08c4a', dark: '#5a2810' },
-    gold:   { label: 'Gold',   terrains: ['hills','desert'],   yield: { gold: 3 }, weight: 1, accent: '#ffd700', dark: '#7a5a00' },
-    gems:   { label: 'Gems',   terrains: ['hills'],            yield: { gold: 3 }, weight: 3, accent: '#b388ff', dark: '#3a1a5a' },
-    horses: { label: 'Horses', terrains: ['plains'],           yield: { food: 1, prod: 1 }, weight: 3, accent: '#d8a87a', dark: '#3a2010' },
+    gold:   { label: 'Gold',   terrains: ['hills','desert'],   yield: { gold: 3 }, weight: 1, luxury: true, accent: '#ffd700', dark: '#7a5a00' },
+    gems:   { label: 'Gems',   terrains: ['hills'],            yield: { gold: 3 }, weight: 3, luxury: true, accent: '#b388ff', dark: '#3a1a5a' },
+    horses: { label: 'Horses', terrains: ['plains'],           yield: { food: 1, prod: 1 }, weight: 3, luxury: true, accent: '#d8a87a', dark: '#3a2010' },
     // Strategic resources — soft-gate the top modern units (see UNITS.requires)
     oil:    { label: 'Oil',    terrains: ['desert','water','tundra'], yield: { prod: 1, gold: 1 }, weight: 1, accent: '#7a6f55', dark: '#14120c' },
     coal:   { label: 'Coal',   terrains: ['hills','mountain'], yield: { prod: 2 }, weight: 2, accent: '#5a6068', dark: '#101216' }
@@ -567,6 +570,7 @@
     if (gov && gov.contentment) content += gov.contentment;
     content += edictEff(civ, 'contentment');   // Festivals +2 / Mass Levy -1
     content += civicSum(civ, 'perCityStability');   // Code of Laws / Urbanization
+    content += distinctLuxuries(civ);          // +1 per distinct luxury enjoyed
     if (civ && civ.goldenAgeTurns > 0) content += 2;
     return d - content;
   }
@@ -1243,6 +1247,12 @@
   function declareWarOn(a, b) {
     if (!state.diplomacy) return;
     state.diplomacy[dipKey(a, b)] = 'war';
+    // War severs any luxury swap between the two — no keeping a rival's gift
+    // through betrayal. tradedLux maps resource -> the civ that provided it.
+    [[a, b], [b, a]].forEach(function (pair) {
+      var civ = state.civs[pair[0]];
+      if (civ && civ.tradedLux) { for (var k in civ.tradedLux) { if (civ.tradedLux[k] === pair[1]) delete civ.tradedLux[k]; } }
+    });
     // The target of a war declaration resents the declarer.
     if (typeof addTension === 'function' && AI_SIDES.indexOf(b) >= 0) {
       addTension(b, a, TENSION_WAR_SPIKE, 'war');
@@ -2138,6 +2148,7 @@
         if (typeof cv.civicProgress !== 'number') cv.civicProgress = 0;
         if (!Array.isArray(cv.civicQueue)) cv.civicQueue = [];
         if (typeof cv.culPerTurn !== 'number') cv.culPerTurn = 0;
+        if (!cv.tradedLux || typeof cv.tradedLux !== 'object') cv.tradedLux = {};
       });
       // Backfill AI agendas — old saves get a distinct random one
       (function () {
@@ -2254,6 +2265,41 @@
   // controls at least one tile bearing that resource.
   function civHasResource(civ, res) {
     return !res || !!(civ.resources && civ.resources[res] > 0);
+  }
+
+  // Resolve a civ argument that may be either a civ object or a side-id string.
+  function asCiv(c) { return (c && typeof c === 'object') ? c : (c ? (state.civs && state.civs[c]) : null); }
+  // The set of DISTINCT luxuries a civ enjoys — owned (civ.resources, tallied in
+  // recomputeBorders) plus any imported via a luxury swap (civ.tradedLux).
+  function luxurySet(civ) {
+    civ = asCiv(civ);
+    var seen = {};
+    if (!civ) return seen;
+    var res = civ.resources || {};
+    for (var k in res) { if (res[k] > 0 && RESOURCES[k] && RESOURCES[k].luxury) seen[k] = 1; }
+    var tr = civ.tradedLux || {};
+    for (var t in tr) { if (tr[t] && RESOURCES[t] && RESOURCES[t].luxury) seen[t] = 1; }
+    return seen;
+  }
+  // Count of distinct luxuries — folds into empire-wide contentment (cityUnrestDelta).
+  function distinctLuxuries(civ) { return Object.keys(luxurySet(civ)).length; }
+  // Luxuries `civ` owns on the map that `partner` does NOT yet enjoy — the pool
+  // it could hand over in a swap (importing one never reduces the giver's own).
+  function giftableLuxuries(civ, partner) {
+    civ = asCiv(civ);
+    var out = [], res = (civ && civ.resources) || {}, has = luxurySet(partner);
+    for (var k in res) {
+      if (res[k] > 0 && RESOURCES[k] && RESOURCES[k].luxury && !has[k]) out.push(k);
+    }
+    return out;
+  }
+  // A mutually-beneficial luxury pair for two civs, or null. { give, get }
+  // from the perspective of `civ` (give→partner, get←partner).
+  function luxurySwapDeal(civ, partner) {
+    var mine = giftableLuxuries(civ, partner);
+    var theirs = giftableLuxuries(partner, civ);
+    if (!mine.length || !theirs.length) return null;
+    return { give: mine[0], get: theirs[0] };
   }
 
   // =====================================================================
@@ -6192,6 +6238,21 @@
     return rel || 'Unknown';
   }
 
+  // Append a "Swap Luxuries" row when a mutually-beneficial luxury pair exists
+  // with this rival (only meaningful while not at war).
+  function pushLuxurySwap(actions, civPl, aiId, ten) {
+    var deal = luxurySwapDeal(civPl, aiId);
+    if (!deal) return;
+    var giveL = (RESOURCES[deal.give] || {}).label || deal.give;
+    var getL  = (RESOURCES[deal.get]  || {}).label || deal.get;
+    var pct = Math.round(acceptChance(SWAP_ACCEPT_BASE, ten, ACCEPT_SENS.trade) * 100);
+    actions.push({
+      icon: '♦', title: 'Swap Luxuries',
+      sub: 'Give ' + giveL + ' ⇄ get ' + getL + ' · both +1 happiness · likely: ' + pct + '%',
+      do: function () { playerSwapLuxuries(aiId, deal); closeModal(); draw(); }
+    });
+  }
+
   function openDiplomacy() {
     var civPl = state.civs.player;
     var actions = [];
@@ -6250,6 +6311,7 @@
           disabled: civPl.gold < TRADE_GOLD_COST || !civPl.currentTech,
           do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
         });
+        pushLuxurySwap(actions, civPl, aiId, ten);
       } else {
         // at peace
         actions.push({
@@ -6263,6 +6325,7 @@
           disabled: civPl.gold < TRADE_GOLD_COST || !civPl.currentTech,
           do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
         });
+        pushLuxurySwap(actions, civPl, aiId, ten);
         actions.push({
           icon: '⚔', danger: true, title: 'Declare War',
           sub: 'Break the peace treaty',
@@ -6448,6 +6511,33 @@
     } else {
       showToast(CIVS[aiId].name + ' rejects the trade', 'error');
       logEvent(CIVS[aiId].name + ' rejected the science trade', 'info');
+    }
+  }
+
+  var SWAP_ACCEPT_BASE = 0.85;   // luxury swaps benefit both sides — usually yes
+  // Mutually swap a luxury with a rival: each imports the other's spare luxury,
+  // gaining +1 distinct-luxury contentment. A friendly act that cools tension.
+  function playerSwapLuxuries(aiId, deal) {
+    var pl = state.civs.player, ai = state.civs[aiId];
+    if (!ai) return;
+    deal = deal || luxurySwapDeal(pl, aiId);
+    if (!deal) { showToast('No luxuries to swap', 'error'); return; }
+    var chance = acceptChance(SWAP_ACCEPT_BASE, tensionOf(aiId, 'player'), ACCEPT_SENS.trade);
+    var giveL = (RESOURCES[deal.give] || {}).label || deal.give;
+    var getL  = (RESOURCES[deal.get]  || {}).label || deal.get;
+    if (rnd() < chance) {
+      if (!pl.tradedLux) pl.tradedLux = {};
+      if (!ai.tradedLux) ai.tradedLux = {};
+      pl.tradedLux[deal.get] = aiId;        // player now enjoys the AI's luxury
+      ai.tradedLux[deal.give] = 'player';   // AI now enjoys the player's luxury
+      addTension(aiId, 'player', -8);       // generosity warms relations
+      remember(aiId, 'We swapped luxuries in good faith');
+      sfxAlly();
+      showToast('Swapped ' + giveL + ' ⇄ ' + getL + ' with ' + CIVS[aiId].name, 'success');
+      logEvent('Luxury swap with ' + CIVS[aiId].name + ': ' + giveL + ' ⇄ ' + getL + ' (both +1 contentment)', 'success');
+    } else {
+      showToast(CIVS[aiId].name + ' declines the swap', 'error');
+      logEvent(CIVS[aiId].name + ' declined a luxury swap', 'info');
     }
   }
 
@@ -7079,7 +7169,7 @@
       row.style.borderLeftColor = color;
       row.innerHTML =
         '<div class="rep-name" style="color:' + color + '">' + nameLine + (alive ? '' : ' — defeated') + '</div>' +
-        '<div class="rep-stats">🏛 ' + civ.cities.length + '  ·  ⚔ ' + mil + '  ·  ● ' + Math.round(civ.gold) + 'g  ·  ◆ ' + techCount + '/' + totalTechs + '  ·  ✦ ' + wonders + '</div>' +
+        '<div class="rep-stats">🏛 ' + civ.cities.length + '  ·  ⚔ ' + mil + '  ·  ● ' + Math.round(civ.gold) + 'g  ·  ◆ ' + techCount + '/' + totalTechs + '  ·  ✦ ' + wonders + '  ·  ♦ ' + distinctLuxuries(civ) + '</div>' +
         '<div class="rep-stats">⌛ ' + getAge(civ).name + '  ·  ⚖ ' + ((GOVERNMENTS[civ.government] || GOVERNMENTS.despotism).name) + (civ.goldenAgeTurns > 0 ? '  ·  ☀ Golden Age ' + civ.goldenAgeTurns : '') + '</div>' +
         '<div class="rep-vic">' +
           '<span class="rep-vbar">Civics ' + civicsAdopted(civ) + '/' + CIVIC_ORDER.length + '</span>' +
@@ -9459,7 +9549,11 @@
     openCivics: openCivics,
     openStandings: openStandings,
     civCulturePerTurn: civCulturePerTurn,
-    cityCulturePerTurn: cityCulturePerTurn
+    cityCulturePerTurn: cityCulturePerTurn,
+    distinctLuxuries: distinctLuxuries,
+    luxurySet: luxurySet,
+    luxurySwapDeal: luxurySwapDeal,
+    playerSwapLuxuries: playerSwapLuxuries
   };
 
   if (document.readyState === 'loading') {
