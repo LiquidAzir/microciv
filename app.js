@@ -1299,6 +1299,18 @@
       var civ = state.civs[pair[0]];
       if (civ && civ.tradedLux) { for (var k in civ.tradedLux) { if (civ.tradedLux[k] === pair[1]) delete civ.tradedLux[k]; } }
     });
+    // War ends any Defensive Pact between the two; the victim's pact-partners
+    // honor it and bank a grudge against the aggressor (a, the declarer).
+    if (typeof setPact === 'function') {
+      setPact(a, b, false);
+      CIV_SIDES.forEach(function (ally) {
+        if (ally === a || ally === b) return;
+        if (hasPact(ally, b) && AI_SIDES.indexOf(ally) >= 0) {
+          addTension(ally, a, 30, 'pact');
+          if (a === 'player') remember(ally, 'You attacked our pact-partner ' + (CIVS[b] ? CIVS[b].name : b));
+        }
+      });
+    }
     // The target of a war declaration resents the declarer.
     if (typeof addTension === 'function' && AI_SIDES.indexOf(b) >= 0) {
       addTension(b, a, TENSION_WAR_SPIKE, 'war');
@@ -1815,6 +1827,7 @@
       wondersBuilt: {},                  // wonder id -> civ id who built it
       stats: { unitsKilled: 0, unitsLost: 0, barbsDefeated: 0 },
       diplomacy: defaultDiplomacy(),     // every civ pair at war; city-states at peace
+      pacts: {},                         // dipKey -> true for active Defensive Pacts
       pendingPeace: null,                // { from: civId } when AI offers peace
       freetech: false                     // great scientist free tech pick
     };
@@ -2122,6 +2135,7 @@
         wondersBuilt: state.wondersBuilt,
         stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
         diplomacy: state.diplomacy,
+        pacts: state.pacts || {},
         pendingPeace: state.pendingPeace || null,
         pendingDilemma: state.pendingDilemma || null,
         pendingCrisis: state.pendingCrisis || null,
@@ -2246,6 +2260,7 @@
       // of sane defaults (every civ pair at war, city-states at peace).
       setCivSides(ALL_AI_IDS.filter(function (id) { return state.civs[id]; }));
       state.diplomacy = Object.assign(defaultDiplomacy(), state.diplomacy || {});
+      if (!state.pacts || typeof state.pacts !== 'object') state.pacts = {};
       // Re-apply factions so CIVS colors/names match the saved game
       CIV_SIDES.forEach(function (id) {
         var fid = state.civs[id].faction || 'solaris';
@@ -6370,7 +6385,7 @@
         var warMul = per.warMul * (1 + plTension / 35);     // tension 35 ~doubles it
         var ratioGate = plTension >= 40 ? 1.0 : 1.5;        // furious AIs fight at parity
         var milGate   = plTension >= 40 ? 3 : 4;
-        if (aiMil >= plMil * ratioGate && aiMil >= milGate && state.turn >= 12 && rnd() < 0.15 * warMul) {
+        if (!hasPact(aiId, 'player') && aiMil >= plMil * ratioGate && aiMil >= milGate && state.turn >= 12 && rnd() < 0.15 * warMul) {
           declareWarOn(aiId, 'player');
         } else if (!state.pendingPeace && state.turn >= 10 && plTension < 20 &&
                    rnd() < per.offerAlliance * (1 - plTension / 25)) {
@@ -6391,7 +6406,7 @@
           if (aiMil <= 2 && otherMil <= 2 && rnd() < 0.2 * per.peaceMul * (1 - oTension / 150)) {
             makePeace(aiId, otherId);
           }
-        } else if (state.diplomacy[dipKey(aiId, otherId)] !== 'allied') {
+        } else if (state.diplomacy[dipKey(aiId, otherId)] !== 'allied' && !hasPact(aiId, otherId)) {
           var warMul2 = per.warMul * (1 + oTension / 35);
           var ratioGate2 = oTension >= 40 ? 1.1 : 1.5;
           if (aiMil >= otherMil * ratioGate2 && aiMil >= 4 && state.turn >= 12 && rnd() < 0.1 * warMul2) {
@@ -6500,6 +6515,95 @@
     return rel || 'Unknown';
   }
 
+  // ---- Statecraft: Defensive Pacts, Coalitions, buying tech ----------------
+  var COALITION_TENSION = 55;   // grudge bribed rivals bank against the frontrunner
+  function hasPact(a, b) { return !!(state.pacts && state.pacts[dipKey(a, b)]); }
+  function setPact(a, b, on) { if (!state.pacts) state.pacts = {}; if (on) state.pacts[dipKey(a, b)] = true; else delete state.pacts[dipKey(a, b)]; }
+  // The runaway frontrunner — a RIVAL clearly ahead of the field — or null.
+  function runawayLeader() {
+    var arr = [];
+    CIV_SIDES.forEach(function (id) { var c = state.civs[id]; if (c && c.cities.length) arr.push({ id: id, s: leadScore(c) }); });
+    if (arr.length < 2) return null;
+    arr.sort(function (a, b) { return b.s - a.s; });
+    if (arr[0].id === 'player') return null;                 // you're ahead — no one to gang up on
+    if (arr[0].s < arr[1].s * 1.35 + 4) return null;          // not a clear runaway yet
+    return arr[0].id;
+  }
+  function coalitionMembers(leaderId) {
+    return CIV_SIDES.filter(function (id) { return id !== leaderId && id !== 'player' && state.civs[id] && state.civs[id].cities.length; });
+  }
+  function coalitionCost(leaderId) { return 100 + 40 * coalitionMembers(leaderId).length; }
+  // Bankroll the other rivals into a grudge against the frontrunner — they grow
+  // far likelier to declare war on them (player-driven anti-snowball).
+  function formCoalition(leaderId) {
+    var members = coalitionMembers(leaderId), cost = coalitionCost(leaderId), pl = state.civs.player;
+    if (!members.length) { showToast('No rivals left to rally', 'error'); return; }
+    if (pl.gold < cost) { showToast('Need ' + cost + ' gold to bankroll a coalition', 'error'); return; }
+    pl.gold -= cost;
+    var lname = CIVS[leaderId] ? CIVS[leaderId].name : leaderId;
+    members.forEach(function (id) {
+      addTension(id, leaderId, COALITION_TENSION, 'coalition');
+      addTension(id, 'player', -12);                 // the bribe warms them to you
+      remember(id, 'You paid us to move against ' + lname, 0);
+    });
+    sfxAlly();
+    showToast('Coalition rallied against ' + lname + '! (-' + cost + 'g)', 'success');
+    logEvent('Bankrolled a coalition against ' + lname + ' — rivals now eye them hungrily', 'success');
+    chronicle('Forged a coalition against ' + leaderOf(leaderId).name + ' of ' + lname + '.');
+  }
+  // The cheapest tech a rival knows that the player lacks but can integrate.
+  function buyableTechFrom(aiId) {
+    var pl = state.civs.player, ai = state.civs[aiId]; if (!ai) return null;
+    var best = null;
+    for (var i = 0; i < TECH_ORDER.length; i++) {
+      var t = TECH_ORDER[i];
+      if (pl.techs[t] || !ai.techs[t]) continue;
+      if (!TECHS[t].req.every(function (r) { return pl.techs[r]; })) continue;
+      if (!best || TECHS[t].cost < TECHS[best].cost) best = t;
+    }
+    return best;
+  }
+  function buyTechCost(t) { return Math.round(TECHS[t].cost * 2.2); }
+  function playerBuyTech(aiId) {
+    var t = buyableTechFrom(aiId);
+    if (!t) { showToast('They have no tech you can adopt', 'error'); return; }
+    var pl = state.civs.player, ai = state.civs[aiId], cost = buyTechCost(t);
+    if (pl.gold < cost) { showToast('Need ' + cost + ' gold', 'error'); return; }
+    var per = AI_PERSONALITIES[ai.personality] || AI_PERSONALITIES.economic;
+    var base = per.techPreference === 'science' ? 0.25 : per.acceptTrade;   // scientists guard their lead
+    if (rnd() < acceptChance(base, tensionOf(aiId, 'player'), ACCEPT_SENS.trade)) {
+      pl.gold -= cost; ai.gold += cost;
+      var ageBefore = getAge(pl);
+      pl.techs[t] = true;
+      if (pl.currentTech === t) { pl.currentTech = null; pl.techProgress = 0; popQueuedTech(pl); }
+      addTension(aiId, 'player', -5); remember(aiId, 'We sold you the secret of ' + TECHS[t].name);
+      sfxResearch();
+      var ageAfter = getAge(pl);
+      if (ageAfter.name !== ageBefore.name) { var g = ageAdvanceGold(ageAfter); pl.gold += g; }
+      showToast('Bought ' + TECHS[t].name + ' from ' + CIVS[aiId].name + ' (-' + cost + 'g)', 'success');
+      logEvent('Bought ' + TECHS[t].name + ' from ' + CIVS[aiId].name + ' for ' + cost + ' gold', 'success');
+      var allDone = true; for (var i = 0; i < TECH_ORDER.length; i++) if (!pl.techs[TECH_ORDER[i]]) { allDone = false; break; }
+      if (allDone) { declareVictory('player', 'science'); return; }
+      recomputeIncome('player');
+    } else {
+      showToast(CIVS[aiId].name + ' refuses to sell that knowledge', 'error');
+      logEvent(CIVS[aiId].name + ' refused to sell ' + TECHS[t].name, 'info');
+    }
+  }
+  function playerProposeDefensivePact(aiId) {
+    var ai = state.civs[aiId];
+    var per = AI_PERSONALITIES[ai.personality] || AI_PERSONALITIES.peaceful;
+    if (rnd() < acceptChance(per.acceptAlliance + 0.1, tensionOf(aiId, 'player'), ACCEPT_SENS.alliance)) {
+      setPact('player', aiId, true);
+      addTension(aiId, 'player', -8);
+      sfxAlly();
+      showToast('Defensive Pact signed with ' + CIVS[aiId].name, 'success');
+      logEvent('Signed a Defensive Pact with ' + CIVS[aiId].name + ' — they answer aggression against you', 'success');
+    } else {
+      showToast(CIVS[aiId].name + ' declines a pact', 'error');
+    }
+  }
+
   // Append a "Swap Luxuries" row when a mutually-beneficial luxury pair exists
   // with this rival (only meaningful while not at war).
   function pushLuxurySwap(actions, civPl, aiId, ten) {
@@ -6515,9 +6619,50 @@
     });
   }
 
+  // Append Buy-Tech (always when they have something) and, at peace, a
+  // Defensive Pact row for one rival.
+  function pushStatecraft(actions, civPl, aiId, ten, rel) {
+    var buyT = buyableTechFrom(aiId);
+    if (buyT) {
+      var bc = buyTechCost(buyT);
+      actions.push({
+        icon: '⚛', title: 'Buy ' + TECHS[buyT].name,
+        sub: 'Learn it outright · ' + bc + 'g',
+        disabled: civPl.gold < bc,
+        do: function () { playerBuyTech(aiId); closeModal(); draw(); }
+      });
+    }
+    if (rel === 'peace') {
+      if (hasPact('player', aiId)) {
+        actions.push({ icon: '🛡', disabled: true, title: 'Defensive Pact active', sub: 'They answer aggression against you', do: function () {} });
+      } else {
+        var per = AI_PERSONALITIES[state.civs[aiId].personality] || AI_PERSONALITIES.peaceful;
+        var pctPact = Math.round(acceptChance(per.acceptAlliance + 0.1, ten, ACCEPT_SENS.alliance) * 100);
+        actions.push({
+          icon: '🛡', title: 'Defensive Pact',
+          sub: 'They war anyone who attacks you · likely: ' + pctPact + '%',
+          do: function () { playerProposeDefensivePact(aiId); closeModal(); draw(); }
+        });
+      }
+    }
+  }
+
   function openDiplomacy() {
     var civPl = state.civs.player;
     var actions = [];
+    // Anti-snowball: bankroll a coalition when a rival is running away with it.
+    var leaderId = runawayLeader();
+    if (leaderId && coalitionMembers(leaderId).length) {
+      var lname = CIVS[leaderId] ? CIVS[leaderId].name : leaderId;
+      var cCost = coalitionCost(leaderId);
+      actions.push({ header: true, disabled: true, icon: '⚖', title: 'A frontrunner emerges', sub: lname + ' is pulling ahead of the world.' });
+      actions.push({
+        icon: '🤝', primary: true, title: 'Form Coalition vs ' + lname,
+        sub: 'Bankroll the other rivals to turn on them · ' + cCost + 'g',
+        disabled: civPl.gold < cCost,
+        do: function () { formCoalition(leaderId); closeModal(); draw(); }
+      });
+    }
     AI_SIDES.forEach(function (aiId) {
       var aiCiv = state.civs[aiId];
       // Skip only if civ is fully eliminated (no cities, no units)
@@ -6574,6 +6719,7 @@
           do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
         });
         pushLuxurySwap(actions, civPl, aiId, ten);
+        pushStatecraft(actions, civPl, aiId, ten, 'allied');
       } else {
         // at peace
         actions.push({
@@ -6588,6 +6734,7 @@
           do: function () { playerTradeForTech(aiId); closeModal(); draw(); }
         });
         pushLuxurySwap(actions, civPl, aiId, ten);
+        pushStatecraft(actions, civPl, aiId, ten, 'peace');
         actions.push({
           icon: '⚔', danger: true, title: 'Declare War',
           sub: 'Break the peace treaty',
@@ -10073,7 +10220,15 @@
     factionEff: factionEff,
     factionUnitFor: factionUnitFor,
     FACTIONS: FACTIONS,
-    presentCrisisDilemma: presentCrisisDilemma
+    presentCrisisDilemma: presentCrisisDilemma,
+    runawayLeader: runawayLeader,
+    formCoalition: formCoalition,
+    coalitionCost: coalitionCost,
+    hasPact: hasPact,
+    playerProposeDefensivePact: playerProposeDefensivePact,
+    buyableTechFrom: buyableTechFrom,
+    playerBuyTech: playerBuyTech,
+    declareWarOn: declareWarOn
   };
 
   if (document.readyState === 'loading') {
