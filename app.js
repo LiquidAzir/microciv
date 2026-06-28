@@ -2053,6 +2053,8 @@
       promoAtk: 0,
       promoDef: 0,
       promoHp: 0,
+      promos: 0,           // total promotions applied (chosen)
+      pendingPromo: 0,     // earned-but-unchosen promotions (player picks 1 of 2)
       goto: null           // multi-turn move destination { c, r }
     };
     var t = tileAt(c, r);
@@ -2287,6 +2289,8 @@
           if (u.promoAtk === undefined) u.promoAtk = 0;
           if (u.promoDef === undefined) u.promoDef = 0;
           if (u.promoHp === undefined) u.promoHp = 0;
+          if (u.promos === undefined) u.promos = (u.promoAtk || 0) + (u.promoDef || 0) + (u.promoHp || 0);
+          if (u.pendingPromo === undefined) u.pendingPromo = 0;
         });
       });
       // restore unit refs on tiles
@@ -4493,7 +4497,7 @@
     }
 
     // Promotion stars
-    var totalPromos = (unit.promoAtk || 0) + (unit.promoDef || 0) + (unit.promoHp || 0);
+    var totalPromos = unit.promos != null ? unit.promos : ((unit.promoAtk || 0) + (unit.promoDef || 0) + (unit.promoHp || 0));
     if (totalPromos > 0) {
       var starSize = Math.max(4, size * 0.12);
       for (var si = 0; si < Math.min(totalPromos, 5); si++) {
@@ -4595,7 +4599,7 @@
   // terrain, fortify, walls, Great Wall, home territory, siege, promotions and
   // tech. Used by attack(), rangedAttack(), and the combat-odds forecast so
   // the preview always matches the real roll.
-  function combatRatio(attacker, defender) {
+  function combatRatio(attacker, defender, isRanged) {
     var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
     var dTile = tileAt(defender.c, defender.r);
     var terr = TERRAIN[dTile.terrain];
@@ -4608,15 +4612,17 @@
       if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
     }
     if (dTile.owner === defender.civ) dBonus += 0.10;
-    if (dBonus > 1.5) dBonus = 1.5;
+    if (isRanged && defender.promoCover) dBonus += 0.5;   // Cover promotion: harder to hit at range
+    if (dBonus > 1.75) dBonus = 1.75;
     var aPower = aDef.atk + atkTechBonus(attacker);
-    if (aDef.siege && dTile.city) dBonus = dBonus * 0.5;
+    // Siege (unit flag or promotion) halves a city's defensive bonus.
+    if ((aDef.siege || attacker.promoSiege) && dTile.city) dBonus = dBonus * 0.5;
     var dPower = (dDef.def + (defender.promoDef || 0)) * (1 + dBonus);
     return aPower / (aPower + dPower);
   }
   // Expected-damage forecast; the +0..3 random jitter is shown as a range.
   function combatForecast(attacker, defender, ranged) {
-    var ratio = combatRatio(attacker, defender);
+    var ratio = combatRatio(attacker, defender, ranged);
     var dMin = Math.round(12 * ratio);
     var fc = { toDefMin: dMin, toDefMax: dMin + 3, ranged: !!ranged };
     if (!ranged) { var aMin = Math.round(12 * (1 - ratio)); fc.toAtkMin = aMin; fc.toAtkMax = aMin + 3; }
@@ -4627,7 +4633,7 @@
     var aDef = UNITS[attacker.type], dDef = UNITS[defender.type];
     if (aDef.atk === 0) { showToast('Cannot attack'); return false; }
     if (!atWar(attacker.civ, defender.civ)) { showToast('At peace'); return false; }
-    var ratio = combatRatio(attacker, defender);
+    var ratio = combatRatio(attacker, defender, true);
 
     // Ranged: full damage to defender, NO counter-damage to attacker
     var dmgToDef = Math.round(12 * ratio + rndInt(0, 3));
@@ -5331,28 +5337,96 @@
     return bonus;
   }
 
+  // PROMOTIONS — every 2 kills a unit earns a promotion. The PLAYER picks 1 of 2
+  // (so the 30-unit roster expresses a playstyle); the AI auto-picks by
+  // personality. Stat promos stack; ability promos are once-each flags folded
+  // into combat (atkTechBonus/combatRatio) and movement.
+  var PROMOTIONS = {
+    str:   { name: 'Strength', icon: '⚔', desc: '+1 attack',           apply: function (u) { u.promoAtk = (u.promoAtk || 0) + 1; } },
+    armor: { name: 'Armor',    icon: '🛡', desc: '+1 defense',          apply: function (u) { u.promoDef = (u.promoDef || 0) + 1; } },
+    vigor: { name: 'Vigor',    icon: '♥', desc: '+2 max HP',           apply: function (u) { u.promoHp = (u.promoHp || 0) + 1; u.maxHp += 2; u.hp = Math.min(u.maxHp, u.hp + 2); } },
+    siege: { name: 'Siege',    icon: '⚒', desc: '+50% vs cities', once: 'promoSiege', apply: function (u) { u.promoSiege = true; } },
+    cover: { name: 'Cover',    icon: '◈', desc: '+50% def vs ranged', once: 'promoCover', apply: function (u) { u.promoCover = true; } },
+    blitz: { name: 'Blitz',    icon: '»', desc: '+1 movement',        once: 'promoBlitz', apply: function (u) { u.promoBlitz = true; u.maxMoves = (u.maxMoves || UNITS[u.type].move) + 1; } }
+  };
+  var PROMO_STATS = ['str', 'armor', 'vigor'];
+  var PROMO_ABILITIES = ['siege', 'cover', 'blitz'];
+  function eligiblePromotions(u) {
+    var pool = PROMO_STATS.slice();
+    PROMO_ABILITIES.forEach(function (id) { if (!u[PROMOTIONS[id].once]) pool.push(id); });
+    return pool;
+  }
+  // Two distinct options for a player promotion — always at least one plain stat.
+  function promotionOptions(u) {
+    var pool = shuffle(eligiblePromotions(u));
+    var pick = pool.slice(0, 2);
+    if (pick.length < 2) pick = PROMO_STATS.slice(0, 2);
+    if (!pick.some(function (id) { return PROMO_STATS.indexOf(id) >= 0; })) {
+      pick[1] = PROMO_STATS[Math.floor(rnd() * PROMO_STATS.length)];
+    }
+    if (pick[0] === pick[1]) pick[1] = PROMO_STATS.filter(function (s) { return s !== pick[0]; })[0];
+    return pick;
+  }
+  function applyPromotion(u, id) {
+    var p = PROMOTIONS[id]; if (!p) return;
+    p.apply(u);
+    u.promos = (u.promos || 0) + 1;
+  }
+  function aiPickPromotion(u) {
+    var pool = eligiblePromotions(u);
+    var per = (state.civs[u.civ] || {}).personality;
+    var pref = (per === 'aggressive' || per === 'warmonger') ? ['siege', 'str', 'blitz', 'armor', 'vigor', 'cover']
+             : (per === 'peaceful' || per === 'scientific')  ? ['armor', 'cover', 'vigor', 'str', 'siege', 'blitz']
+             : ['str', 'armor', 'vigor', 'siege', 'cover', 'blitz'];
+    for (var i = 0; i < pref.length; i++) if (pool.indexOf(pref[i]) >= 0) { applyPromotion(u, pref[i]); return; }
+    applyPromotion(u, pool[0] || 'str');
+  }
+  // First living player unit awaiting a promotion choice, or null.
+  function findPendingPromoUnit() {
+    var pl = state.civs.player;
+    if (!pl) return null;
+    return pl.units.find(function (x) { return (x.pendingPromo || 0) > 0 && x.hp > 0; }) || null;
+  }
+  // Show the 1-of-2 promotion choice (reuses the action-list modal). Chaining:
+  // after a choice, present the next pending promotion, if any.
+  function presentPromotion(u) {
+    if (!u) return;
+    var opts = promotionOptions(u);
+    var more = (u.pendingPromo || 0) - 1;
+    var actions = [{ header: true, disabled: true, icon: '★', title: UNITS[u.type].name + ' promoted!',
+      sub: 'Level ' + ((u.promos || 0) + 1) + ' · choose an upgrade' + (more > 0 ? ' · +' + more + ' more pending' : '') }];
+    opts.forEach(function (id) {
+      var p = PROMOTIONS[id];
+      actions.push({ icon: p.icon, primary: true, title: p.name, sub: p.desc, do: function () {
+        applyPromotion(u, id);
+        u.pendingPromo = Math.max(0, (u.pendingPromo || 0) - 1);
+        sfxPromote();
+        logEvent(UNITS[u.type].name + ' promoted — ' + p.name, 'success');
+        var nxt = findPendingPromoUnit();
+        if (nxt) presentPromotion(nxt); else { closeModal(); draw(); }
+      } });
+    });
+    renderDiplomacyActions(actions, 'Promotion');
+  }
+  // Present a pending promotion now if it's safe (player's view, no modal up).
+  function maybePresentPromotion() {
+    if (aiThinking || openModal) return;
+    var u = findPendingPromoUnit();
+    if (u) presentPromotion(u);
+  }
   function checkPromotion(unit) {
     if (!unit || unit.hp <= 0 || UNITS[unit.type].civilian) return;
     // Military XP for great general
     var civ = state.civs[unit.civ];
     if (civ && civ.greatPoints) civ.greatPoints.military += 5;
-    var kills = unit.kills || 0;
-    var totalPromos = (unit.promoAtk || 0) + (unit.promoDef || 0) + (unit.promoHp || 0);
-    var earned = Math.floor(kills / 2);
-    if (earned <= totalPromos) return;
-    // Auto-promote cycling: HP → ATK → DEF
-    var cycle = totalPromos % 3;
-    if (cycle === 0) {
-      unit.promoHp = (unit.promoHp || 0) + 1;
-      unit.maxHp += 2;
-      unit.hp = Math.min(unit.hp + 2, unit.maxHp);
-      if (unit.civ === 'player') { sfxPromote(); showToast(UNITS[unit.type].name + ' promoted! +2 HP', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +2 HP', 'success'); }
-    } else if (cycle === 1) {
-      unit.promoAtk = (unit.promoAtk || 0) + 1;
-      if (unit.civ === 'player') { sfxPromote(); showToast(UNITS[unit.type].name + ' promoted! +1 ATK', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 ATK', 'success'); }
+    var earned = Math.floor((unit.kills || 0) / 2);
+    var newOnes = earned - ((unit.promos || 0) + (unit.pendingPromo || 0));
+    if (newOnes <= 0) return;
+    if (unit.civ === 'player') {
+      unit.pendingPromo = (unit.pendingPromo || 0) + newOnes;
+      maybePresentPromotion();   // pops now if it's the player's turn and no modal
     } else {
-      unit.promoDef = (unit.promoDef || 0) + 1;
-      if (unit.civ === 'player') { sfxPromote(); showToast(UNITS[unit.type].name + ' promoted! +1 DEF', 'success'); logEvent(UNITS[unit.type].name + ' promoted: +1 DEF', 'success'); }
+      for (var i = 0; i < newOnes; i++) aiPickPromotion(unit);
     }
   }
 
@@ -6850,7 +6924,9 @@
       // peace offer; otherwise the Turn Brief auto-opens when something important
       // needs the player (revolt / no research / no civic / Great Person). Quiet
       // turns and minor nudges (idle units) never pop a modal. (One at a time.)
-      if (state.pendingDilemma) {
+      if (findPendingPromoUnit()) {
+        setTimeout(function () { maybePresentPromotion(); }, 400);
+      } else if (state.pendingDilemma) {
         setTimeout(function () { presentDilemma(); }, 450);
       } else if (state.pendingPeace) {
         setTimeout(function () { showPeaceOffer(); }, 400);
@@ -9842,7 +9918,15 @@
     computeTurnBrief: computeTurnBrief,
     openTurnBrief: openTurnBrief,
     foundCity: foundCity,
-    endTurn: endTurn
+    endTurn: endTurn,
+    checkPromotion: checkPromotion,
+    promotionOptions: promotionOptions,
+    applyPromotion: applyPromotion,
+    aiPickPromotion: aiPickPromotion,
+    presentPromotion: presentPromotion,
+    findPendingPromoUnit: findPendingPromoUnit,
+    combatRatio: combatRatio,
+    PROMOTIONS: PROMOTIONS
   };
 
   if (document.readyState === 'loading') {
