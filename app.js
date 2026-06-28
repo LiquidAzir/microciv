@@ -2139,6 +2139,7 @@
         pendingPeace: state.pendingPeace || null,
         pendingDilemma: state.pendingDilemma || null,
         pendingCrisis: state.pendingCrisis || null,
+        victoryAlerts: state.victoryAlerts || {},
         eraReached: state.eraReached || 0,
         chronicle: state.chronicle || [],
         freetech: state.freetech || false,
@@ -2227,6 +2228,7 @@
       state.difficulty = state.difficulty || 'normal';
       if (state.pendingPeace === undefined) state.pendingPeace = null;
       if (state.pendingCrisis === undefined) state.pendingCrisis = null;
+      if (!state.victoryAlerts || typeof state.victoryAlerts !== 'object') state.victoryAlerts = {};
       if (state.freetech === undefined) state.freetech = false;
       // Restore map dimensions from save (or default to 14x14 for old saves)
       MAP_W = state.mapW || 14;
@@ -4966,6 +4968,25 @@
 
     var chip = document.getElementById('end-turn-chip');
     if (chip) chip.classList.toggle('ready', readyToEnd);
+
+    // Victory finish-line banner — appears once the race heats up (someone ≥60%
+    // to a win), so the endgame reads as a clock. Green when you lead it, red
+    // when a rival does. Tap to open the World Report.
+    var vr = document.getElementById('victory-race');
+    if (vr) {
+      var lead = closestVictoryAll();
+      if (lead && lead.frac >= 0.6 && !state.victory) {
+        var mine = lead.civId === 'player';
+        var who = mine ? 'You' : (CIVS[lead.civId] ? CIVS[lead.civId].name : lead.civId);
+        vr.innerHTML = '🏁 ' + who + ' · ' + lead.kind + ' ' + Math.round(lead.frac * 100) + '%' +
+          '<span class="vr-bar"><i style="width:' + Math.round(lead.frac * 100) + '%"></i></span>';
+        vr.classList.toggle('mine', mine);
+        vr.classList.toggle('rival', !mine);
+        vr.classList.remove('hidden');
+      } else {
+        vr.classList.add('hidden');
+      }
+    }
   }
 
   // =====================================================================
@@ -6991,6 +7012,56 @@
     }
   }
 
+  // ---- Victory finish-line ------------------------------------------------
+  // A civ's closest victory path as a 0..1 fraction, so the late game reads as
+  // a race against a clock rather than a foregone conclusion.
+  function victoryProgress(civ) {
+    if (!civ) return { kind: 'none', frac: 0, label: '' };
+    var totalTechs = TECH_ORDER.length;
+    var techN = techCountOf(civ);
+    var civicN = civicsAdopted(civ);
+    var rivalCount = CIV_SIDES.length - 1;
+    var capsHeld = 0;
+    civ.cities.forEach(function (ct) { if (ct.capital && ct.originalCiv && ct.originalCiv !== civ.id) capsHeld++; });
+    var econ = Math.min(1, civ.gold / ECONOMIC_VICTORY_GOLD) * 0.7 + Math.min(1, (civ.economicCountdown || 0) / ECONOMIC_VICTORY_TURNS) * 0.3;
+    var paths = [
+      { kind: 'science',    frac: techN / totalTechs,                 label: techN + '/' + totalTechs + ' techs' },
+      { kind: 'culture',    frac: civicN / CIVIC_ORDER.length,        label: civicN + '/' + CIVIC_ORDER.length + ' civics' },
+      { kind: 'domination', frac: rivalCount ? capsHeld / rivalCount : 0, label: capsHeld + '/' + rivalCount + ' capitals' },
+      { kind: 'economic',   frac: econ,                               label: Math.round(civ.gold) + '/' + ECONOMIC_VICTORY_GOLD + ' gold' }
+    ];
+    paths.sort(function (a, b) { return b.frac - a.frac; });
+    return paths[0];
+  }
+  // Whoever is closest to ANY victory (the pace-setter), among living civs.
+  function closestVictoryAll() {
+    var best = null;
+    CIV_SIDES.forEach(function (id) {
+      var c = state.civs[id]; if (!c || !c.cities.length) return;
+      var vp = victoryProgress(c);
+      if (!best || vp.frac > best.frac) best = { civId: id, kind: vp.kind, frac: vp.frac, label: vp.label };
+    });
+    return best;
+  }
+  var VICTORY_ALERT_AT = 0.75;   // warn once when a civ crosses this toward a win
+  function checkVictoryRaceAlerts() {
+    if (state.victory) return;
+    if (!state.victoryAlerts) state.victoryAlerts = {};
+    CIV_SIDES.forEach(function (id) {
+      var c = state.civs[id]; if (!c || !c.cities.length) return;
+      var vp = victoryProgress(c);
+      if (vp.frac < VICTORY_ALERT_AT) return;
+      var key = id + ':' + vp.kind;
+      if (state.victoryAlerts[key]) return;
+      state.victoryAlerts[key] = true;
+      var who = id === 'player' ? 'You are' : (CIVS[id] ? CIVS[id].name + ' is' : id + ' is');
+      var msg = who + ' nearing a ' + vp.kind + ' victory! (' + vp.label + ')';
+      logEvent('⚠ ' + msg, id === 'player' ? 'success' : 'error');
+      showToast('🏁 ' + msg, id === 'player' ? 'success' : 'error');
+      chronicle(msg);
+    });
+  }
+
   // =====================================================================
   // TURN
   // =====================================================================
@@ -7082,6 +7153,7 @@
 
       // Culture + economic victory checks (every civ, every turn)
       checkProgressVictories();
+      checkVictoryRaceAlerts();   // warn when someone nears the finish line
 
       // Roll into the next turn
       state.turn += 1;
@@ -7751,10 +7823,15 @@
       var row = document.createElement('div');
       row.className = 'rep-civ' + (alive ? '' : ' dead');
       row.style.borderLeftColor = color;
+      // Closest victory — the finish line for this civ.
+      var vp = alive ? victoryProgress(civ) : { kind: 'none', frac: 0, label: '' };
+      var vpct = Math.round(vp.frac * 100);
+      var vfill = '<div class="rep-finish' + (vp.frac >= 0.75 ? ' hot' : '') + '"><span class="rep-finish-lbl">🏁 ' + (alive ? vp.kind + ' · ' + vp.label + ' · ' + vpct + '%' : '—') + '</span><span class="rep-finish-bar"><i style="width:' + vpct + '%"></i></span></div>';
       row.innerHTML =
         '<div class="rep-name" style="color:' + color + '">' + nameLine + (alive ? '' : ' — defeated') + '</div>' +
         '<div class="rep-stats">🏛 ' + civ.cities.length + '  ·  ⚔ ' + mil + '  ·  ● ' + Math.round(civ.gold) + 'g  ·  ◆ ' + techCount + '/' + totalTechs + '  ·  ✦ ' + wonders + '  ·  ♦ ' + distinctLuxuries(civ) + '</div>' +
         '<div class="rep-stats">⌛ ' + getAge(civ).name + '  ·  ⚖ ' + ((GOVERNMENTS[civ.government] || GOVERNMENTS.despotism).name) + (civ.goldenAgeTurns > 0 ? '  ·  ☀ Golden Age ' + civ.goldenAgeTurns : '') + '</div>' +
+        (alive ? vfill : '') +
         '<div class="rep-vic">' +
           '<span class="rep-vbar">Civics ' + civicsAdopted(civ) + '/' + CIVIC_ORDER.length + '</span>' +
           '<span class="rep-vbar">Science ' + techCount + '/' + totalTechs + '</span>' +
@@ -9941,6 +10018,10 @@
       case 'open-chronicle':
         openChronicle();
         break;
+      case 'open-standings':
+        if (openModal || state.victory) break;
+        openStandings();
+        break;
       case 'end-turn':
         if (openModal || state.victory) break;
         endTurn();
@@ -10228,7 +10309,10 @@
     playerProposeDefensivePact: playerProposeDefensivePact,
     buyableTechFrom: buyableTechFrom,
     playerBuyTech: playerBuyTech,
-    declareWarOn: declareWarOn
+    declareWarOn: declareWarOn,
+    victoryProgress: victoryProgress,
+    closestVictoryAll: closestVictoryAll,
+    checkVictoryRaceAlerts: checkVictoryRaceAlerts
   };
 
   if (document.readyState === 'loading') {

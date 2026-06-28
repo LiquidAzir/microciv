@@ -380,6 +380,41 @@ body {
   border-left: 3px solid var(--gold);
 }
 .rep-seed b { color: var(--gold); letter-spacing: 1px; }
+/* World Report: per-civ closest-victory "finish line" bar */
+.rep-finish { margin: 5px 0 2px; }
+.rep-finish-lbl { font-size: 10px; color: var(--text-2); font-family: var(--font-num); }
+.rep-finish.hot .rep-finish-lbl { color: var(--red); font-weight: 700; }
+.rep-finish-bar { display: block; height: 5px; margin-top: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.rep-finish-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), #ffe9a0); border-radius: 3px; }
+.rep-finish.hot .rep-finish-bar > i { background: linear-gradient(90deg, var(--red), #ff8aa0); }
+
+/* In-game finish-line banner — only shown once the victory race heats up */
+.victory-race {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  font-family: var(--font-num);
+  background: rgba(16,16,32,0.92);
+  border: 1px solid var(--line-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.victory-race.mine  { color: var(--green); border-color: rgba(0,255,136,0.5); box-shadow: 0 0 12px rgba(0,255,136,0.2); }
+.victory-race.rival { color: var(--red);   border-color: rgba(255,68,102,0.55); box-shadow: 0 0 12px rgba(255,68,102,0.25); }
+.victory-race .vr-bar { display: inline-block; width: 54px; height: 5px; background: var(--panel); border-radius: 3px; overflow: hidden; vertical-align: middle; }
+.victory-race .vr-bar > i { display: block; height: 100%; border-radius: 3px; }
+.victory-race.mine  .vr-bar > i { background: var(--green); }
+.victory-race.rival .vr-bar > i { background: var(--red); }
 /* Daily Challenge button tag (best turn / streak) on the title screen */
 .daily-tag {
   font-size: 11px;
