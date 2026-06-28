@@ -1288,6 +1288,30 @@
   }
   function rndInt(a, b) { return a + Math.floor(rnd() * (b - a + 1)); }
   function rndOf(arr) { return arr[Math.floor(rnd() * arr.length)]; }
+  // Seeded in-place Fisher-Yates — deterministic given the rng stream, so a world
+  // seed reproduces the exact same game (Daily Challenge / shareable seed codes).
+  function shuffle(arr) {
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(rnd() * (i + 1));
+      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr;
+  }
+  // Compact base36 code <-> 31-bit seed, for sharing/replaying a world.
+  function seedToCode(seed) { return (seed >>> 0).toString(36); }
+  function codeToSeed(code) {
+    if (typeof code === 'number') return code & 0x7fffffff;
+    var s = String(code || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!s) return 0;
+    var n = parseInt(s, 36);
+    return (isNaN(n) ? 0 : n) & 0x7fffffff;
+  }
+  // FNV-1a hash → 31-bit seed; used to turn a date string into the day's seed.
+  function seedFromString(str) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) & 0x7fffffff;
+  }
 
   // =====================================================================
   // HEX MATH (odd-r offset, pointy-top)
@@ -1689,13 +1713,18 @@
   // =====================================================================
   // NEW GAME / SAVE / LOAD
   // =====================================================================
-  function newGame(seed, playerFaction) {
-    seed = seed || (Date.now() & 0x7fffffff);
+  function newGame(seed, playerFaction, opts) {
+    opts = opts || {};
+    seed = (seed != null ? (seed & 0x7fffffff) : 0) || (Date.now() & 0x7fffffff);
+    // Seed the RNG up front so the ENTIRE setup (faction/personality/agenda
+    // shuffles, map gen, starts, city-states) is deterministic from this one
+    // seed — the basis for shareable seed codes and the Daily Challenge.
+    srand(seed);
     playerFaction = playerFaction || 'solaris';
     if (!FACTIONS[playerFaction]) playerFaction = 'solaris';
     var others = FACTION_ORDER.filter(function (f) { return f !== playerFaction; });
-    // Shuffle so AI faction assignment is randomized
-    others.sort(function () { return Math.random() - 0.5; });
+    // Shuffle so AI faction assignment is randomized (seeded — reproducible)
+    shuffle(others);
 
     // Apply map size
     var mSize = MAP_SIZES[selectedMapSize] || MAP_SIZES.normal;
@@ -1719,6 +1748,9 @@
 
     state = {
       seed: seed,
+      seedCode: seedToCode(seed),
+      isDaily: !!opts.daily,
+      dailyDate: opts.daily ? (opts.dailyDate || null) : null,
       turn: 1,
       currentCiv: 'player',
       map: map,
@@ -1754,15 +1786,13 @@
     // Assign a personality per AI. A faction with a `lean` forces that
     // personality (e.g. Ferrum is always a warmonger); factions without one
     // draw distinct random personalities so the AIs still feel different.
-    var bag = PERSONALITY_ORDER.slice();
-    bag.sort(function () { return Math.random() - 0.5; });
+    var bag = shuffle(PERSONALITY_ORDER.slice());
     function assignPersonality(sideId) {
       var fac = FACTIONS[state.civs[sideId].faction];
       if (fac && fac.lean && AI_PERSONALITIES[fac.lean]) return fac.lean;
       return bag.shift() || 'aggressive';
     }
-    var agendaBag = AGENDA_ORDER.slice();
-    agendaBag.sort(function () { return Math.random() - 0.5; });
+    var agendaBag = shuffle(AGENDA_ORDER.slice());
     aiIds.forEach(function (id, i) {
       state.civs[id].currentTech = i === 0 ? 'archery' : 'pottery';
       state.civs[id].personality = assignPersonality(id);
@@ -1777,6 +1807,57 @@
     recomputeBorders();
     centerCameraOn(state.cursor.c, state.cursor.r);
     save();
+  }
+
+  // =====================================================================
+  // DAILY CHALLENGE / WORLD SEEDS
+  // A custom seed entered on the new-game screen, or null for a random world.
+  // =====================================================================
+  var selectedSeed = null;
+  var DAILY_KEY = 'mdg_microciv_daily';
+  // Local date as YYYY-MM-DD (the day's challenge id). new Date() is fine in the
+  // browser; everyone playing on the same calendar day gets the same world.
+  function dailyKeyForDate(d) {
+    d = d || new Date();
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+  function dailyKeyForToday() { return dailyKeyForDate(); }
+  function dailyKeyYesterday() { return dailyKeyForDate(new Date(Date.now() - 86400000)); }
+  function loadDailyRec() { try { return JSON.parse(localStorage.getItem(DAILY_KEY)) || {}; } catch (e) { return {}; } }
+  function saveDailyRec(d) { try { localStorage.setItem(DAILY_KEY, JSON.stringify(d)); } catch (e) {} }
+
+  // Start today's Daily Challenge — a fixed, fair world (seed + faction + map +
+  // difficulty all derived from the date) so every run is comparable. One tap.
+  function startDaily() {
+    var key = dailyKeyForToday();
+    var seed = seedFromString('mc-daily-' + key);
+    var fac = FACTION_ORDER[seed % FACTION_ORDER.length];
+    selectedMapSize = 'normal';
+    selectedDifficulty = 'normal';
+    selectedSeed = null;
+    clearSave();
+    newGame(seed, fac, { daily: true, dailyDate: key });
+    showScreen('game');
+    if (audioPrefs.music) startMusic();
+    showToast('Daily Challenge — ' + key, 'success');
+  }
+
+  // Record a player win on the daily: track best (fewest turns) per date and a
+  // consecutive-day win streak. Called once when the player wins a daily game.
+  function recordDailyWin() {
+    if (!state || !state.isDaily || !state.dailyDate) return;
+    var rec = loadDailyRec();
+    rec.best = rec.best || {};
+    var prev = rec.best[state.dailyDate];
+    if (prev == null || state.turn < prev) rec.best[state.dailyDate] = state.turn;
+    // Streak: if we already logged today, leave it; if last win was yesterday,
+    // extend; otherwise reset to 1.
+    if (rec.lastWonDate !== state.dailyDate) {
+      rec.streak = (rec.lastWonDate === dailyKeyYesterday()) ? (rec.streak || 0) + 1 : 1;
+      rec.lastWonDate = state.dailyDate;
+    }
+    saveDailyRec(rec);
   }
 
   // Place city-states on the map. Picks land tiles at least 5 hexes from any
@@ -1974,6 +2055,8 @@
       var copy = {
         t: Date.now(),               // last-write-wins timestamp for cloud sync
         seed: state.seed,
+        isDaily: state.isDaily || false,
+        dailyDate: state.dailyDate || null,
         turn: state.turn,
         currentCiv: state.currentCiv,
         map: state.map,
@@ -2067,6 +2150,9 @@
       var s = JSON.parse(raw);
       if (!s.map || !s.civs) return false;
       state = s;
+      state.seedCode = seedToCode(state.seed || 0);   // derived, not persisted
+      if (state.isDaily === undefined) state.isDaily = false;
+      if (state.dailyDate === undefined) state.dailyDate = null;
       state.log = state.log || [];
       state.turnLog = state.turnLog || [];
       state.wondersBuilt = state.wondersBuilt || {};
@@ -7149,6 +7235,12 @@
     var body = document.getElementById('standings-body');
     if (!body) return;
     body.innerHTML = '';
+    // World seed (shareable / replayable) + Daily marker.
+    var seedLine = document.createElement('div');
+    seedLine.className = 'rep-seed';
+    seedLine.innerHTML = (state.isDaily ? '🔥 Daily ' + (state.dailyDate || '') + ' · ' : '') +
+      'World Seed: <b>' + (state.seedCode || seedToCode(state.seed || 0)) + '</b>';
+    body.appendChild(seedLine);
     var totalTechs = TECH_ORDER.length;
     CIV_SIDES.forEach(function (id) {
       var civ = state.civs[id];
@@ -8507,6 +8599,7 @@
   // END SCREEN
   // =====================================================================
   function showEndScreen(winner, kind) {
+    if (winner === 'player') recordDailyWin();   // log Daily best/streak on a win
     var title = document.getElementById('end-title');
     var detail = document.getElementById('end-detail');
     var VICTORY_MSG_WIN = {
@@ -8861,6 +8954,29 @@
     diffRow.appendChild(diffDesc);
 
     host.appendChild(diffRow);
+
+    // --- World seed (optional): blank = random; a code replays the exact world ---
+    var seedRow = document.createElement('div');
+    seedRow.className = 'setup-row';
+    seedRow.innerHTML = '<div class="setup-label">World Seed <span class="diff-current" id="seed-current">' +
+      (selectedSeed ? seedToCode(selectedSeed) : 'random') + '</span></div>';
+    var seedWrap = document.createElement('div');
+    seedWrap.className = 'cloud-code-row';
+    var seedInput = document.createElement('input');
+    seedInput.className = 'cloud-code-input';
+    seedInput.id = 'seed-input';
+    seedInput.type = 'text';
+    seedInput.spellcheck = false;
+    seedInput.placeholder = 'seed code (blank = random)';
+    seedInput.value = selectedSeed ? seedToCode(selectedSeed) : '';
+    var seedBtn = document.createElement('button');
+    seedBtn.className = 'nav-item primary small focusable';
+    seedBtn.dataset.action = 'set-seed';
+    seedBtn.textContent = 'Use';
+    seedWrap.appendChild(seedInput);
+    seedWrap.appendChild(seedBtn);
+    seedRow.appendChild(seedWrap);
+    host.appendChild(seedRow);
   }
 
   // After renderCivCards() rebuilds the setup DOM, return focus to the control
@@ -8885,6 +9001,19 @@
     } else {
       contBtn.classList.add('disabled');
       contBtn.setAttribute('disabled', '');
+    }
+    // Daily Challenge button — show today's status (won / best / streak).
+    var dBtn = document.getElementById('daily-btn');
+    if (dBtn) {
+      var rec = loadDailyRec();
+      var today = dailyKeyForToday();
+      var wonToday = rec.lastWonDate === today || (rec.best && rec.best[today] != null);
+      var streak = rec.streak || 0;
+      var bits = [];
+      if (wonToday && rec.best && rec.best[today] != null) bits.push('✓ T' + rec.best[today]);
+      else if (wonToday) bits.push('✓ done');
+      if (streak > 0) bits.push('🔥' + streak);
+      dBtn.innerHTML = '🔥 Daily Challenge' + (bits.length ? ' <span class="daily-tag">' + bits.join(' · ') + '</span>' : '');
     }
     updateAudioToggles();
   }
@@ -9220,9 +9349,23 @@
       case 'pick-civ':
         var fac = el.dataset.civ;
         clearSave();
-        newGame(null, fac);
+        newGame(selectedSeed, fac);
+        selectedSeed = null;             // one-shot: next new game is random unless re-set
         showScreen('game');
         if (audioPrefs.music) startMusic();
+        break;
+      case 'start-daily':
+        startDaily();
+        break;
+      case 'set-seed':
+        (function () {
+          var inp = document.getElementById('seed-input');
+          var raw = inp ? inp.value : '';
+          selectedSeed = raw && raw.trim() ? codeToSeed(raw) : null;
+          renderCivCards();
+          var cur = document.getElementById('seed-current');
+          if (cur) cur.textContent = selectedSeed ? seedToCode(selectedSeed) : 'random';
+        })();
         break;
       case 'pick-mapsize':
         selectedMapSize = el.dataset.mapsize;
@@ -9553,7 +9696,15 @@
     distinctLuxuries: distinctLuxuries,
     luxurySet: luxurySet,
     luxurySwapDeal: luxurySwapDeal,
-    playerSwapLuxuries: playerSwapLuxuries
+    playerSwapLuxuries: playerSwapLuxuries,
+    seedToCode: seedToCode,
+    codeToSeed: codeToSeed,
+    seedFromString: seedFromString,
+    newGame: newGame,
+    startDaily: startDaily,
+    dailyKeyForToday: dailyKeyForToday,
+    loadDailyRec: loadDailyRec,
+    recordDailyWin: recordDailyWin
   };
 
   if (document.readyState === 'loading') {

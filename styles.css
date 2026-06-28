@@ -369,6 +369,25 @@ body {
   padding: 2px 7px;
   font-family: var(--font-num);
 }
+.rep-seed {
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: var(--font-num);
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  background: var(--panel-2);
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--gold);
+}
+.rep-seed b { color: var(--gold); letter-spacing: 1px; }
+/* Daily Challenge button tag (best turn / streak) on the title screen */
+.daily-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  margin-left: 6px;
+  letter-spacing: 0.5px;
+}
 .audio-toggle {
   flex: 1;
   background: transparent;
