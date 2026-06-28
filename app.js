@@ -6847,11 +6847,15 @@
       flushYieldFx();             // staggered pop/build/wonder cascade for this turn
       draw();
       // Turn-start modal: a pending dilemma takes priority; otherwise a pending
-      // peace offer. (One at a time so they never clobber each other.)
+      // peace offer; otherwise the Turn Brief auto-opens when something important
+      // needs the player (revolt / no research / no civic / Great Person). Quiet
+      // turns and minor nudges (idle units) never pop a modal. (One at a time.)
       if (state.pendingDilemma) {
         setTimeout(function () { presentDilemma(); }, 450);
       } else if (state.pendingPeace) {
         setTimeout(function () { showPeaceOffer(); }, 400);
+      } else if (briefAuto && !state.victory && computeTurnBrief().some(function (it) { return it.important; })) {
+        setTimeout(function () { if (!openModal) openTurnBrief(); }, 450);
       }
     }, 300);
   }
@@ -6949,6 +6953,91 @@
     showTurnSummary._t = setTimeout(function () {
       el.classList.remove('visible');
     }, Math.max(2400, 1600 + events.length * 350));
+  }
+
+  // =====================================================================
+  // TURN BRIEF — a triaged "what needs you" checklist. On a 600x600 glasses
+  // screen in a 60-second session you can't scan the whole map every turn, so
+  // the Brief surfaces the handful of things that want a decision and each row
+  // is a ONE-TAP jump to the fix. Auto-opens for important items; always
+  // reachable from the global menu.
+  // =====================================================================
+  var briefAuto = true;
+  (function () { try { if (localStorage.getItem('mdg_microciv_brief') === '0') briefAuto = false; } catch (e) {} })();
+  function setBriefAuto(on) { briefAuto = !!on; try { localStorage.setItem('mdg_microciv_brief', on ? '1' : '0'); } catch (e) {} }
+
+  // Center + select a unit, then close any modal (used by Brief row jumps).
+  function jumpToUnit(u) {
+    if (!u) return;
+    closeModal();
+    state.cursor.c = u.c; state.cursor.r = u.r;
+    state.selected = { c: u.c, r: u.r };
+    ensureCursorVisible();
+    draw();
+  }
+  // Center on a city and open its management screen.
+  function jumpToCity(ct) {
+    if (!ct) return;
+    closeModal();
+    state.cursor.c = ct.c; state.cursor.r = ct.r;
+    ensureCursorVisible();
+    openCity(ct);
+  }
+
+  // Build the prioritized list of things needing the player's attention.
+  // `important` items (revolt / no research / no civic / Great Person) trigger
+  // the turn-start auto-open; minor nudges (idle units, build plans) don't.
+  function computeTurnBrief() {
+    var pl = state && state.civs && state.civs.player;
+    var items = [];
+    if (!pl || state.victory) return items;
+    // Cities in open revolt, then merely restless (most urgent first)
+    pl.cities.forEach(function (ct) {
+      if (cityRevolting(ct)) items.push({ icon: '🔥', kind: 'err', important: true, title: ct.name + ' in revolt', sub: 'Production halted — ease unrest', act: function () { jumpToCity(ct); } });
+    });
+    pl.cities.forEach(function (ct) {
+      if (!cityRevolting(ct) && (ct.unrest || 0) >= ct.pop * UNREST_REVOLT_MULT * 0.5)
+        items.push({ icon: '⚠', kind: 'err', important: true, title: ct.name + ' is restless', sub: 'Unrest climbing toward revolt', act: function () { jumpToCity(ct); } });
+    });
+    // No research selected
+    if (!pl.currentTech && TECH_ORDER.some(function (t) { return !pl.techs[t]; }))
+      items.push({ icon: '◆', kind: 'info', important: true, title: 'Choose research', sub: 'No technology in progress', act: function () { closeModal(); openTech(); } });
+    // No civic selected while culture is flowing
+    if (!pl.currentCivic && (pl.culPerTurn || 0) > 0 && !civicsComplete(pl))
+      items.push({ icon: '♪', kind: 'info', important: true, title: 'Choose a civic', sub: 'Culture going to waste', act: function () { closeModal(); openCivics(); } });
+    // Great Person waiting to be used
+    var gp = pl.units.filter(function (u) { return UNITS[u.type] && UNITS[u.type].great; });
+    if (gp.length) items.push({ icon: '★', kind: 'win', important: true, title: gp.length + ' Great Person' + (gp.length > 1 ? 's' : '') + ' ready', sub: 'Activate for a powerful boon', act: function () { jumpToUnit(gp[0]); } });
+    // Idle units that can still move (aggregate — minor)
+    var idle = pl.units.filter(function (u) { return u.moves > 0 && !u.fortified && !u.auto && !u.autoExplore && !(UNITS[u.type] && UNITS[u.type].great); });
+    if (idle.length) items.push({ icon: '⚑', kind: 'info', important: false, title: idle.length + ' unit' + (idle.length > 1 ? 's' : '') + ' can move', sub: 'Jump to the next idle unit', act: function () { jumpToUnit(idle[0]); } });
+    // Cities about to finish production with nothing queued (aggregate — minor)
+    var noPlan = pl.cities.filter(function (ct) {
+      if ((ct.queue || []).length) return false;
+      var p = ct.producing, cost = UNITS[p] ? UNITS[p].cost : (BUILDINGS[p] ? BUILDINGS[p].cost : 0);
+      if (!cost) return false;
+      return (ct.prod + workableYields(ct).prod) >= cost;   // completes next turn, no plan
+    });
+    if (noPlan.length) items.push({ icon: '⚒', kind: 'info', important: false, title: noPlan.length + ' city build' + (noPlan.length > 1 ? 's' : '') + ' ending', sub: 'Queue what comes next', act: function () { jumpToCity(noPlan[0]); } });
+    return items;
+  }
+
+  // Render the Brief as an action list (reuses the proven modal renderer).
+  function openTurnBrief() {
+    var items = computeTurnBrief();
+    var actions = [];
+    actions.push({ header: true, disabled: true, icon: '📋', title: 'Turn ' + state.turn + ' Brief',
+      sub: items.length ? (items.length + ' thing' + (items.length > 1 ? 's' : '') + ' need you') : 'All clear — nothing pressing' });
+    if (!items.length) {
+      actions.push({ header: true, disabled: true, icon: '✓', title: 'Empire running smoothly', sub: 'End the turn whenever you like' });
+    } else {
+      items.forEach(function (it) {
+        actions.push({ icon: it.icon, title: it.title, sub: it.sub, danger: it.kind === 'err', primary: it.kind === 'win', do: function () { if (it.act) it.act(); } });
+      });
+    }
+    actions.push({ icon: briefAuto ? '☑' : '☐', title: 'Auto-open each turn', sub: briefAuto ? 'On — opens when something important needs you' : 'Off — open it from the menu', do: function () { setBriefAuto(!briefAuto); openTurnBrief(); } });
+    actions.push({ icon: '←', title: 'Close', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Turn Brief');
   }
 
   function flashEndTurn() {
@@ -8140,6 +8229,9 @@
     }
 
     // Global actions (always at bottom)
+    // Turn Brief — triaged "what needs you" checklist with one-tap jumps.
+    var briefN = computeTurnBrief().length;
+    actions.push({ icon: '📋', primary: briefN > 0, title: 'Turn Brief', sub: briefN > 0 ? briefN + ' thing' + (briefN > 1 ? 's' : '') + ' need you' : 'All clear', do: function () { closeModal(); openTurnBrief(); } });
     actions.push({ icon: '◆', title: 'Research', sub: civPl.currentTech ? TECHS[civPl.currentTech].name + ' · ' + civPl.techProgress + '/' + TECHS[civPl.currentTech].cost : 'Choose research', do: function () { closeModal(); openTech(); } });
     actions.push({ icon: '♪', title: 'Civics', sub: civPl.currentCivic ? CIVICS[civPl.currentCivic].name + ' · ' + civPl.civicProgress + '/' + CIVICS[civPl.currentCivic].cost : (civicsAdopted(civPl) + '/' + CIVIC_ORDER.length + ' adopted'), do: function () { closeModal(); openCivics(); } });
 
@@ -9746,7 +9838,9 @@
     flushYieldFx: flushYieldFx,
     goldenAgeFlash: goldenAgeFlash,
     fxActive: function () { return combatFx.length; },
-    yieldFxPending: function () { return yieldFxQueue.length; }
+    yieldFxPending: function () { return yieldFxQueue.length; },
+    computeTurnBrief: computeTurnBrief,
+    openTurnBrief: openTurnBrief
   };
 
   if (document.readyState === 'loading') {
