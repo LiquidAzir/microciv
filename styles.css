@@ -923,6 +923,37 @@ body {
 }
 .era-pill.golden .chip-lbl,
 .era-pill.golden .chip-val { color: #ffd34d; }
+.era-pill.golden { animation: eraGoldPulse 1.6s ease-in-out infinite; }
+@keyframes eraGoldPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(255,211,77,0.35); }
+  50%      { box-shadow: 0 0 18px rgba(255,211,77,0.75); }
+}
+/* Era-Point bar nearly full — an amber glint hints a Golden Age is close */
+.era-pill.near {
+  border-color: rgba(255,180,84,0.6);
+  animation: eraNearPulse 1.8s ease-in-out infinite;
+}
+.era-pill.near .chip-val { color: var(--warm); }
+@keyframes eraNearPulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(255,180,84,0.20); }
+  50%      { box-shadow: 0 0 13px rgba(255,180,84,0.55); }
+}
+
+/* Golden Age detonation — a one-shot radial gold flash over the game screen */
+#game.golden-flash::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  background: radial-gradient(circle at 50% 45%, rgba(255,211,77,0.40), rgba(255,180,84,0.12) 45%, transparent 72%);
+  animation: goldenFlash 0.85s ease-out forwards;
+}
+@keyframes goldenFlash {
+  0%   { opacity: 0; }
+  25%  { opacity: 1; }
+  100% { opacity: 0; }
+}
 /* MENU chip — visible entry point to the global menu (clickable on phone/PC) */
 .menu-chip {
   cursor: pointer;

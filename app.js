@@ -653,6 +653,7 @@
         showToast('☀ Golden Age! +1 to every yield for ' + gaLen + ' turns', 'success');
         logEvent('A Golden Age dawns — every city gains +1 food/prod/gold/sci for ' + gaLen + ' turns', 'success');
         chronicle('A Golden Age dawned across the realm.');
+        goldenAgeFlash();
       } else {
         logEvent((CIVS[civ.id] ? CIVS[civ.id].name : civ.id) + ' entered a Golden Age');
       }
@@ -667,7 +668,19 @@
       showToast('☀ ' + (reason || 'Golden Age') + '! +1 to every yield', 'success');
       logEvent((reason || 'A Golden Age') + ' — +1 to every yield for ' + length + ' turns', 'success');
       chronicle((reason || 'A Golden Age') + ' began.');
+      goldenAgeFlash();
     }
+  }
+  // A one-shot gold screen flash + shake when the player's Golden Age fires —
+  // the detonation that makes banked Era Points feel like a payoff.
+  function goldenAgeFlash() {
+    var g = (typeof document !== 'undefined') && document.getElementById('game');
+    if (g) {
+      g.classList.add('golden-flash');
+      setTimeout(function () { g.classList.remove('golden-flash'); }, 850);
+    }
+    addFx('shake', 0, 0, { intensity: 4 }, 420);
+    if (state) draw();
   }
 
   // Selectable factions. Each gives ONE small bonus.
@@ -2472,8 +2485,27 @@
   // Lightweight overlay queue — each entry draws for a few frames then dies.
   var combatFx = [];    // [{ type, c, r, data, startMs, durationMs }]
 
-  function addFx(type, c, r, data, durationMs) {
-    combatFx.push({ type: type, c: c, r: r, data: data || {}, start: Date.now(), dur: durationMs || 600 });
+  function addFx(type, c, r, data, durationMs, delayMs) {
+    combatFx.push({ type: type, c: c, r: r, data: data || {}, start: Date.now() + (delayMs || 0), dur: durationMs || 600 });
+  }
+
+  // ---- Civic "yield pop" feedback ----------------------------------------
+  // Pop growth / buildings / wonders give the weakest feedback (log text). We
+  // collect them per turn and flush a STAGGERED floating-number cascade so the
+  // turn rollover feels alive. Only the player's own cities pop (no fog spoilers).
+  var yieldFxQueue = [];
+  function queueYieldFx(c, r, text, color, flashColor) {
+    yieldFxQueue.push({ c: c, r: r, text: text, color: color, flash: flashColor || null });
+  }
+  function flushYieldFx() {
+    if (!yieldFxQueue.length) return;
+    var base = 140;            // let the turn settle before the cascade starts
+    yieldFxQueue.forEach(function (e, i) {
+      var d = base + i * 200;  // staggered so multiple cities read one-by-one
+      if (e.flash) addFx('hexFlash', e.c, e.r, { color: e.flash }, 520, d);
+      addFx('floatNum', e.c, e.r, { text: e.text, color: e.color }, 1050, d);
+    });
+    yieldFxQueue = [];
   }
   function addCombatFx(defC, defR, dmgToDef, dmgToAtk, atkC, atkR) {
     // Hex flash on defender
@@ -2506,6 +2538,7 @@
       var t = (Date.now() - fx.start) / fx.dur;
       if (t >= 1) continue;
       var decay = 1 - t;
+      if (t < 0) continue;   // delayed FX not started yet
       var inten = fx.data.intensity * decay;
       ox += (Math.random() * 2 - 1) * inten;
       oy += (Math.random() * 2 - 1) * inten;
@@ -2520,6 +2553,7 @@
       var fx = combatFx[i];
       var t = (now - fx.start) / fx.dur;
       if (t >= 1) { combatFx.splice(i, 1); continue; }
+      if (t < 0) continue;   // delayed FX (staggered cascade) — not started yet
 
       if (fx.type === 'hexFlash') {
         var p = pixelOf(fx.c, fx.r, size);
@@ -4804,6 +4838,8 @@
         ? '☀' + pc.goldenAgeTurns
         : (pc.eraPoints || 0) + '/' + goldenAgeThreshold(pc);
       eraPill.classList.toggle('golden', inGolden);
+      // Glint when the Era-Point bar is nearly full (a Golden Age is imminent).
+      eraPill.classList.toggle('near', !inGolden && (pc.eraPoints || 0) >= goldenAgeThreshold(pc) * 0.8);
     }
 
     var hint = document.getElementById('hud-hint');
@@ -5513,7 +5549,7 @@
       city.pop += 1;
       city.food = 0;
       city.foodCap = 8 + city.pop * 5;
-      if (city.civ === 'player') logEvent(city.name + ' grew to pop ' + city.pop, 'success');
+      if (city.civ === 'player') { logEvent(city.name + ' grew to pop ' + city.pop, 'success'); queueYieldFx(city.c, city.r, '+1 pop', '#7bff9d', 'rgba(0,255,136,0.30)'); }
     }
 
     // Production — a city in open revolt produces nothing this turn.
@@ -5540,12 +5576,12 @@
             city.buildings[p] = true;
             state.wondersBuilt[p] = city.civ;
             applyWonderOneShot(city, p);
-            if (city.civ === 'player') { logEvent(city.name + ' built ' + bdef.name + ' (wonder)', 'success'); chronicle('Completed the wonder of ' + bdef.name + ' in ' + city.name + '.'); sfxWonder(); }
+            if (city.civ === 'player') { logEvent(city.name + ' built ' + bdef.name + ' (wonder)', 'success'); chronicle('Completed the wonder of ' + bdef.name + ' in ' + city.name + '.'); sfxWonder(); queueYieldFx(city.c, city.r, '✦ ' + bdef.name, '#ffd34d', 'rgba(255,211,77,0.40)'); }
             else logEvent(CIVS[city.civ].name + ' built ' + bdef.name, 'error');
           }
         } else {
           city.buildings[p] = true;
-          if (city.civ === 'player') logEvent(city.name + ' built ' + bdef.name, 'success');
+          if (city.civ === 'player') { logEvent(city.name + ' built ' + bdef.name, 'success'); queueYieldFx(city.c, city.r, '✓ ' + bdef.name, '#7ce5ff', 'rgba(0,212,255,0.25)'); }
         }
       } else {
         var spawnTile = findSpawnTile(city, p);
@@ -6808,6 +6844,7 @@
       showTurnSummary();
       aiThinking = false;
       save();
+      flushYieldFx();             // staggered pop/build/wonder cascade for this turn
       draw();
       // Turn-start modal: a pending dilemma takes priority; otherwise a pending
       // peace offer. (One at a time so they never clobber each other.)
@@ -9704,7 +9741,12 @@
     startDaily: startDaily,
     dailyKeyForToday: dailyKeyForToday,
     loadDailyRec: loadDailyRec,
-    recordDailyWin: recordDailyWin
+    recordDailyWin: recordDailyWin,
+    queueYieldFx: queueYieldFx,
+    flushYieldFx: flushYieldFx,
+    goldenAgeFlash: goldenAgeFlash,
+    fxActive: function () { return combatFx.length; },
+    yieldFxPending: function () { return yieldFxQueue.length; }
   };
 
   if (document.readyState === 'loading') {
