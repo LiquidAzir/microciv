@@ -88,6 +88,11 @@
     tank:      { name: 'Tank',      cost: 100, hp: 32, atk: 24, def: 16, move: 4, glyph: '▦', tech: 'combustion', requires: 'oil' },
     battleship:{ name: 'Battleship',cost: 110, hp: 36, atk: 26, def: 14, move: 4, glyph: '⛟', tech: 'combustion', naval: true, ranged: 2, siege: true, requires: 'oil' },
     fighter:   { name: 'Fighter',   cost: 90, hp: 20, atk: 18, def: 6, move: 6, glyph: '✈', tech: 'mass_production', ranged: 2, air: true, requires: 'oil' },
+    // Faction unique units (sidegrades that REPLACE a base unit for one faction)
+    legionary: { name: 'Legionary', cost: 16, hp: 16, atk: 6, def: 5, move: 2, glyph: '⚔', tech: null,        faction: 'ferrum', replaces: 'warrior' },
+    nightblade:{ name: 'Nightblade', cost: 42, hp: 18, atk: 10, def: 4, move: 3, glyph: '⚔', tech: 'steel',     faction: 'umbra',  replaces: 'swordsman' },
+    bloodrider:{ name: 'Bloodrider', cost: 32, hp: 14, atk: 8, def: 3, move: 5, glyph: '♞', tech: 'husbandry',  faction: 'vorne',  replaces: 'horseman' },
+    dromon:    { name: 'Dromon',    cost: 30, hp: 16, atk: 7, def: 4, move: 4, glyph: '⛵', tech: 'sailing',     faction: 'myrr',   naval: true, replaces: 'galley' },
     raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true },
     great_general:   { name: 'Great General',   cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚑', tech: null, civilian: true, great: true },
     great_scientist: { name: 'Great Scientist', cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚗', tech: null, civilian: true, great: true },
@@ -108,7 +113,11 @@
     rifleman:  { to: 'infantry',   tech: 'conscription', cost: 40 },
     cannon:    { to: 'artillery',  tech: 'ballistics',  cost: 40 },
     knight:    { to: 'tank',       tech: 'combustion',  cost: 45 },
-    caravel:   { to: 'battleship', tech: 'combustion',  cost: 45 }
+    caravel:   { to: 'battleship', tech: 'combustion',  cost: 45 },
+    // Faction uniques upgrade into the standard next-tier so they don't obsolete
+    legionary: { to: 'swordsman',  tech: 'steel',       cost: 25 },
+    bloodrider:{ to: 'knight',     tech: 'chivalry',    cost: 28 },
+    dromon:    { to: 'caravel',    tech: 'navigation',  cost: 18 }
   };
 
   var GP_THRESHOLD = 50;  // base great person points needed
@@ -209,10 +218,12 @@
     granary:  { name: 'Granary',    cost: 30, food: 2, tech: 'pottery'  },
     library:  { name: 'Library',    cost: 30, sci:  2, tech: 'writing'  },
     walls:    { name: 'Walls',      cost: 40, def:  4, tech: 'masonry'  },
+    bastion:  { name: 'Bastion',    cost: 45, def:  6, tech: 'masonry', faction: 'tellus', replaces: 'walls' },
     market:   { name: 'Market',     cost: 50, gold: 3, tech: 'currency' },
     aqueduct: { name: 'Aqueduct',   cost: 45, food: 3, tech: 'engineering' },
     temple:   { name: 'Temple',     cost: 40, sci:  3, content: 2, culture: 3, tech: 'theology' },
     monument: { name: 'Monument',   cost: 25, culture: 2 },
+    sun_spire: { name: 'Sun Spire',  cost: 30, culture: 4, content: 1, faction: 'solaris', replaces: 'monument' },
     university:{name: 'University', cost: 70, sci:  4, tech: 'education' },
     bank:     { name: 'Bank',       cost: 55, gold: 4, tech: 'banking' },
     // Expansion buildings — production, economy, culture, science, defense lanes
@@ -565,7 +576,7 @@
     if (civAtWarAny(city.civ)) d += 2;              // wartime discontent
     var b = city.buildings || {};
     var content = 0;
-    ['temple', 'amphitheater', 'cathedral'].forEach(function (k) { if (b[k] && BUILDINGS[k].content) content += BUILDINGS[k].content; });
+    for (var bk in b) { if (b[bk] && BUILDINGS[bk] && BUILDINGS[bk].content) content += BUILDINGS[bk].content; }
     var gov = activeGovernment(civ);
     if (gov && gov.contentment) content += gov.contentment;
     content += edictEff(civ, 'contentment');   // Festivals +2 / Mass Levy -1
@@ -685,26 +696,36 @@
 
   // Selectable factions. Each gives ONE small bonus.
   var FACTIONS = {
+    // Each faction = a baseline `bonus` (folded by the original workableYields/
+    // atkTechBonus) + a DISTINCT `passive` (folded by factionEff) + one unique
+    // unit or building (UNITS/BUILDINGS entry tagged `faction` + `replaces`), so
+    // the six play differently from turn 1.
     solaris: {
       name: 'Solaris',
       title: 'Children of the Sun',
       color: '#00d4ff', edge: '#7ce5ff',
       bonus: { food: 1 },
-      lore: '+1 food in every city. Abundant harvests power faster growth.'
+      passive: { gpMult: 0.25 },
+      unique: 'Sun Spire',
+      lore: '+1 food/city · +25% Great People · unique Sun Spire (culture).'
     },
     umbra: {
       name: 'Umbra',
       title: 'Shadowborn',
       color: '#ff7a59', edge: '#ffb59a',
       bonus: { atk: 1 },
-      lore: '+1 attack on military units. Every soldier hits harder.'
+      passive: { vision: 1 },
+      unique: 'Nightblade',
+      lore: '+1 attack · +1 sight range · unique Nightblade (fast, deadly swordsman).'
     },
     tellus: {
       name: 'Tellus',
       title: 'Earthen Founders',
       color: '#b388ff', edge: '#d4b8ff',
       bonus: { gold: 1 },
-      lore: '+1 gold in every city. Coffers fill faster for upkeep and trade.'
+      passive: { cityDefMult: 0.25 },
+      unique: 'Bastion',
+      lore: '+1 gold/city · +25% city defense · unique Bastion (stronger Walls).'
     },
     // --- New factions ---
     ferrum: {
@@ -712,25 +733,37 @@
       title: 'The Iron Legion',
       color: '#d9892b', edge: '#ffc06a',
       bonus: { prod: 1 },
+      passive: { upkeepFree: 2 },
+      unique: 'Legionary',
       lean: 'warmonger',
-      lore: '+1 production in every city. Their forges never cool between wars.'
+      lore: '+1 prod/city · 2 free military upkeep · unique Legionary (tough early footman).'
     },
     vorne: {
       name: 'Vorne',
       title: 'The Bloodbound',
       color: '#d83a4a', edge: '#ff7a86',
       bonus: { atk: 1 },
+      passive: { healOnKill: 5 },
+      unique: 'Bloodrider',
       lean: 'aggressive',
-      lore: '+1 attack on military units. A horde that lives to charge.'
+      lore: '+1 attack · units heal +5 HP on a kill · unique Bloodrider (fast cavalry).'
     },
     myrr: {
       name: 'Myrr',
       title: 'The Tidewardens',
       color: '#2ad0c0', edge: '#7af0e4',
       bonus: { gold: 1 },
-      lore: '+1 gold in every city. Masters of trade across the open seas.'
+      passive: { coastalGold: 2 },
+      unique: 'Dromon',
+      lore: '+1 gold/city · +2 gold in coastal cities · unique Dromon (superior galley).'
     }
   };
+  // Signed value a faction's distinct passive contributes for an effect key.
+  function factionEff(civ, key) {
+    if (!civ) return 0;
+    var f = FACTIONS[civ.faction];
+    return (f && f.passive && f.passive[key]) || 0;
+  }
   var FACTION_ORDER = ['solaris', 'umbra', 'tellus', 'ferrum', 'vorne', 'myrr'];
 
   // AI personalities — rolled per AI civ at newGame. Each tunes a few existing
@@ -2028,11 +2061,12 @@
       var t = state.map[n[1]][n[0]];
       return !TERRAIN[t.terrain].impassable && !t.unit;
     });
-    if (ns.length > 0) spawnUnit(civId, 'warrior', ns[0][0], ns[0][1]);
+    var starterWar = factionUnitFor(state.civs[civId], 'warrior');   // Ferrum starts with a Legionary
+    if (ns.length > 0) spawnUnit(civId, starterWar, ns[0][0], ns[0][1]);
     // Hard difficulty: AI gets an extra warrior
     var diff = DIFFICULTIES[state.difficulty || 'normal'] || DIFFICULTIES.normal;
     if (diff.aiExtraWarrior && civId !== 'player' && ns.length > 1) {
-      spawnUnit(civId, 'warrior', ns[1][0], ns[1][1]);
+      spawnUnit(civId, starterWar, ns[1][0], ns[1][1]);
     }
   }
 
@@ -2428,8 +2462,9 @@
           }
         }
     }
-    civ.units.forEach(function (u) { reveal(u.c, u.r, 2); });
-    civ.cities.forEach(function (ct) { reveal(ct.c, ct.r, 2); });
+    var sight = 2 + factionEff(civ, 'vision');   // Umbra sees one hex further
+    civ.units.forEach(function (u) { reveal(u.c, u.r, sight); });
+    civ.cities.forEach(function (ct) { reveal(ct.c, ct.r, sight); });
   }
 
   // =====================================================================
@@ -4331,6 +4366,10 @@
     tank:      drawSwordsman,   // armored ground apex
     battleship:drawGalley,      // ship
     fighter:   drawArcher,      // fast ranged
+    legionary: drawWarrior,     // faction uniques reuse their base sprite
+    nightblade:drawSwordsman,
+    bloodrider:drawHorseman,
+    dromon:    drawGalley,
     raider:    drawWarrior,  // reuses warrior sprite; civ color makes it grey
     great_general:   drawGreatPerson,
     great_scientist: drawGreatPerson,
@@ -4606,10 +4645,11 @@
     var dBonus = (terr.defBonus || 0);
     if (defender.fortified) dBonus += 0.25;
     if (dTile.city && dTile.city.civ === defender.civ) {
-      dBonus += dTile.city.buildings.walls ? 0.75 : 0.25;
+      dBonus += dTile.city.buildings.bastion ? 0.95 : dTile.city.buildings.walls ? 0.75 : 0.25;
       if (dTile.city.buildings.castle) dBonus += 0.5;   // Castle stacks atop Walls
       if (dTile.city.buildings.military_academy) dBonus += 0.35;
       if (state.wondersBuilt && state.wondersBuilt.great_wall === defender.civ) dBonus += 0.5;
+      dBonus += factionEff(state.civs[defender.civ], 'cityDefMult');   // Tellus: fortress empire
     }
     if (dTile.owner === defender.civ) dBonus += 0.10;
     if (isRanged && defender.promoCover) dBonus += 0.5;   // Cover promotion: harder to hit at range
@@ -4654,6 +4694,7 @@
       if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
       checkPromotion(attacker);
+      var hk = factionEff(state.civs[attacker.civ], 'healOnKill'); if (hk) attacker.hp = Math.min(attacker.maxHp, attacker.hp + hk);  // Vorne
       // Ranged attacker does NOT move into the vacated tile
     }
     return true;
@@ -4919,6 +4960,9 @@
     if (fb.food) food += fb.food;
     if (fb.prod) prod += fb.prod;
     if (fb.gold) gold += fb.gold;
+    // Myrr — extra gold in coastal cities (their sea-trade identity)
+    var coastalG = factionEff(state.civs[city.civ], 'coastalGold');
+    if (coastalG && isCoastalCity(city)) gold += coastalG;
     // Wonder: Hanging Gardens — +2 food in every city of its owner
     var wb = state.wondersBuilt || {};
     if (wb.hanging_gardens === city.civ) food += BUILDINGS.hanging_gardens.perCityFood;
@@ -5098,8 +5142,10 @@
       gpt += y.gold;
       spt += cityScience(ct);
     });
-    // Upkeep: military units cost 1/turn, civilians free
+    // Upkeep: military units cost 1/turn, civilians free. Ferrum's Iron Legion
+    // gets its first N military units upkeep-free.
     var upkeep = civ.units.filter(function (u) { return !UNITS[u.type].civilian; }).length;
+    upkeep = Math.max(0, upkeep - factionEff(civ, 'upkeepFree'));
     gpt -= upkeep;
     // City-state allies contribute mercantile / scientific perks
     if (state.civs.cs) {
@@ -5278,6 +5324,7 @@
       if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
       checkPromotion(attacker);
+      if (attacker.hp > 0) { var hk = factionEff(state.civs[attacker.civ], 'healOnKill'); if (hk) attacker.hp = Math.min(attacker.maxHp, attacker.hp + hk); }  // Vorne
       // Only move in and capture if the attacker survived
       if (attacker.hp > 0) {
         var oldT = tileAt(attacker.c, attacker.r);
@@ -5461,9 +5508,9 @@
       foodCap: 10,
       prod: 0,
       buildings: {},
-      // Player picks production explicitly; AI defaults to warrior so its
-      // cities never sit idle.
-      producing: unit.civ === 'player' ? null : 'warrior',
+      // Player picks production explicitly; AI defaults to a warrior (its
+      // faction unique if any) so its cities never sit idle.
+      producing: unit.civ === 'player' ? null : factionUnitFor(civ, 'warrior'),
       queue: [],            // up to 3 items to auto-build after current
       capital: isCapital,
       originalCiv: isCapital ? unit.civ : null,   // tracks who founded this capital for domination check
@@ -5644,7 +5691,7 @@
             // Race lost — banked production is forfeit (otherwise a lost race would
             // pop a free warrior the next turn). Pick a sensible default.
             city.prod = 0;
-            city.producing = 'warrior';
+            city.producing = factionUnitFor(state.civs[city.civ], 'warrior');
             if (city.civ === 'player') { logEvent('Lost the race for ' + bdef.name, 'error'); chronicle('Lost the race to build ' + bdef.name + '.'); }
           } else {
             city.buildings[p] = true;
@@ -5715,8 +5762,8 @@
     targets.sort(function (a, b) { return a.hp - b.hp; });
     var target = targets[0];
 
-    // City attack power: base 3 + pop + 2 if walls
-    var atkPower = 3 + city.pop + (city.buildings.walls ? 2 : 0);
+    // City attack power: base 3 + pop + 2 if walls (or a Tellus Bastion)
+    var atkPower = 3 + city.pop + ((city.buildings.walls || city.buildings.bastion) ? 2 : 0);
     var dDef = UNITS[target.type];
     var dBonus = 0;
     var dTile = tileAt(target.c, target.r);
@@ -5819,34 +5866,49 @@
       }
       // Best available offensive unit first; siege/naval mixed in occasionally.
       // Modern apex units lead (availableProducibles already hides any whose
-      // oil/iron the civ doesn't control).
-      if (available.indexOf('tank') >= 0) return 'tank';
-      if (available.indexOf('artillery') >= 0 && rnd() < 0.25) return 'artillery';
-      if (available.indexOf('fighter') >= 0 && rnd() < 0.2) return 'fighter';
-      if (available.indexOf('infantry') >= 0) return 'infantry';
-      if (available.indexOf('battleship') >= 0 && isCoastalCity(city) && rnd() < 0.25) return 'battleship';
-      if (available.indexOf('rifleman') >= 0) return 'rifleman';
-      if (available.indexOf('musketman') >= 0) return 'musketman';
-      if (available.indexOf('knight') >= 0) return 'knight';
-      if (available.indexOf('swordsman') >= 0) return 'swordsman';
-      if (available.indexOf('cannon') >= 0 && rnd() < 0.3) return 'cannon';
-      if (available.indexOf('horseman') >= 0) return 'horseman';
-      if (available.indexOf('trebuchet') >= 0 && rnd() < 0.3) return 'trebuchet';
-      if (available.indexOf('catapult') >= 0 && rnd() < 0.3) return 'catapult';
-      if (available.indexOf('archer') >= 0) return 'archer';
-      if (available.indexOf('caravel') >= 0 && isCoastalCity(city) && rnd() < 0.2) return 'caravel';
-      if (available.indexOf('galley') >= 0 && isCoastalCity(city) && rnd() < 0.2) return 'galley';
-      return 'warrior';
+      // oil/iron the civ doesn't control). av() resolves a base type to this
+      // faction's unique (e.g. swordsman → Umbra's Nightblade) if available.
+      var u;
+      function av(type) { var t = factionUnitFor(civ, type); return available.indexOf(t) >= 0 ? t : null; }
+      if (u = av('tank')) return u;
+      if (av('artillery') && rnd() < 0.25) return av('artillery');
+      if (av('fighter') && rnd() < 0.2) return av('fighter');
+      if (u = av('infantry')) return u;
+      if (av('battleship') && isCoastalCity(city) && rnd() < 0.25) return av('battleship');
+      if (u = av('rifleman')) return u;
+      if (u = av('musketman')) return u;
+      if (u = av('knight')) return u;
+      if (u = av('swordsman')) return u;
+      if (av('cannon') && rnd() < 0.3) return av('cannon');
+      if (u = av('horseman')) return u;
+      if (av('trebuchet') && rnd() < 0.3) return av('trebuchet');
+      if (av('catapult') && rnd() < 0.3) return av('catapult');
+      if (u = av('archer')) return u;
+      if (av('caravel') && isCoastalCity(city) && rnd() < 0.2) return av('caravel');
+      if (av('galley') && isCoastalCity(city) && rnd() < 0.2) return av('galley');
+      return factionUnitFor(civ, 'warrior');
     }
-    // Player: if current production is a completed building, switch to warrior
-    if (BUILDINGS[city.producing] && city.buildings[city.producing]) return 'warrior';
+    // Player: if current production is a completed building, switch to a warrior
+    if (BUILDINGS[city.producing] && city.buildings[city.producing]) return factionUnitFor(civ, 'warrior');
     return city.producing;
   }
 
+  // The faction's unique that replaces a given base type (or the base itself).
+  function factionUnitFor(civ, baseType) {
+    var fac = civ && civ.faction;
+    if (fac) for (var k in UNITS) { if (UNITS[k].faction === fac && UNITS[k].replaces === baseType) return k; }
+    return baseType;
+  }
   function availableProducibles(civ, city) {
     var out = [];
+    // Bases this civ's faction uniques replace (so the base is hidden for them).
+    var replaced = {};
+    for (var rk in UNITS) { if (UNITS[rk].faction === civ.faction && UNITS[rk].replaces) replaced[UNITS[rk].replaces] = 1; }
+    for (var bk in BUILDINGS) { if (BUILDINGS[bk].faction === civ.faction && BUILDINGS[bk].replaces) replaced[BUILDINGS[bk].replaces] = 1; }
     for (var k in UNITS) {
       var u = UNITS[k];
+      if (u.faction && u.faction !== civ.faction) continue;   // another faction's unique
+      if (replaced[k]) continue;        // base replaced by this faction's unique
       if (u.tech && !civ.techs[u.tech]) continue;
       if (u.barb) continue;             // raiders aren't trainable
       if (u.great) continue;            // great people aren't trainable
@@ -5856,6 +5918,8 @@
     }
     for (var k in BUILDINGS) {
       var b = BUILDINGS[k];
+      if (b.faction && b.faction !== civ.faction) continue;   // another faction's unique
+      if (replaced[k]) continue;        // base replaced by this faction's unique
       if (b.tech && !civ.techs[b.tech]) continue;
       if (b.coastal && city && !isCoastalCity(city)) continue;   // Harbor needs the sea
       if (b.wonder && state.wondersBuilt && state.wondersBuilt[k]) continue;
@@ -6793,7 +6857,7 @@
     progressTech(pl);
     // Great people culture points (temples + culture buildings + wonders)
     var plCpt = civCulturePerTurn(pl);
-    pl.greatPoints.culture += Math.round(plCpt * (1 + civicSum(pl, 'gpMult')));  // Monastic Orders speeds GP
+    pl.greatPoints.culture += Math.round(plCpt * (1 + civicSum(pl, 'gpMult') + factionEff(pl, 'gpMult')));  // Monastic Orders + Solaris speed GP
     pl.culPerTurn = plCpt;                              // drives the Civics track + HUD
     accrueEraPoints(pl, true);                          // bank Era Points / fire Golden Age
     progressCivic(pl);                                  // advance the adopted civic
@@ -6820,7 +6884,7 @@
         progressTech(c);
         // Great people culture points for AI
         var cCpt = civCulturePerTurn(c);
-        c.greatPoints.culture += Math.round(cCpt * (1 + civicSum(c, 'gpMult')));  // Monastic Orders speeds GP
+        c.greatPoints.culture += Math.round(cCpt * (1 + civicSum(c, 'gpMult') + factionEff(c, 'gpMult')));  // Monastic Orders + Solaris speed GP
         c.culPerTurn = cCpt;                              // drives the Civics track
         accrueEraPoints(c, false);                        // bank Era Points / fire Golden Age
         if (!c.currentCivic) { var nci = pickAiCivic(c); if (nci) { c.currentCivic = nci; c.civicProgress = 0; } }
@@ -8406,7 +8470,7 @@
     document.getElementById('c-food').textContent = (city.food | 0) + '/' + city.foodCap + ' (+' + (y.food - city.pop * 2) + ')';
     document.getElementById('c-prod').textContent = '+' + y.prod;
     document.getElementById('c-sci').textContent = '+' + cityScience(city);
-    var def = (city.buildings.walls ? 4 : 0) + (city.buildings.castle ? 6 : 0) + (city.buildings.military_academy ? 4 : 0) + (city.pop);
+    var def = (city.buildings.walls ? 4 : 0) + (city.buildings.bastion ? 6 : 0) + (city.buildings.castle ? 6 : 0) + (city.buildings.military_academy ? 4 : 0) + (city.pop);
     if (state.wondersBuilt && state.wondersBuilt.great_wall === city.civ) def = Math.round(def * 1.5);
     document.getElementById('c-def').textContent = def;
     // Mood / stability — Content, Restless, or in open Revolt
@@ -9926,7 +9990,10 @@
     presentPromotion: presentPromotion,
     findPendingPromoUnit: findPendingPromoUnit,
     combatRatio: combatRatio,
-    PROMOTIONS: PROMOTIONS
+    PROMOTIONS: PROMOTIONS,
+    factionEff: factionEff,
+    factionUnitFor: factionUnitFor,
+    FACTIONS: FACTIONS
   };
 
   if (document.readyState === 'loading') {
