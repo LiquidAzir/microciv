@@ -9840,7 +9840,9 @@
     fxActive: function () { return combatFx.length; },
     yieldFxPending: function () { return yieldFxQueue.length; },
     computeTurnBrief: computeTurnBrief,
-    openTurnBrief: openTurnBrief
+    openTurnBrief: openTurnBrief,
+    foundCity: foundCity,
+    endTurn: endTurn
   };
 
   if (document.readyState === 'loading') {
