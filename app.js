@@ -328,8 +328,8 @@
     return d;
   })();
 
-  // Victory thresholds (used by culture + economic checks)
-  var CULTURE_VICTORY_WONDERS = 4;     // own this many World Wonders → culture victory
+  // Victory thresholds
+  // Culture victory = adopt all 14 civics (Cultural Ascendancy) — see civicsComplete()
   var ECONOMIC_VICTORY_GOLD   = 1500;  // hold this much gold...
   var ECONOMIC_VICTORY_TURNS  = 5;     // ...for this many consecutive turns → economic victory
 
@@ -553,7 +553,7 @@
   var UNREST_CAP_MULT = 6;       // unrest never banks past pop * this
   function civAtWarAny(civId) {
     for (var i = 0; i < CIV_SIDES.length; i++) { var o = CIV_SIDES[i]; if (o !== civId && relation(civId, o) === 'war') return true; }
-    return state.civs.barb && atWar(civId, 'barb') ? false : false;  // barb war is constant; don't count it
+    return false;  // barb war is constant and doesn't count
   }
   // Net per-turn unrest change for a city (positive = rising discontent).
   function cityUnrestDelta(city) {
@@ -585,10 +585,11 @@
     if (g.tech && !civ.techs[g.tech]) return false;
     if (civ.government === id && civ.governmentTurns <= 0) return false;
     civ.government = id;
-    civ.governmentTurns = Math.max(0, ANARCHY_TURNS - civicSum(civ, 'anarchyReduce'));   // Civil Service eases switches
+    var actualAnarchy = Math.max(0, ANARCHY_TURNS - civicSum(civ, 'anarchyReduce'));   // Civil Service eases switches
+    civ.governmentTurns = actualAnarchy;
     if (civ.id === 'player') {
-      showToast('Anarchy: ' + ANARCHY_TURNS + ' turns → ' + g.name, 'error');
-      logEvent('Adopting ' + g.name + ' (anarchy ' + ANARCHY_TURNS + ' turns)');
+      showToast('Anarchy: ' + actualAnarchy + ' turn' + (actualAnarchy !== 1 ? 's' : '') + ' → ' + g.name, actualAnarchy > 0 ? 'error' : 'success');
+      logEvent('Adopting ' + g.name + ' (anarchy ' + actualAnarchy + ' turn' + (actualAnarchy !== 1 ? 's' : '') + ')');
     }
     return true;
   }
@@ -640,12 +641,13 @@
     if (eraMult !== 1) gain = Math.round(gain * eraMult);
     civ.eraPoints += gain;
     if (civ.goldenAgeTurns <= 0 && civ.eraPoints >= goldenAgeThreshold(civ)) {
-      civ.goldenAgeTurns = GOLDEN_AGE_LENGTH + civicSum(civ, 'goldenAgeBonus');   // Patronage extends
+      var gaLen = GOLDEN_AGE_LENGTH + civicSum(civ, 'goldenAgeBonus');   // Patronage extends
+      civ.goldenAgeTurns = gaLen;
       civ.eraPoints = 0;
       civ.goldenAgesHad++;
       if (isPlayer) {
-        showToast('☀ Golden Age! +1 to every yield for ' + GOLDEN_AGE_LENGTH + ' turns', 'success');
-        logEvent('A Golden Age dawns — every city gains +1 food/prod/gold/sci for ' + GOLDEN_AGE_LENGTH + ' turns', 'success');
+        showToast('☀ Golden Age! +1 to every yield for ' + gaLen + ' turns', 'success');
+        logEvent('A Golden Age dawns — every city gains +1 food/prod/gold/sci for ' + gaLen + ' turns', 'success');
         chronicle('A Golden Age dawned across the realm.');
       } else {
         logEvent((CIVS[civ.id] ? CIVS[civ.id].name : civ.id) + ' entered a Golden Age');
@@ -6524,6 +6526,7 @@
       // End-of-turn for every AI side
       AI_SIDES.forEach(function (id) {
         var c = state.civs[id];
+        if (!c.cities.length && !c.units.length) return;   // skip eliminated AIs
         c.cities.forEach(function (ct) { cityBombard(ct); }); // AI cities fire too
         recomputeIncome(id);
         c.cities.forEach(processCity);
@@ -8090,9 +8093,12 @@
       } else if (isB) {
         var parts = [];
         if (BUILDINGS[k].food) parts.push('+' + BUILDINGS[k].food + ' food');
+        if (BUILDINGS[k].prod) parts.push('+' + BUILDINGS[k].prod + ' prod');
+        if (BUILDINGS[k].prodMultiplier) parts.push('+' + Math.round(BUILDINGS[k].prodMultiplier * 100) + '% prod');
         if (BUILDINGS[k].gold) parts.push('+' + BUILDINGS[k].gold + ' gold');
         if (BUILDINGS[k].sci)  parts.push('+' + BUILDINGS[k].sci + ' sci');
         if (BUILDINGS[k].culture) parts.push('+' + BUILDINGS[k].culture + ' culture');
+        if (BUILDINGS[k].content) parts.push('+' + BUILDINGS[k].content + ' stability');
         if (BUILDINGS[k].def)  parts.push('+' + BUILDINGS[k].def + ' def');
         sub = (parts.length ? parts.join(', ') : 'Building') + ' · ' + u.cost + ' prod';
       } else {
