@@ -151,12 +151,13 @@
           <h2>How to Play</h2>
         </header>
         <div class="help-body">
-          <div class="help-section">Goal — five ways to win</div>
+          <div class="help-section">Goal — six ways to win</div>
           <p><b>Domination:</b> capture every rival capital.</p>
           <p><b>Science:</b> research all 45 technologies.</p>
           <p><b>Cultural Ascendancy:</b> adopt all 19 civics (culture tree).</p>
           <p><b>Economic:</b> hold 1,500+ gold for 5 consecutive turns.</p>
           <p><b>Space Race:</b> reach Space Flight, then build six <b>Spaceship Parts</b> and launch before any rival.</p>
+          <p><b>Religious:</b> found a faith and convert 60% of the world's cities to it.</p>
 
           <div class="help-section">Controls</div>
           <p><b>Pinch your unit</b> — selects it. Pinch a reachable tile to walk there; enemies in range are red — pinch to attack.</p>
@@ -183,6 +184,7 @@
           <div class="help-section">Units</div>
           <p><b>Settler</b> — founds cities. <b>Worker</b> — builds improvements (farm, mine, pasture, lumber mill, fishing boats, oil wells) <b>inside your own borders</b>. Your borders expand with city population. Use <b>Auto-Improve</b> to let workers build automatically.</p>
           <p><b>Scout</b> — fast (3 move) and cheap (12 prod), but unarmed. Built for exploring. Use <b>Auto-Explore</b> in its action menu to send it wandering into fog each turn.</p>
+          <p><b>Caravan</b> — unarmed trade unit (Currency). Walk it to another city, then <b>Establish Trade Route</b> to link it with its home city for gold every turn (see Trade Routes).</p>
           <p><b>Warrior</b> 4⚔/3🛡 · <b>Spearman</b> 4⚔/6🛡 (+50% vs mounted — counters Horsemen/Knights) · <b>Archer</b> 5⚔/2🛡 · <b>Horseman</b> 6⚔/3🛡, 4 move</p>
           <p><b>Swordsman</b> 8⚔/5🛡 · <b>Pikeman</b> 6⚔/9🛡 (+50% vs mounted) · <b>Catapult</b> 7⚔/1🛡, siege · <b>Musketman</b> 9⚔/4🛡 · <b>Rifleman</b> 12⚔/8🛡</p>
           <p><b>Infantry</b> 16⚔/13🛡 (iron) · <b>Artillery</b> 20⚔ siege (iron) · <b>Tank</b> 24⚔/16🛡, 4 move (oil) · <b>Fighter</b> 18⚔, 6 move (oil)</p>
@@ -191,7 +193,8 @@
 
           <div class="help-section">Buildings</div>
           <p><b>Granary</b> +2 food · <b>Library</b> +2 sci · <b>Walls</b> +4 def · <b>Market</b> +3 gold · <b>Aqueduct</b> +3 food · <b>Temple</b> +3 sci, +3 culture · <b>University</b> +4 sci · <b>Bank</b> +4 gold</p>
-          <p><b>Monument</b> +2 culture · <b>Amphitheater</b> +1 culture · <b>Cathedral</b> +2 culture · <b>Museum</b> +4 culture · <b>Broadcast Tower</b> +6 culture</p>
+          <p><b>Monument</b> +2 culture · <b>Shrine</b> +3 faith · <b>Amphitheater</b> +1 culture · <b>Cathedral</b> +2 culture · <b>Museum</b> +4 culture · <b>Broadcast Tower</b> +6 culture</p>
+          <p>Faith buildings (<b>Shrine</b>, <b>Temple</b>, <b>Cathedral</b>) bank faith toward founding a religion — see Religion.</p>
           <p><b>Workshop</b> +3 prod · <b>Factory</b> +4 prod · <b>Hospital</b> +3 food · <b>Power Plant</b> +25% prod · <b>Corporation</b> +8 gold · <b>Research Lab</b> +7 sci · <b>Barracks</b> (units built here muster with a free promotion)</p>
           <p>With <b>Philosophy</b>, every Temple gives an extra +1 science. Stack Library + Temple + University + Philosophy for +10 sci per city.</p>
 
@@ -275,6 +278,15 @@
 
           <div class="help-section">Ideologies</div>
           <p>On reaching the <b>Modern age</b>, adopt one guiding <b>Ideology</b> from the global menu — a culture-side identity that mirrors governments with big empire-wide bonuses: <b>Freedom</b> (+science, +culture, faster Great People), <b>Order</b> (+production, +stability), or <b>Autocracy</b> (+attack, +production, +Era Points). You can switch later, freely.</p>
+
+          <div class="help-section">Religion</div>
+          <p>Build <b>Shrines</b>, <b>Temples</b> and <b>Cathedrals</b> to bank <b>Faith</b>. Once you have enough, open <b>Religion</b> in the global menu to <b>found a faith</b> and pick a <b>Belief</b>: <b>Tithe</b> (gold per follower city), <b>Piety</b> (+culture), <b>Scholarship</b> (+science) or <b>Fertility</b> (+food). Your faith then <b>spreads</b> on its own to nearby cities each turn — and convert <b>60%</b> of the world's cities for a <b>Religious victory</b>. Holy cities never convert.</p>
+
+          <div class="help-section">Trade Routes</div>
+          <p>Build a <b>Caravan</b> (needs Currency), walk it to another city — yours, or a foreign/city-state at peace — and <b>Establish Trade Route</b>. The caravan is spent and the route pays <b>gold every turn</b> (more for distance + city size, +50% if international). You can run one route per city. An enemy military unit parked next to either endpoint <b>disrupts</b> the route (it pays nothing) — so a rival's trade lines are a juicy raiding target. Routes show as dashed lines on the map.</p>
+
+          <div class="help-section">Battle Tactics</div>
+          <p><b>Flanking:</b> each friendly military unit already next to your target adds <b>+10% attack</b> (up to +30%). Surround a defender before you strike. <b>Zone of Control:</b> moving next to an enemy military unit <b>ends your move</b> — you can't sprint a unit past an enemy's line, and they can't past yours. The combat-odds preview already factors flanking in.</p>
 
           <div class="help-section">Stability &amp; Unrest</div>
           <p>Cities accumulate <b>unrest</b> from growing too large and from wartime. Content buildings (Temple, Amphitheater, Cathedral), certain governments, edicts, civics, and Golden Ages reduce unrest. If unrest exceeds pop × 3, the city <b>revolts</b> — production halts. Sustained revolt spawns rebel raiders on your soil.</p>
