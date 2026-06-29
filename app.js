@@ -4803,12 +4803,43 @@
     // Class counters — Spearman/Pikeman vs mounted, Submarine vs naval, etc.
     var aClass = unitClassOf(aDef), dClass = unitClassOf(dDef);
     if (aDef.vs && dClass && aDef.vs[dClass]) aPower *= (1 + aDef.vs[dClass]);
+    // Flanking — friendly military units already adjacent to the defender press
+    // the attack home (melee only). +10% per flanker, capped at +30%. Surrounding
+    // a target with the hex grid now pays off positionally.
+    if (!isRanged) {
+      var fl = flankersAgainst(attacker, defender);
+      if (fl > 0) aPower *= (1 + Math.min(fl, 3) * 0.10);
+    }
     var dPower = (dDef.def + (defender.promoDef || 0)) * (1 + dBonus);
     if (dDef.vs && aClass && dDef.vs[aClass]) dPower *= (1 + dDef.vs[aClass]);
     if (defender.embarked) dPower *= 0.4;   // land units caught at sea are nearly helpless
     return aPower / (aPower + dPower);
   }
   function unitClassOf(def) { return def.class || (def.naval ? 'naval' : def.air ? 'air' : null); }
+  // Count the attacker's friendly military units adjacent to the defender (besides
+  // the attacker itself) — the flanking force.
+  function flankersAgainst(attacker, defender) {
+    var n = 0, ns = neighbors(defender.c, defender.r);
+    for (var i = 0; i < ns.length; i++) {
+      var t = tileAt(ns[i][0], ns[i][1]);
+      if (!t || !t.unit || t.unit === attacker) continue;
+      if (t.unit.civ === attacker.civ && UNITS[t.unit.type] && !UNITS[t.unit.type].civilian) n++;
+    }
+    return n;
+  }
+  // Is this unit standing next to an enemy (at-war) military unit? Used by Zone of
+  // Control to halt an advance that brushes past a defender.
+  function inEnemyZoC(unit) {
+    var ns = neighbors(unit.c, unit.r);
+    for (var i = 0; i < ns.length; i++) {
+      var t = tileAt(ns[i][0], ns[i][1]);
+      if (!t || !t.unit) continue;
+      if (t.unit.civ === unit.civ) continue;
+      if (UNITS[t.unit.type] && UNITS[t.unit.type].civilian) continue;   // civilians don't exert ZoC
+      if (atWar(unit.civ, t.unit.civ)) return true;
+    }
+    return false;
+  }
   // Expected-damage forecast; the +0..3 random jitter is shown as a range.
   function combatForecast(attacker, defender, ranged) {
     var ratio = combatRatio(attacker, defender, ranged);
@@ -5438,6 +5469,9 @@
     unit.moves = Math.max(0, unit.moves - 1);
     unit.fortified = false;
     if (!UNITS[unit.type].naval) unit.embarked = (t.terrain === 'water');   // land units embark at sea
+    // Zone of Control — advancing adjacent to an enemy military unit ends the
+    // move (walkPath stops on moves<=0). Can't sprint past a defender's line.
+    if (!UNITS[unit.type].civilian && unit.moves > 0 && inEnemyZoC(unit)) unit.moves = 0;
     t.unit = unit;
     if (unit.civ === 'player') {
       sfxMove();
@@ -10708,6 +10742,8 @@
     presentPromotion: presentPromotion,
     findPendingPromoUnit: findPendingPromoUnit,
     combatRatio: combatRatio,
+    moveUnit: moveUnit,
+    spawnUnit: spawnUnit,
     PROMOTIONS: PROMOTIONS,
     factionEff: factionEff,
     factionUnitFor: factionUnitFor,
