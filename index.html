@@ -324,6 +324,7 @@
           <input id="cloud-code" class="cloud-code-input" type="text" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="your sync code" maxlength="40" />
           <button class="nav-item primary small focusable" id="cloud-setcode" data-action="cloud-setcode">Use code</button>
         </div>
+        <button class="nav-item small focusable" data-action="cloud-keyboard-open" style="width:100%">⌨ Enter code with the band (no typing)</button>
         <p class="cloud-link-label">Move a game between devices (same code on each):</p>
         <div class="cloud-actions-row">
           <button class="nav-item small focusable" data-action="cloud-push">⬆ Upload this game</button>
@@ -336,6 +337,17 @@
           <button class="nav-item primary focusable" id="cloud-copy" data-action="cloud-copy">Copy Link</button>
           <button class="nav-item focusable" data-action="back">Done</button>
         </div>
+      </div>
+    </div>
+
+    <div id="cloud-keyboard" class="screen modal hidden">
+      <div class="modal-card wide">
+        <header class="modal-header">
+          <h2>⌨ Enter Sync Code</h2>
+        </header>
+        <p class="share-hint">Swipe to move · pinch to press · choose <b>✓ Set</b> when done. Same code on every device shares one save.</p>
+        <div id="kb-display" class="kb-display"></div>
+        <div id="kb-grid" class="kb-grid"></div>
       </div>
     </div>
 

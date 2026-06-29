@@ -9319,6 +9319,12 @@
         if (lb) lb.scrollTop += (k === 'ArrowDown' ? 1 : -1) * Math.max(40, Math.floor(lb.clientHeight * 0.6));
         return;
       }
+      // Cloud code keyboard — arrows move the character grid, Enter presses.
+      if (openModal === 'cloud-keyboard') {
+        if (ACTION_KEYS.indexOf(k) >= 0) { e.preventDefault(); moveCloudKb(k); return; }
+        if (k === 'Enter') { e.preventDefault(); pressCloudKb(); return; }
+        return;
+      }
       if (ACTION_KEYS.indexOf(k) >= 0) { e.preventDefault(); moveModalFocus(k); return; }
       if (k === 'Enter') {
         e.preventDefault();
@@ -9735,10 +9741,9 @@
 
   // Switch this device to a chosen sync code, then reconcile with the cloud
   // (pull that code's save if newer, push the local save up) — last-write-wins.
-  function setCloudCode() {
+  function applyCloudCode(raw) {
     if (!window.__CLOUD || !window.__CLOUD.enabled) return;
-    var input = document.getElementById('cloud-code');
-    var newId = window.__CLOUD.setUid(input.value);
+    var newId = window.__CLOUD.setUid(raw);
     if (!newId) { showToast('Enter a code (letters / numbers)', 'error'); return; }
     window.__CLOUD.pull().then(function (remote) {
       return remote ? mergeRemoteSave(remote) : false;
@@ -9748,6 +9753,77 @@
       openCloudSync();
       showToast('Sync code set: ' + newId, 'success');
     });
+  }
+  function setCloudCode() {
+    var input = document.getElementById('cloud-code');
+    applyCloudCode(input ? input.value : '');
+  }
+
+  // ---- On-screen code keyboard (neural band: swipe = move, pinch = press) ----
+  // The glasses have no text keyboard, so the sync code is entered on a character
+  // grid driven entirely by arrows + Enter (and tap/click on phone/PC).
+  var KB_COLS = 9;
+  var KB_KEYS = (function () {
+    var keys = [];
+    'abcdefghijklmnopqrstuvwxyz0123456789'.split('').forEach(function (ch) { keys.push({ type: 'char', ch: ch, label: ch }); });
+    keys.push({ type: 'del', label: '⌫' });
+    keys.push({ type: 'set', label: '✓ Set' });
+    keys.push({ type: 'cancel', label: '✕' });
+    return keys;
+  })();
+  var cloudKb = { idx: 0, code: '' };
+  function openCloudKeyboard() {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) { showToast('Cloud sync is off', 'error'); return; }
+    cloudKb = { idx: 0, code: '' };
+    renderCloudKb();
+    showModal('cloud-keyboard');
+  }
+  function renderCloudKb() {
+    var grid = document.getElementById('kb-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    grid.style.gridTemplateColumns = 'repeat(' + KB_COLS + ', 1fr)';
+    KB_KEYS.forEach(function (key, ix) {
+      var b = document.createElement('button');
+      b.className = 'kb-key' + (key.type !== 'char' ? ' kb-special kb-' + key.type : '');
+      b.textContent = key.label;
+      b.addEventListener('click', function () { cloudKb.idx = ix; pressCloudKb(); });
+      grid.appendChild(b);
+    });
+    renderCloudKbHighlight();
+  }
+  function renderCloudKbHighlight() {
+    var disp = document.getElementById('kb-display');
+    if (disp) disp.textContent = cloudKb.code ? cloudKb.code + '▏' : 'type your code…';
+    var grid = document.getElementById('kb-grid');
+    if (!grid) return;
+    var keys = grid.querySelectorAll('.kb-key');
+    for (var i = 0; i < keys.length; i++) keys[i].classList.toggle('kb-focused', i === cloudKb.idx);
+  }
+  function moveCloudKb(k) {
+    var n = KB_KEYS.length, i = cloudKb.idx;
+    if (k === 'ArrowLeft') i = (i - 1 + n) % n;
+    else if (k === 'ArrowRight') i = (i + 1) % n;
+    else if (k === 'ArrowUp') i = Math.max(0, i - KB_COLS);
+    else if (k === 'ArrowDown') i = Math.min(n - 1, i + KB_COLS);
+    cloudKb.idx = i;
+    renderCloudKbHighlight();
+  }
+  function pressCloudKb() {
+    var key = KB_KEYS[cloudKb.idx];
+    if (!key) return;
+    if (key.type === 'char') { if (cloudKb.code.length < 40) cloudKb.code += key.ch; }
+    else if (key.type === 'del') { cloudKb.code = cloudKb.code.slice(0, -1); }
+    else if (key.type === 'cancel') { closeModal(); openCloudSync(); return; }
+    else if (key.type === 'set') {
+      if (!cloudKb.code) { showToast('Enter a code first', 'error'); return; }
+      var code = cloudKb.code;
+      closeModal();
+      applyCloudCode(code);   // reopens Cloud Sync with the new code
+      return;
+    }
+    if (typeof sfxSelect === 'function') sfxSelect();
+    renderCloudKbHighlight();
   }
 
   async function openShareExport() {
@@ -10005,6 +10081,9 @@
         break;
       case 'cloud-setcode':
         setCloudCode();
+        break;
+      case 'cloud-keyboard-open':
+        openCloudKeyboard();
         break;
       case 'cloud-push':
         cloudPushNow().then(function (ok) {
@@ -10362,7 +10441,10 @@
     declareWarOn: declareWarOn,
     victoryProgress: victoryProgress,
     closestVictoryAll: closestVictoryAll,
-    checkVictoryRaceAlerts: checkVictoryRaceAlerts
+    checkVictoryRaceAlerts: checkVictoryRaceAlerts,
+    openCloudKeyboard: openCloudKeyboard,
+    cloudKbState: function () { return { idx: cloudKb.idx, code: cloudKb.code }; },
+    KB_KEYS: KB_KEYS
   };
 
   if (document.readyState === 'loading') {
