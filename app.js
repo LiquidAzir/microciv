@@ -88,6 +88,10 @@
     tank:      { name: 'Tank',      cost: 100, hp: 32, atk: 24, def: 16, move: 4, glyph: '▦', tech: 'combustion', requires: 'oil' },
     battleship:{ name: 'Battleship',cost: 110, hp: 36, atk: 26, def: 14, move: 4, glyph: '⛟', tech: 'combustion', naval: true, ranged: 2, siege: true, requires: 'oil' },
     fighter:   { name: 'Fighter',   cost: 90, hp: 20, atk: 18, def: 6, move: 6, glyph: '✈', tech: 'mass_production', ranged: 2, air: true, requires: 'oil' },
+    // Information-age apex units
+    bomber:    { name: 'Bomber',    cost: 95, hp: 22, atk: 22, def: 6, move: 6, glyph: '➶', tech: 'rocketry',  ranged: 3, siege: true, air: true },
+    modern_armor: { name: 'Modern Armor', cost: 120, hp: 38, atk: 30, def: 22, move: 4, glyph: '▰', tech: 'robotics', requires: 'oil' },
+    nuke:      { name: 'Nuke',      cost: 150, hp: 6,  atk: 1, def: 0, move: 6, glyph: '☢', tech: 'nuclear_fission', ranged: 5, nuke: true, requiresWonder: 'manhattan_project' },
     // Faction unique units (sidegrades that REPLACE a base unit for one faction)
     legionary: { name: 'Legionary', cost: 16, hp: 16, atk: 6, def: 5, move: 2, glyph: '⚔', tech: null,        faction: 'ferrum', replaces: 'warrior' },
     nightblade:{ name: 'Nightblade', cost: 42, hp: 18, atk: 10, def: 4, move: 3, glyph: '⚔', tech: 'steel',     faction: 'umbra',  replaces: 'swordsman' },
@@ -114,6 +118,7 @@
     cannon:    { to: 'artillery',  tech: 'ballistics',  cost: 40 },
     knight:    { to: 'tank',       tech: 'combustion',  cost: 45 },
     caravel:   { to: 'battleship', tech: 'combustion',  cost: 45 },
+    tank:      { to: 'modern_armor', tech: 'robotics',  cost: 50 },
     // Faction uniques upgrade into the standard next-tier so they don't obsolete
     legionary: { to: 'swordsman',  tech: 'steel',       cost: 25 },
     bloodrider:{ to: 'knight',     tech: 'chivalry',    cost: 28 },
@@ -278,8 +283,18 @@
     eiffel_tower:     { name: 'Eiffel Tower',     cost: 210, tech: 'mass_production', wonder: true, perCityCulture: 2,
                         lore: '+2 culture (great-people) per city, per turn' },
     internet:         { name: 'The Internet',     cost: 260, tech: 'computers',   wonder: true, perCitySci: 3, oneShotScience: 100,
-                        lore: '+3 science in every city, and instantly gain 100 research' }
+                        lore: '+3 science in every city, and instantly gain 100 research' },
+    // Information-age Project wonders
+    manhattan_project: { name: 'Manhattan Project', cost: 240, tech: 'nuclear_fission', wonder: true, militaryAtk: 1,
+                        lore: 'Unlocks the Nuke · +1 attack on all your military units' },
+    apollo_program:   { name: 'Apollo Program',   cost: 280, tech: 'space_flight', wonder: true, spaceParts: 2,
+                        lore: 'A head start in the Space Race: +2 Spaceship Parts toward launch' },
+    // Spaceship Part — a repeatable build (NOT a regular building). Completing
+    // SPACE_PARTS_NEEDED of them launches your ship → Space Race victory.
+    spaceship_part:   { name: 'Spaceship Part',   cost: 200, tech: 'space_flight', spacePart: true,
+                        lore: 'Assemble the launch vehicle — race rivals to space' }
   };
+  var SPACE_PARTS_NEEDED = 6;   // build this many parts → Space Race victory
 
   var TECHS = {
     pottery:     { name: 'Pottery',      cost:  14, req: [],                          unlocks: 'Granary' },
@@ -322,9 +337,20 @@
     ballistics:    { name: 'Ballistics',     cost: 175, req: ['rifling','metallurgy'],   unlocks: 'Artillery, West Point' },
     combustion:    { name: 'Combustion',     cost: 195, req: ['electricity','ballistics'], unlocks: 'Tank, Battleship (oil)' },
     mass_production: { name: 'Mass Production', cost: 205, req: ['electricity','conscription'], unlocks: 'Corporation, Fighter' },
-    computers:     { name: 'Computers',      cost: 240, req: ['mass_production','combustion'], unlocks: 'Research Lab, The Internet' }
+    computers:     { name: 'Computers',      cost: 240, req: ['mass_production','combustion'], unlocks: 'Research Lab, The Internet' },
+    // Information age (7th) — the modern frontier: nuclear arms, rocketry, AI,
+    // robotics, and the Space Race. Gates the apex units, two Project wonders,
+    // and the Spaceship Parts that win a Space Race victory.
+    electronics:   { name: 'Electronics',    cost: 260, req: ['computers'],                   unlocks: 'Submarine, Carrier' },
+    rocketry:      { name: 'Rocketry',       cost: 280, req: ['computers','ballistics'],      unlocks: 'Bomber' },
+    computing:     { name: 'Computing',      cost: 290, req: ['computers'],                   unlocks: 'Oxford · AI' },
+    nuclear_fission: { name: 'Nuclear Fission', cost: 320, req: ['electronics'],              unlocks: 'Nuke, Manhattan Project' },
+    robotics:      { name: 'Robotics',       cost: 320, req: ['electronics'],                 unlocks: 'Modern Armor (oil)' },
+    satellites:    { name: 'Satellites',     cost: 340, req: ['rocketry'],                    unlocks: 'Hubble · Space prereq' },
+    artificial_intelligence: { name: 'Artificial Intelligence', cost: 360, req: ['computing','robotics'], unlocks: 'The Singularity' },
+    space_flight:  { name: 'Space Flight',   cost: 400, req: ['satellites','computing'],      unlocks: 'Apollo Program, Spaceship' }
   };
-  var TECH_ORDER = ['pottery','mining','agriculture','writing','sailing','archery','masonry','husbandry','currency','trade','construction','mathematics','drama','iron','engineering','theology','feudalism','philosophy','navigation','education','steel','chivalry','economics','astronomy','acoustics','gunpowder','banking','metallurgy','industrialization','rifling','sanitation','electricity','conscription','ballistics','combustion','mass_production','computers'];
+  var TECH_ORDER = ['pottery','mining','agriculture','writing','sailing','archery','masonry','husbandry','currency','trade','construction','mathematics','drama','iron','engineering','theology','feudalism','philosophy','navigation','education','steel','chivalry','economics','astronomy','acoustics','gunpowder','banking','metallurgy','industrialization','rifling','sanitation','electricity','conscription','ballistics','combustion','mass_production','computers','electronics','rocketry','computing','nuclear_fission','robotics','satellites','artificial_intelligence','space_flight'];
   // Tier = longest prerequisite chain depth (0 = no prereqs). Drives the tech-tree
   // graph layout: each tier is one row, dependents sit below their requirements.
   var TECH_DEPTH = (function () {
@@ -355,7 +381,8 @@
     { name: 'Medieval',    minTechs: 12 },
     { name: 'Renaissance', minTechs: 18 },
     { name: 'Industrial',  minTechs: 24 },
-    { name: 'Modern',      minTechs: 31 }
+    { name: 'Modern',      minTechs: 31 },
+    { name: 'Information', minTechs: 39 }
   ];
   function getAge(civ) {
     var count = 0;
@@ -2032,6 +2059,10 @@
       civicProgress: 0,
       civicQueue: [],
       culPerTurn: 0,
+      tradedLux: {},              // luxuries imported via a swap (resource -> provider)
+      spaceParts: 0,              // Space Race progress (parts assembled)
+      nationals: {},              // national wonders built (one per empire)
+      ideology: null,             // late-game Ideology pick (Freedom/Order/Autocracy)
       // Dynamic grievance toward each other civ id (0 = cordial, higher = angrier).
       // Only AIs act on it; the player's map is unused.
       tension: {},
@@ -2335,6 +2366,9 @@
         if (!Array.isArray(cv.civicQueue)) cv.civicQueue = [];
         if (typeof cv.culPerTurn !== 'number') cv.culPerTurn = 0;
         if (!cv.tradedLux || typeof cv.tradedLux !== 'object') cv.tradedLux = {};
+        if (typeof cv.spaceParts !== 'number') cv.spaceParts = 0;
+        if (!cv.nationals || typeof cv.nationals !== 'object') cv.nationals = {};
+        if (typeof cv.ideology !== 'string') cv.ideology = null;
       });
       // Backfill AI agendas — old saves get a distinct random one
       (function () {
@@ -4417,6 +4451,9 @@
     tank:      drawSwordsman,   // armored ground apex
     battleship:drawGalley,      // ship
     fighter:   drawArcher,      // fast ranged
+    bomber:    drawArcher,      // air
+    modern_armor: drawSwordsman,// armored apex
+    nuke:      drawCatapult,    // missile
     legionary: drawWarrior,     // faction uniques reuse their base sprite
     nightblade:drawSwordsman,
     bloodrider:drawHorseman,
@@ -4748,6 +4785,43 @@
       var hk = factionEff(state.civs[attacker.civ], 'healOnKill'); if (hk) attacker.hp = Math.min(attacker.maxHp, attacker.hp + hk);  // Vorne
       // Ranged attacker does NOT move into the vacated tile
     }
+    return true;
+  }
+
+  // Nuke — an area strike around a target tile: heavy damage to every enemy unit
+  // in the blast, pop loss + unrest to an enemy city, razed improvements. The
+  // nuke is consumed. Targets an enemy unit in range (reuses ranged targeting).
+  function nukeStrike(attacker, target) {
+    if (!target || !atWar(attacker.civ, target.civ)) { if (attacker.civ === 'player') showToast('At peace'); return false; }
+    var ec = target.c, er = target.r;
+    attacker.moves = 0;
+    addFx('hexFlash', ec, er, { color: 'rgba(255,190,60,0.75)' }, 700);
+    addFx('shake', 0, 0, { intensity: 6 }, 600);
+    if (attacker.civ === 'player' || target.civ === 'player') sfxAttack();
+    var tiles = [[ec, er]].concat(neighbors(ec, er));
+    tiles.forEach(function (pos) {
+      var t = tileAt(pos[0], pos[1]); if (!t) return;
+      if (t.unit && t.unit.civ !== attacker.civ) {
+        var d = t.unit;
+        d.hp -= 30;
+        addFx('floatNum', pos[0], pos[1], { text: '-30', color: '#ffcc44' }, 900);
+        if (d.hp <= 0) {
+          if (attacker.civ === 'player') { state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1; if (d.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); } }
+          if (d.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
+          killUnit(d);
+        }
+      }
+      if (t.city && t.city.civ !== attacker.civ) {
+        t.city.pop = Math.max(1, t.city.pop - 2);
+        t.city.unrest = (t.city.unrest || 0) + 6;
+      }
+      if (t.improvement && t.owner && t.owner !== attacker.civ) t.improvement = null;   // fallout
+    });
+    killUnit(attacker);   // single-use
+    recomputeBorders();
+    recomputeVisibility('player');
+    if (attacker.civ === 'player') { logEvent('☢ Nuclear strike unleashed!', 'error'); showToast('☢ Nuclear strike!', 'error'); chronicle('Unleashed a nuclear strike.'); }
+    else logEvent('☢ ' + (CIVS[attacker.civ] ? CIVS[attacker.civ].name : attacker.civ) + ' launched a nuclear strike!', 'error');
     return true;
   }
 
@@ -5758,9 +5832,21 @@
       city.prod -= cost;
       if (isBuilding) {
         var bdef = BUILDINGS[p];
+        // Spaceship Part — repeatable; each completion adds one part toward the
+        // Space Race launch (doesn't become a city building).
+        if (bdef.spacePart) {
+          completeSpacePart(city);
+        } else if (bdef.national) {
+          // National wonder — one per empire, effect local to this city.
+          city.buildings[p] = true;
+          if (!state.civs[city.civ].nationals) state.civs[city.civ].nationals = {};
+          state.civs[city.civ].nationals[p] = true;
+          applyWonderOneShot(city, p);
+          if (city.civ === 'player') { logEvent(city.name + ' completed ' + bdef.name, 'success'); chronicle('Built the national project ' + bdef.name + ' in ' + city.name + '.'); sfxWonder(); queueYieldFx(city.c, city.r, '★ ' + bdef.name, '#ffd34d', 'rgba(255,211,77,0.40)'); }
+          else logEvent(CIVS[city.civ].name + ' completed ' + bdef.name, 'info');
         // World wonders are unique globally. If someone else built it first
         // while this city was producing it, refund prod and reroll.
-        if (bdef.wonder) {
+        } else if (bdef.wonder) {
           if (state.wondersBuilt[p]) {
             // Race lost — banked production is forfeit (otherwise a lost race would
             // pop a free warrior the next turn). Pick a sensible default.
@@ -5870,11 +5956,32 @@
 
   function applyWonderOneShot(city, wid) {
     var bdef = BUILDINGS[wid];
-    if (!bdef || !bdef.wonder) return;
+    if (!bdef) return;
     var civ = state.civs[city.civ];
     if (bdef.oneShotScience) {
       civ.techProgress = (civ.techProgress || 0) + bdef.oneShotScience;
     }
+    if (bdef.spaceParts) {   // Apollo Program — a head start toward launch
+      civ.spaceParts = (civ.spaceParts || 0) + bdef.spaceParts;
+      checkSpaceVictory(civ);
+    }
+  }
+  // Space Race: completing SPACE_PARTS_NEEDED spaceship parts launches + wins.
+  function completeSpacePart(city) {
+    var civ = state.civs[city.civ];
+    civ.spaceParts = (civ.spaceParts || 0) + 1;
+    if (city.civ === 'player') {
+      sfxWonder();
+      logEvent('Spaceship part assembled (' + civ.spaceParts + '/' + SPACE_PARTS_NEEDED + ')', 'success');
+      chronicle('Assembled spaceship part ' + civ.spaceParts + '/' + SPACE_PARTS_NEEDED + '.');
+      queueYieldFx(city.c, city.r, '🚀 ' + civ.spaceParts + '/' + SPACE_PARTS_NEEDED, '#7ce5ff', 'rgba(0,212,255,0.30)');
+    } else {
+      logEvent((CIVS[city.civ] ? CIVS[city.civ].name : city.civ) + ' assembled a spaceship part', 'info');
+    }
+    checkSpaceVictory(civ);
+  }
+  function checkSpaceVictory(civ) {
+    if (!state.victory && (civ.spaceParts || 0) >= SPACE_PARTS_NEEDED) declareVictory(civ.id, 'space');
   }
 
   function isCoastalCity(city) {
@@ -5988,6 +6095,7 @@
       if (u.great) continue;            // great people aren't trainable
       if (u.naval && city && !isCoastalCity(city)) continue; // naval only at coastal cities
       if (u.requires && !civHasResource(civ, u.requires)) continue; // strategic resource gate
+      if (u.requiresWonder && !(state.wondersBuilt && state.wondersBuilt[u.requiresWonder] === civ.id)) continue; // e.g. Nuke needs Manhattan Project
       out.push(k);
     }
     for (var k in BUILDINGS) {
@@ -5996,12 +6104,32 @@
       if (replaced[k]) continue;        // base replaced by this faction's unique
       if (b.tech && !civ.techs[b.tech]) continue;
       if (b.coastal && city && !isCoastalCity(city)) continue;   // Harbor needs the sea
+      // Spaceship parts: repeatable until the ship is launched (never "already built")
+      if (b.spacePart) { if ((civ.spaceParts || 0) >= SPACE_PARTS_NEEDED) continue; out.push(k); continue; }
+      if (b.national) { if (!nationalAvailable(civ, city, k)) continue; out.push(k); continue; }
       if (b.wonder && state.wondersBuilt && state.wondersBuilt[k]) continue;
       // Don't suggest already-built regular buildings to this city
       if (city && city.buildings && city.buildings[k] && !b.wonder) continue;
       out.push(k);
     }
     return out;
+  }
+  // National wonder availability: one per civ (civ.nationals), and every owned
+  // city must already have the prerequisite building. Defined here; the National
+  // Wonders themselves are added in the wonders batch.
+  function nationalAvailable(civ, city, k) {
+    var b = BUILDINGS[k];
+    if (!b || !b.national) return false;
+    if (civ.nationals && civ.nationals[k]) return false;            // one per empire
+    if (city && city.buildings && city.buildings[k]) return false;  // already here
+    if (b.requiresAll) {
+      if (!civ.cities.length) return false;
+      for (var i = 0; i < civ.cities.length; i++) {
+        var cc = civ.cities[i];
+        if (!cc.buildings || !cc.buildings[b.requiresAll]) return false;
+      }
+    }
+    return true;
   }
 
   function hasTech(civ, t) { return !t || civ.techs[t]; }
@@ -6101,9 +6229,9 @@
     // never softlocks if its preferred path is empty.
     var per = AI_PERSONALITIES[civ.personality];
     if (!per) return avail[0];
-    var SCI_TECHS = { writing: 1, philosophy: 1, education: 1, astronomy: 1, drama: 1, acoustics: 1, computers: 1 };
+    var SCI_TECHS = { writing: 1, philosophy: 1, education: 1, astronomy: 1, drama: 1, acoustics: 1, computers: 1, computing: 1, artificial_intelligence: 1, satellites: 1, space_flight: 1 };
     var GOLD_TECHS = { currency: 1, banking: 1, trade: 1, economics: 1, mass_production: 1 };
-    var MIL_TECHS = { archery: 1, husbandry: 1, iron: 1, steel: 1, gunpowder: 1, engineering: 1, mathematics: 1, feudalism: 1, chivalry: 1, navigation: 1, metallurgy: 1, industrialization: 1, rifling: 1, conscription: 1, ballistics: 1, combustion: 1 };
+    var MIL_TECHS = { archery: 1, husbandry: 1, iron: 1, steel: 1, gunpowder: 1, engineering: 1, mathematics: 1, feudalism: 1, chivalry: 1, navigation: 1, metallurgy: 1, industrialization: 1, rifling: 1, conscription: 1, ballistics: 1, combustion: 1, electronics: 1, rocketry: 1, nuclear_fission: 1, robotics: 1 };
     var BAL_TECHS = { pottery: 1, masonry: 1, theology: 1, sailing: 1, mining: 1, agriculture: 1, construction: 1, sanitation: 1, electricity: 1 };
     avail.sort(function (a, b) {
       var pri = function (k) {
@@ -7064,7 +7192,8 @@
       { kind: 'science',    frac: techN / totalTechs,                 label: techN + '/' + totalTechs + ' techs' },
       { kind: 'culture',    frac: civicN / CIVIC_ORDER.length,        label: civicN + '/' + CIVIC_ORDER.length + ' civics' },
       { kind: 'domination', frac: rivalCount ? capsHeld / rivalCount : 0, label: capsHeld + '/' + rivalCount + ' capitals' },
-      { kind: 'economic',   frac: econ,                               label: Math.round(civ.gold) + '/' + ECONOMIC_VICTORY_GOLD + ' gold' }
+      { kind: 'economic',   frac: econ,                               label: Math.round(civ.gold) + '/' + ECONOMIC_VICTORY_GOLD + ' gold' },
+      { kind: 'space',      frac: (civ.spaceParts || 0) / SPACE_PARTS_NEEDED, label: (civ.spaceParts || 0) + '/' + SPACE_PARTS_NEEDED + ' spaceship' }
     ];
     paths.sort(function (a, b) { return b.frac - a.frac; });
     return paths[0];
@@ -8229,7 +8358,7 @@
     if (targets.length === 0) return false;
     // Prefer lowest HP target (finish them off)
     targets.sort(function (a, b) { return a.unit.hp - b.unit.hp; });
-    rangedAttack(u, targets[0].unit);
+    if (UNITS[u.type].nuke) nukeStrike(u, targets[0].unit); else rangedAttack(u, targets[0].unit);
     return true;
   }
 
@@ -8454,7 +8583,7 @@
             var ct = tileAt(state.cursor.c, state.cursor.r);
             if (ct && ct.unit && ct.unit.civ !== 'player' && atWar('player', ct.unit.civ) &&
                 hexDist([su.c, su.r], [state.cursor.c, state.cursor.r]) <= suDef.ranged) {
-              rangedAttack(su, ct.unit);
+              if (suDef.nuke) nukeStrike(su, ct.unit); else rangedAttack(su, ct.unit);
               recomputeVisibility('player');
               draw();
               save();
@@ -8876,9 +9005,15 @@
       if (k === city.producing) return;
       var isB = !!BUILDINGS[k];
       var isWonder = isB && BUILDINGS[k].wonder;
-      var iconChar = isWonder ? '✦' : (isB ? '▢' : UNITS[k].glyph);
+      var isSpace = isB && BUILDINGS[k].spacePart;
+      var isNat = isB && BUILDINGS[k].national;
+      var iconChar = isSpace ? '🚀' : isNat ? '★' : isWonder ? '✦' : (isB ? '▢' : UNITS[k].glyph);
       var sub;
-      if (isWonder) {
+      if (isSpace) {
+        sub = (civ.spaceParts || 0) + '/' + SPACE_PARTS_NEEDED + ' assembled · ' + u.cost + ' prod';
+      } else if (isNat) {
+        sub = (BUILDINGS[k].lore || 'National project') + ' · ' + u.cost + ' prod';
+      } else if (isWonder) {
         sub = BUILDINGS[k].lore + ' · ' + u.cost + ' prod';
       } else if (isB) {
         var parts = [];
@@ -9214,13 +9349,15 @@
       domination: 'You captured every rival capital.',
       science:    'You researched every technology.',
       culture:    'You adopted every civic — a Cultural Ascendancy.',
-      economic:   'You held ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.'
+      economic:   'You held ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.',
+      space:      'You won the Space Race — your ship reaches the stars first.'
     };
     var VICTORY_MSG_LOSS = {
       domination: ' captured all rival capitals.',
       science:    ' completed all research first.',
       culture:    ' achieved a Cultural Ascendancy first.',
-      economic:   ' amassed ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.'
+      economic:   ' amassed ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.',
+      space:      ' won the Space Race.'
     };
     if (winner === 'player') {
       title.textContent = 'Victory';
@@ -10444,7 +10581,12 @@
     checkVictoryRaceAlerts: checkVictoryRaceAlerts,
     openCloudKeyboard: openCloudKeyboard,
     cloudKbState: function () { return { idx: cloudKb.idx, code: cloudKb.code }; },
-    KB_KEYS: KB_KEYS
+    KB_KEYS: KB_KEYS,
+    getAge: getAge,
+    TECH_ORDER: TECH_ORDER,
+    AGES: AGES,
+    SPACE_PARTS_NEEDED: SPACE_PARTS_NEEDED,
+    nukeStrike: nukeStrike
   };
 
   if (document.readyState === 'loading') {
