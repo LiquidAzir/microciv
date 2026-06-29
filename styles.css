@@ -274,6 +274,8 @@ body {
   margin-bottom: 6px;
 }
 .cloud-code-row { display: flex; gap: 8px; margin: 4px 0 10px; }
+.cloud-actions-row { display: flex; gap: 8px; margin: 4px 0 10px; }
+.cloud-actions-row .nav-item { flex: 1; font-size: 12px; padding: 9px 8px; min-height: 40px; }
 .cloud-code-input {
   flex: 1; min-width: 0;
   background: var(--panel-2);

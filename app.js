@@ -562,18 +562,24 @@
   // unrest from size + war + fresh conquest, offset by content buildings, the
   // Theocracy/Monarchy stance, and Golden Ages. A city that stays over the
   // revolt line halts production and spits out a rebel on your soil.
-  var UNREST_REVOLT_MULT = 3;    // revolt threshold = pop * this
+  var UNREST_REVOLT_MULT = 3;    // revolt threshold = pop * this + UNREST_BASE
+  var UNREST_BASE = 6;           // flat tolerance — small cities don't revolt at all
   var UNREST_CAPTURE_SPIKE = 6;  // one-time discontent when a city is taken
   var UNREST_CAP_MULT = 6;       // unrest never banks past pop * this
+  var UNREST_STRAIN_FREE = 5;    // cities pop <= this carry no size strain
+  var UNREST_WAR_GRACE = 15;     // no wartime unrest before this turn (the opening
+                                 // "everyone-at-war" default shouldn't stir revolts)
   function civAtWarAny(civId) {
     for (var i = 0; i < CIV_SIDES.length; i++) { var o = CIV_SIDES[i]; if (o !== civId && relation(civId, o) === 'war') return true; }
     return false;  // barb war is constant and doesn't count
   }
-  // Net per-turn unrest change for a city (positive = rising discontent).
+  // Net per-turn unrest change for a city (positive = rising discontent). Tuned
+  // so unrest is a LATE / large-empire / active-war concern, never an early-game
+  // surprise: only big cities strain, and war only stings past the opening.
   function cityUnrestDelta(city) {
     var civ = state.civs[city.civ];
-    var d = Math.max(0, city.pop - 3);              // size strain
-    if (civAtWarAny(city.civ)) d += 2;              // wartime discontent
+    var d = Math.max(0, city.pop - UNREST_STRAIN_FREE);          // size strain (pop 6+)
+    if (state.turn >= UNREST_WAR_GRACE && civAtWarAny(city.civ)) d += 2;  // real wartime discontent
     var b = city.buildings || {};
     var content = 0;
     for (var bk in b) { if (b[bk] && BUILDINGS[bk] && BUILDINGS[bk].content) content += BUILDINGS[bk].content; }
@@ -585,7 +591,9 @@
     if (civ && civ.goldenAgeTurns > 0) content += 2;
     return d - content;
   }
-  function cityRevolting(city) { return (city.unrest || 0) >= city.pop * UNREST_REVOLT_MULT; }
+  // The unrest a city must bank before it revolts (flat tolerance + size).
+  function revoltThreshold(city) { return city.pop * UNREST_REVOLT_MULT + UNREST_BASE; }
+  function cityRevolting(city) { return (city.unrest || 0) >= revoltThreshold(city); }
 
   // The government whose bonuses currently apply — none during anarchy.
   function activeGovernment(civ) {
@@ -2185,6 +2193,30 @@
         return true;
       }
       return false;
+    }).catch(function () { return false; });
+  }
+
+  // Explicit "Upload this device's game now" — force-push the local save under
+  // the current sync code (ignores the debounce). Returns Promise<bool>.
+  function cloudPushNow() {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) return Promise.resolve(false);
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return Promise.resolve(false);
+    var t = Date.now(); try { t = JSON.parse(raw).t || t; } catch (e) {}
+    return encodeSavePayload(raw).then(function (z) { return window.__CLOUD.put({ t: t, z: z }); }).catch(function () { return false; });
+  }
+  // Explicit "Download the cloud game now" — force-overwrite the local save with
+  // the remote one regardless of timestamps (the player asked for it).
+  function cloudPullNow() {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) return Promise.resolve(false);
+    return window.__CLOUD.pull().then(function (remote) {
+      if (!remote || !remote.z) return false;
+      return decodeSavePayload(remote.z).then(function (rawRemote) {
+        var parsed = JSON.parse(rawRemote);
+        if (!parsed || !parsed.civs || !parsed.map) return false;
+        localStorage.setItem(STORAGE_KEY, rawRemote);
+        return true;
+      });
     }).catch(function () { return false; });
   }
 
@@ -5766,7 +5798,7 @@
     // pressure, so unrest is a managed hazard, not a permanent lock.
     if (city.revoltTurns >= 2 && spawnRebelNear(city)) {
       city.revoltTurns = 0;
-      city.unrest = Math.floor(city.pop * UNREST_REVOLT_MULT * 0.6);
+      city.unrest = Math.floor(revoltThreshold(city) * 0.6);
       if (city.civ === 'player') { logEvent('Rebels rise up near ' + city.name + '!', 'error'); showToast('Revolt! Rebels near ' + city.name, 'error'); }
       else logEvent('Rebels rise against ' + (CIVS[city.civ] ? CIVS[city.civ].name : city.civ) + ' near ' + city.name, 'info');
     }
@@ -5889,7 +5921,7 @@
         var GOLD_BLDGS = { market: 1, bank: 1, harbor: 1, stock_exchange: 1 };
         var DEF_BLDGS = { walls: 1, castle: 1 };
         // If this city is restless, prioritise content buildings to quell it.
-        var restless = (city.unrest || 0) >= city.pop * UNREST_REVOLT_MULT * 0.5;
+        var restless = (city.unrest || 0) >= revoltThreshold(city) * 0.5;
         regBldgs.sort(function (a, b) {
           var pri = function (k) {
             if (restless && BUILDINGS[k] && BUILDINGS[k].content) return 4;
@@ -7359,7 +7391,7 @@
       if (cityRevolting(ct)) items.push({ icon: '🔥', kind: 'err', important: true, title: ct.name + ' in revolt', sub: 'Production halted — ease unrest', act: function () { jumpToCity(ct); } });
     });
     pl.cities.forEach(function (ct) {
-      if (!cityRevolting(ct) && (ct.unrest || 0) >= ct.pop * UNREST_REVOLT_MULT * 0.5)
+      if (!cityRevolting(ct) && (ct.unrest || 0) >= revoltThreshold(ct) * 0.5)
         items.push({ icon: '⚠', kind: 'err', important: true, title: ct.name + ' is restless', sub: 'Unrest climbing toward revolt', act: function () { jumpToCity(ct); } });
     });
     // No research selected
@@ -8779,7 +8811,7 @@
     // Mood / stability — Content, Restless, or in open Revolt
     var moodEl = document.getElementById('c-mood');
     if (moodEl) {
-      var u = city.unrest || 0, thr = city.pop * UNREST_REVOLT_MULT;
+      var u = city.unrest || 0, thr = revoltThreshold(city);
       var delta = cityUnrestDelta(city);
       var label, col;
       if (u >= thr) { label = 'REVOLT'; col = '#ff5a5a'; }
@@ -9970,6 +10002,19 @@
       case 'cloud-setcode':
         setCloudCode();
         break;
+      case 'cloud-push':
+        cloudPushNow().then(function (ok) {
+          showToast(ok ? 'Uploaded this game to the cloud ✓' : 'Upload failed — try again', ok ? 'success' : 'error');
+          openCloudSync();
+        });
+        break;
+      case 'cloud-pull':
+        cloudPullNow().then(function (ok) {
+          if (ok) { setupTitleButtons(); showToast('Downloaded cloud game ✓ — tap Continue to play it', 'success'); }
+          else showToast('No cloud game found for this code', 'error');
+          openCloudSync();
+        });
+        break;
       case 'show-help':
         showScreen('help-screen');
         break;
@@ -10241,6 +10286,7 @@
     AGENDAS: AGENDAS,
     cityUnrestDelta: cityUnrestDelta,
     cityRevolting: cityRevolting,
+    revoltThreshold: revoltThreshold,
     processCity: processCity,
     setEdict: setEdict,
     aiPickEdict: aiPickEdict,
