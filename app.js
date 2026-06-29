@@ -420,6 +420,23 @@
   var GOVERNMENT_ORDER = ['despotism', 'monarchy', 'republic', 'theocracy', 'autocracy', 'democracy'];
   var ANARCHY_TURNS = 2;          // commitment cost when switching government
 
+  // IDEOLOGIES — a late-game, culture-side identity (mirror of governments). One
+  // is adopted once a civ reaches the Information age; big empire-wide bonuses
+  // folded by ideologyEff into the SAME sites as governments/civics/factions.
+  var IDEOLOGIES = {
+    freedom:   { name: 'Freedom',   desc: 'Science & culture — a free, inventive people.', eff: { perCitySci: 1, perCityCulture: 1, gpMult: 0.25 } },
+    order:     { name: 'Order',     desc: 'Production & stability — a disciplined society.', eff: { perCityProd: 1, perCityStability: 2 } },
+    autocracy: { name: 'Autocracy', desc: 'Military & expansion — strength above all.', eff: { unitAtk: 1, perCityProd: 1, eraPointMult: 0.25 } }
+  };
+  var IDEOLOGY_ORDER = ['freedom', 'order', 'autocracy'];
+  var IDEOLOGY_AGE = 5;   // unlocked once a civ reaches the Modern age (AGES idx 5)
+  function ideologyEff(civ, key) {
+    if (!civ || !civ.ideology) return 0;
+    var i = IDEOLOGIES[civ.ideology];
+    return (i && i.eff && i.eff[key]) || 0;
+  }
+  function ideologyUnlocked(civ) { return AGES.indexOf(getAge(civ)) >= IDEOLOGY_AGE; }
+
   // EDICTS — a fast, reactive lever (vs. governments, which are a slow identity
   // pick). Exactly one active at a time; it runs for a fixed duration then
   // lapses. Each is a single sharp +x/-y tradeoff on the SAME effect fields the
@@ -490,9 +507,15 @@
     urbanization:    { name: 'Urbanization',    cost: 150, req: ['civil_service'], eff: { perCityStability: 1, perCityGold: 1 }, lore: '+1 stability & +1 gold in every city' },
     // Tier 4
     cultural_hegemony: { name: 'Cultural Hegemony', cost: 220, req: ['enlightenment', 'nationalism'], eff: { perCityCulture: 3 }, lore: '+3 culture in every city' },
-    mass_media:      { name: 'Mass Media',      cost: 220, req: ['urbanization', 'enlightenment'], eff: { eraPointMult: 0.3, perCityCulture: 2 }, lore: '+30% Era Points & +2 culture in every city' }
+    mass_media:      { name: 'Mass Media',      cost: 220, req: ['urbanization', 'enlightenment'], eff: { eraPointMult: 0.3, perCityCulture: 2 }, lore: '+30% Era Points & +2 culture in every city' },
+    // Tier 5 — the modern social order (all fold via the existing civicSum sites)
+    meritocracy:     { name: 'Meritocracy',     cost: 300, req: ['mass_media'], eff: { perCitySci: 2 }, lore: '+2 science in every city' },
+    mercantilism:    { name: 'Mercantilism',    cost: 300, req: ['cultural_hegemony'], eff: { perCityGold: 2 }, lore: '+2 gold in every city' },
+    environmentalism:{ name: 'Environmentalism',cost: 300, req: ['mass_media'], eff: { perCityFood: 2 }, lore: '+2 food in every city' },
+    total_war:       { name: 'Total War',       cost: 320, req: ['cultural_hegemony'], eff: { unitAtk: 1, perCityProd: 1 }, lore: '+1 attack & +1 production in every city' },
+    welfare:         { name: 'Welfare State',   cost: 340, req: ['mass_media', 'cultural_hegemony'], eff: { perCityStability: 2 }, lore: '+2 stability in every city' }
   };
-  var CIVIC_ORDER = ['oral_tradition', 'code_of_laws', 'agrarianism', 'drama_poetry', 'monastic_orders', 'guilds', 'aesthetics', 'patronage', 'civil_service', 'enlightenment', 'nationalism', 'urbanization', 'cultural_hegemony', 'mass_media'];
+  var CIVIC_ORDER = ['oral_tradition', 'code_of_laws', 'agrarianism', 'drama_poetry', 'monastic_orders', 'guilds', 'aesthetics', 'patronage', 'civil_service', 'enlightenment', 'nationalism', 'urbanization', 'cultural_hegemony', 'mass_media', 'meritocracy', 'mercantilism', 'environmentalism', 'total_war', 'welfare'];
   // Tier = longest prereq-chain depth (drives the civics-graph row layout).
   var CIVIC_DEPTH = (function () {
     var d = {};
@@ -570,11 +593,11 @@
     var avail = CIVIC_ORDER.filter(function (id) { return canAdoptCivic(civ, id); });
     if (!avail.length) return null;
     var wants = {
-      scientific: ['enlightenment', 'mass_media', 'aesthetics', 'guilds'],
-      economic:   ['guilds', 'urbanization', 'civil_service', 'aesthetics'],
-      aggressive: ['nationalism', 'code_of_laws', 'patronage'],
-      warmonger:  ['nationalism', 'code_of_laws', 'patronage'],
-      peaceful:   ['oral_tradition', 'drama_poetry', 'patronage', 'aesthetics']
+      scientific: ['enlightenment', 'mass_media', 'meritocracy', 'aesthetics', 'guilds'],
+      economic:   ['guilds', 'urbanization', 'mercantilism', 'civil_service', 'aesthetics'],
+      aggressive: ['nationalism', 'total_war', 'code_of_laws', 'patronage'],
+      warmonger:  ['nationalism', 'total_war', 'code_of_laws', 'patronage'],
+      peaceful:   ['oral_tradition', 'drama_poetry', 'welfare', 'patronage', 'aesthetics']
     }[civ.personality] || [];
     for (var i = 0; i < wants.length; i++) if (avail.indexOf(wants[i]) >= 0) return wants[i];
     return avail[0];
@@ -618,7 +641,7 @@
     var gov = activeGovernment(civ);
     if (gov && gov.contentment) content += gov.contentment;
     content += edictEff(civ, 'contentment');   // Festivals +2 / Mass Levy -1
-    content += civicSum(civ, 'perCityStability');   // Code of Laws / Urbanization
+    content += civicSum(civ, 'perCityStability') + ideologyEff(civ, 'perCityStability');   // civics / Order ideology
     content += distinctLuxuries(civ);          // +1 per distinct luxury enjoyed
     if (civ && civ.goldenAgeTurns > 0) content += 2;
     return d - content;
@@ -692,7 +715,7 @@
     culture += govCulturePerTurn(civ);
     var gain = culture + Math.max(0, Math.floor(civ.goldPerTurn / 4)) + Math.max(0, Math.floor(civ.sciPerTurn / 4));
     var g = activeGovernment(civ);
-    var eraMult = (g && g.eraPointMult ? g.eraPointMult : 1) * (1 + civicSum(civ, 'eraPointMult'));  // Theocracy x Mass Media
+    var eraMult = (g && g.eraPointMult ? g.eraPointMult : 1) * (1 + civicSum(civ, 'eraPointMult') + ideologyEff(civ, 'eraPointMult'));  // Theocracy x Mass Media x Autocracy
     if (eraMult !== 1) gain = Math.round(gain * eraMult);
     civ.eraPoints += gain;
     if (civ.goldenAgeTurns <= 0 && civ.eraPoints >= goldenAgeThreshold(civ)) {
@@ -5209,12 +5232,14 @@
     if (cgov && cgov.perCityProd) prod += cgov.perCityProd;
     // Active edict production modifier (e.g. Mobilization +1 / Free Market -1)
     prod += edictEff(state.civs[city.civ], 'perCityProd');
+    // Adopted civics (Total War) + Ideology (Order/Autocracy) — +production per city
+    prod += civicSum(state.civs[city.civ], 'perCityProd') + ideologyEff(state.civs[city.civ], 'perCityProd');
 
     // Golden Age — flat +1 to each worked-tile yield bucket while active
     var gaCiv = state.civs[city.civ];
     if (gaCiv && gaCiv.goldenAgeTurns > 0) { food += GOLDEN_AGE_YIELD; prod += GOLDEN_AGE_YIELD; gold += GOLDEN_AGE_YIELD; }
-    // Adopted civics — Agrarianism +food per city
-    if (gaCiv) food += civicSum(gaCiv, 'perCityFood');
+    // Adopted civics — Agrarianism / Environmentalism +food; Ideology +food per city
+    if (gaCiv) food += civicSum(gaCiv, 'perCityFood') + ideologyEff(gaCiv, 'perCityFood');
 
     // Power Plant — multiplies this city's accumulated production (positive only)
     if (city.buildings.power_plant && prod > 0) prod = Math.round(prod * (1 + BUILDINGS.power_plant.prodMultiplier));
@@ -5291,7 +5316,7 @@
     if (wb.eiffel_tower === civId) c += BUILDINGS.eiffel_tower.perCityCulture;
     // Adopted civics that boost culture in every city
     var civ = state.civs[civId];
-    if (civ) c += civicSum(civ, 'perCityCulture');
+    if (civ) c += civicSum(civ, 'perCityCulture') + ideologyEff(civ, 'perCityCulture');
     return c;
   }
 
@@ -5339,9 +5364,10 @@
       gpt += edictEff(civ, 'perCityGold') * civ.cities.length;
       spt += edictEff(civ, 'perCitySci') * civ.cities.length;
     }
-    // Adopted civics (Guilds/Urbanization gold, Enlightenment science)
-    gpt += civicSum(civ, 'perCityGold') * civ.cities.length;
-    spt += civicSum(civ, 'perCitySci') * civ.cities.length;
+    // Adopted civics (Guilds/Urbanization/Mercantilism gold, Enlightenment/Meritocracy
+    // science) + Ideology (Freedom science)
+    gpt += (civicSum(civ, 'perCityGold') + ideologyEff(civ, 'perCityGold')) * civ.cities.length;
+    spt += (civicSum(civ, 'perCitySci') + ideologyEff(civ, 'perCitySci')) * civ.cities.length;
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
   }
@@ -5531,7 +5557,7 @@
       var ugov = activeGovernment(state.civs[unit.civ]);
       if (ugov && ugov.unitAtk) bonus += ugov.unitAtk;
       bonus += edictEff(state.civs[unit.civ], 'unitAtk');
-      bonus += civicSum(state.civs[unit.civ], 'unitAtk');
+      bonus += civicSum(state.civs[unit.civ], 'unitAtk') + ideologyEff(state.civs[unit.civ], 'unitAtk');
     }
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
@@ -7014,6 +7040,51 @@
     renderDiplomacyActions(actions, 'Government');
   }
 
+  // Adopt (or switch) an Ideology — a late-game culture identity. Free to change.
+  function setIdeology(civ, id) {
+    if (!civ || !IDEOLOGIES[id]) return false;
+    var was = civ.ideology;
+    civ.ideology = id;
+    recomputeIncome(civ.id);
+    if (civ.id === 'player') {
+      showToast('Ideology: ' + IDEOLOGIES[id].name, 'success');
+      logEvent((was ? 'Shifted ideology to ' : 'Adopted the ideology of ') + IDEOLOGIES[id].name, 'success');
+    }
+    return true;
+  }
+  // Ideology picker — Freedom / Order / Autocracy, the culture-side mirror of govs.
+  function openIdeology() {
+    var civ = state.civs.player;
+    var actions = [];
+    actions.push({ header: true, icon: '★', title: civ.ideology ? 'Current: ' + IDEOLOGIES[civ.ideology].name : 'Choose an Ideology', sub: 'A guiding late-game identity — big empire-wide bonuses' });
+    IDEOLOGY_ORDER.forEach(function (id) {
+      var io = IDEOLOGIES[id];
+      var isCur = civ.ideology === id;
+      actions.push({
+        icon: isCur ? '★' : '◆',
+        title: io.name + (isCur ? ' ✓' : ''),
+        sub: io.desc,
+        disabled: isCur,
+        primary: isCur,
+        do: isCur ? null : function () { if (setIdeology(civ, id)) { updateHud(); save(); } closeModal(); draw(); }
+      });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Ideology');
+  }
+  // AI adopts an ideology by personality the first time it reaches the Modern age.
+  function aiPickIdeology(civ) {
+    if (!civ || civ.ideology || !ideologyUnlocked(civ)) return;
+    var pick;
+    switch (civ.personality) {
+      case 'aggressive': case 'warmonger': pick = 'autocracy'; break;
+      case 'scientific': case 'cultural': pick = 'freedom'; break;
+      case 'economic': case 'expansionist': pick = 'order'; break;
+      default: pick = 'order';
+    }
+    setIdeology(civ, pick);
+  }
+
   // Edict picker — a fast reactive stance with a single sharp tradeoff.
   function openEdicts() {
     var civ = state.civs.player;
@@ -7274,7 +7345,7 @@
     progressTech(pl);
     // Great people culture points (temples + culture buildings + wonders)
     var plCpt = civCulturePerTurn(pl);
-    pl.greatPoints.culture += Math.round(plCpt * (1 + civicSum(pl, 'gpMult') + factionEff(pl, 'gpMult')));  // Monastic Orders + Solaris speed GP
+    pl.greatPoints.culture += Math.round(plCpt * (1 + civicSum(pl, 'gpMult') + factionEff(pl, 'gpMult') + ideologyEff(pl, 'gpMult')));  // Monastic Orders + Solaris + Freedom speed GP
     pl.culPerTurn = plCpt;                              // drives the Civics track + HUD
     accrueEraPoints(pl, true);                          // bank Era Points / fire Golden Age
     progressCivic(pl);                                  // advance the adopted civic
@@ -7301,7 +7372,7 @@
         progressTech(c);
         // Great people culture points for AI
         var cCpt = civCulturePerTurn(c);
-        c.greatPoints.culture += Math.round(cCpt * (1 + civicSum(c, 'gpMult') + factionEff(c, 'gpMult')));  // Monastic Orders + Solaris speed GP
+        c.greatPoints.culture += Math.round(cCpt * (1 + civicSum(c, 'gpMult') + factionEff(c, 'gpMult') + ideologyEff(c, 'gpMult')));  // Monastic Orders + Solaris + Freedom speed GP
         c.culPerTurn = cCpt;                              // drives the Civics track
         accrueEraPoints(c, false);                        // bank Era Points / fire Golden Age
         if (!c.currentCivic) { var nci = pickAiCivic(c); if (nci) { c.currentCivic = nci; c.civicProgress = 0; } }
@@ -7314,6 +7385,7 @@
         // AI adopts the best government its tech + personality allow
         aiPickGovernment(c);
         aiPickEdict(c);
+        aiPickIdeology(c);   // and an Ideology once it reaches the Modern age
       });
 
       // Decay general bonuses + tick down government anarchy for all civs
@@ -8906,6 +8978,17 @@
       sub: curEd ? curEd.name + ' · ' + civPl.edictTurns + 'T left' : 'Proclaim a timed stance',
       do: function () { closeModal(); openEdicts(); }
     });
+
+    // Ideology — a late-game culture identity, unlocked in the Modern age
+    if (ideologyUnlocked(civPl)) {
+      actions.push({
+        icon: '★',
+        title: 'Ideology',
+        sub: civPl.ideology ? IDEOLOGIES[civPl.ideology].name + ' · tap to change' : 'Adopt a guiding ideology',
+        primary: !civPl.ideology,
+        do: function () { closeModal(); openIdeology(); }
+      });
+    }
 
     // Tile yield overlay toggle
     actions.push({ icon: '⬡', title: showYieldOverlay ? 'Hide Yields' : 'Show Yields', sub: 'Food / prod / gold per tile', do: function () { showYieldOverlay = !showYieldOverlay; showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF'); closeModal(); draw(); } });
@@ -10620,7 +10703,13 @@
     SPACE_PARTS_NEEDED: SPACE_PARTS_NEEDED,
     nukeStrike: nukeStrike,
     canEnterTile: canEnterTile,
-    unitClassOf: unitClassOf
+    unitClassOf: unitClassOf,
+    IDEOLOGIES: IDEOLOGIES,
+    IDEOLOGY_ORDER: IDEOLOGY_ORDER,
+    ideologyEff: ideologyEff,
+    ideologyUnlocked: ideologyUnlocked,
+    setIdeology: setIdeology,
+    openIdeology: openIdeology
   };
 
   if (document.readyState === 'loading') {
