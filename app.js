@@ -289,11 +289,32 @@
                         lore: '+2 culture (great-people) per city, per turn' },
     internet:         { name: 'The Internet',     cost: 260, tech: 'computers',   wonder: true, perCitySci: 3, oneShotScience: 100,
                         lore: '+3 science in every city, and instantly gain 100 research' },
+    // More classic World Wonders (each unique per game)
+    colossus:         { name: 'Colossus',         cost:  90, tech: 'currency',   wonder: true, perCityGold: 1,
+                        lore: '+1 gold in every city — a bronze beacon of trade' },
+    petra:            { name: 'Petra',            cost: 120, tech: 'trade',      wonder: true, perCityFood: 1, perCityProd: 1,
+                        lore: '+1 food & +1 production in every city — a desert crossroads' },
+    hagia_sophia:     { name: 'Hagia Sophia',     cost: 160, tech: 'theology',   wonder: true, perCityCulture: 2,
+                        lore: '+2 culture in every city — a great basilica of the age' },
+    machu_picchu:     { name: 'Machu Picchu',     cost: 170, tech: 'engineering', wonder: true, perCityGold: 2,
+                        lore: '+2 gold in every city — a mountain citadel of trade roads' },
+    hubble:           { name: 'Hubble Telescope', cost: 300, tech: 'satellites', wonder: true, oneShotScience: 150, spaceParts: 1,
+                        lore: 'Instantly gain 150 research and +1 Spaceship Part' },
+    singularity:      { name: 'The Singularity',  cost: 360, tech: 'artificial_intelligence', wonder: true, perCitySci: 4,
+                        lore: '+4 science in every city — runaway machine intelligence' },
     // Information-age Project wonders
     manhattan_project: { name: 'Manhattan Project', cost: 240, tech: 'nuclear_fission', wonder: true, militaryAtk: 1,
                         lore: 'Unlocks the Nuke · +1 attack on all your military units' },
     apollo_program:   { name: 'Apollo Program',   cost: 280, tech: 'space_flight', wonder: true, spaceParts: 2,
                         lore: 'A head start in the Space Race: +2 Spaceship Parts toward launch' },
+    // National Wonders — empire-unique (one per civ, NOT per world), each gated by
+    // having the prerequisite building in EVERY city (requiresAll). Local effects.
+    oxford:           { name: 'Oxford University', cost: 140, tech: 'education', national: true, requiresAll: 'library', sci: 6, oneShotScience: 80,
+                        lore: '+6 science here & 80 instant research — needs a Library in every city' },
+    ironworks:        { name: 'Ironworks',        cost: 150, tech: 'industrialization', national: true, requiresAll: 'workshop', prod: 6,
+                        lore: '+6 production here — needs a Workshop in every city' },
+    heroic_epic:      { name: 'Heroic Epic',      cost: 120, tech: 'feudalism', national: true, requiresAll: 'barracks', culture: 3,
+                        lore: 'Units built here muster with 2 free promotions — needs a Barracks in every city' },
     // Spaceship Part — a repeatable build (NOT a regular building). Completing
     // SPACE_PARTS_NEEDED of them launches your ship → Space Race victory.
     spaceship_part:   { name: 'Spaceship Part',   cost: 200, tech: 'space_flight', spacePart: true,
@@ -313,7 +334,7 @@
     engineering: { name: 'Engineering',  cost:  50, req: ['masonry','archery'],       unlocks: 'Catapult, Aqueduct' },
     theology:    { name: 'Theology',     cost:  60, req: ['currency','pottery'],      unlocks: 'Temple' },
     philosophy:  { name: 'Philosophy',   cost:  55, req: ['theology','writing'],      unlocks: '+1 sci per Temple' },
-    education:   { name: 'Education',    cost:  80, req: ['theology','writing'],      unlocks: 'University' },
+    education:   { name: 'Education',    cost:  80, req: ['theology','writing'],      unlocks: 'University, Oxford' },
     steel:       { name: 'Steel',        cost:  80, req: ['iron'],                    unlocks: 'Swordsman' },
     gunpowder:   { name: 'Gunpowder',    cost: 100, req: ['steel','engineering'],     unlocks: 'Musketman' },
     banking:     { name: 'Banking',      cost:  90, req: ['theology','currency'],     unlocks: 'Bank' },
@@ -325,14 +346,14 @@
     construction:  { name: 'Construction',   cost:  42, req: ['masonry'],                unlocks: 'Workshop' },
     mathematics:   { name: 'Mathematics',    cost:  50, req: ['masonry','currency'],     unlocks: 'Trebuchet' },
     drama:         { name: 'Drama',          cost:  46, req: ['writing'],                unlocks: 'Amphitheater' },
-    feudalism:     { name: 'Feudalism',      cost:  58, req: ['husbandry','masonry'],    unlocks: 'Pikeman, Castle' },
+    feudalism:     { name: 'Feudalism',      cost:  58, req: ['husbandry','masonry'],    unlocks: 'Pikeman, Castle, Heroic Epic' },
     chivalry:      { name: 'Chivalry',       cost:  66, req: ['husbandry','iron'],       unlocks: 'Knight' },
     navigation:    { name: 'Navigation',     cost:  62, req: ['sailing','currency'],     unlocks: 'Caravel' },
     economics:     { name: 'Economics',      cost:  74, req: ['banking','trade'],        unlocks: 'Stock Exchange' },
     astronomy:     { name: 'Astronomy',      cost:  88, req: ['education','navigation'], unlocks: 'Observatory, U. of Sankore' },
     acoustics:     { name: 'Acoustics',      cost:  92, req: ['drama','education'],      unlocks: 'Cathedral, Sistine Chapel' },
     metallurgy:    { name: 'Metallurgy',     cost: 100, req: ['steel','mathematics'],    unlocks: 'Cannon' },
-    industrialization: { name: 'Industrialization', cost: 150, req: ['construction','economics'], unlocks: 'Factory' },
+    industrialization: { name: 'Industrialization', cost: 150, req: ['construction','economics'], unlocks: 'Factory, Ironworks' },
     rifling:       { name: 'Rifling',        cost: 135, req: ['gunpowder','metallurgy'], unlocks: 'Rifleman; +1 atk muskets' },
     // Modern age (6th) — industry, modern war, late science. Each gates one
     // concrete engine-piece; governments hang off conscription / mass production.
@@ -348,7 +369,7 @@
     // and the Spaceship Parts that win a Space Race victory.
     electronics:   { name: 'Electronics',    cost: 260, req: ['computers'],                   unlocks: 'Submarine, Carrier' },
     rocketry:      { name: 'Rocketry',       cost: 280, req: ['computers','ballistics'],      unlocks: 'Bomber' },
-    computing:     { name: 'Computing',      cost: 290, req: ['computers'],                   unlocks: 'Oxford · AI' },
+    computing:     { name: 'Computing',      cost: 290, req: ['computers'],                   unlocks: 'Research Lab · AI path' },
     nuclear_fission: { name: 'Nuclear Fission', cost: 320, req: ['electronics'],              unlocks: 'Nuke, Manhattan Project' },
     robotics:      { name: 'Robotics',       cost: 320, req: ['electronics'],                 unlocks: 'Modern Armor (oil)' },
     satellites:    { name: 'Satellites',     cost: 340, req: ['rocketry'],                    unlocks: 'Hubble · Space prereq' },
@@ -5150,6 +5171,9 @@
     // Wonder: Hanging Gardens — +2 food in every city of its owner
     var wb = state.wondersBuilt || {};
     if (wb.hanging_gardens === city.civ) food += BUILDINGS.hanging_gardens.perCityFood;
+    if (wb.petra === city.civ) food += BUILDINGS.petra.perCityFood;          // +1 food/city
+    if (wb.colossus === city.civ) gold += BUILDINGS.colossus.perCityGold;    // +1 gold/city
+    if (wb.machu_picchu === city.civ) gold += BUILDINGS.machu_picchu.perCityGold; // +2 gold/city
     // Fresh-water bonus when the city itself sits on a river
     if (city.onRiver) { food += 1; gold += 1; }
     var ns = neighbors(city.c, city.r);
@@ -5216,6 +5240,7 @@
     // Production buildings (Workshop / Factory) — the first prod-yielding buildings
     if (city.buildings.workshop) prod += BUILDINGS.workshop.prod;
     if (city.buildings.factory) prod += BUILDINGS.factory.prod;
+    if (city.buildings.ironworks) prod += BUILDINGS.ironworks.prod;   // National Wonder, +6 (local)
     // Mass Production: each Factory also yields +1 prod (mirrors Philosophy/Temple)
     var wcv = state.civs[city.civ];
     if (city.buildings.factory && wcv && wcv.techs && wcv.techs.mass_production) prod += 1;
@@ -5257,6 +5282,7 @@
     if (b.university) sci += BUILDINGS.university.sci;  // +4
     if (b.observatory) sci += BUILDINGS.observatory.sci; // +5
     if (b.research_lab) sci += BUILDINGS.research_lab.sci; // +7
+    if (b.oxford) sci += BUILDINGS.oxford.sci;           // National Wonder, +6 (local)
     // Philosophy: temples give an extra +1 science
     var civ = state.civs[city.civ];
     if (b.temple && civ && civ.techs && civ.techs.philosophy) sci += 1;
@@ -5273,6 +5299,7 @@
     if (wb2.library_of_alex === city.civ) sci += BUILDINGS.library_of_alex.perCitySci;
     if (wb2.university_of_sankore === city.civ) sci += BUILDINGS.university_of_sankore.perCitySci;
     if (wb2.internet === city.civ) sci += BUILDINGS.internet.perCitySci;
+    if (wb2.singularity === city.civ) sci += BUILDINGS.singularity.perCitySci;   // +4
     return sci;
   }
 
@@ -5314,6 +5341,7 @@
     if (wb.notre_dame === civId) c += BUILDINGS.notre_dame.perCityCulture;
     if (wb.sistine_chapel === civId) c += BUILDINGS.sistine_chapel.perCityCulture;
     if (wb.eiffel_tower === civId) c += BUILDINGS.eiffel_tower.perCityCulture;
+    if (wb.hagia_sophia === civId) c += BUILDINGS.hagia_sophia.perCityCulture;
     // Adopted civics that boost culture in every city
     var civ = state.civs[civId];
     if (civ) c += civicSum(civ, 'perCityCulture') + ideologyEff(civ, 'perCityCulture');
@@ -10709,7 +10737,8 @@
     ideologyEff: ideologyEff,
     ideologyUnlocked: ideologyUnlocked,
     setIdeology: setIdeology,
-    openIdeology: openIdeology
+    openIdeology: openIdeology,
+    nationalAvailable: nationalAvailable
   };
 
   if (document.readyState === 'loading') {
