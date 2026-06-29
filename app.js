@@ -69,11 +69,12 @@
     worker:    { name: 'Worker',    cost: 20, hp: 8,  atk: 0, def: 1, move: 2, glyph: '⚒', tech: null,          civilian: true, canImprove: true },
     scout:     { name: 'Scout',     cost: 12, hp: 8,  atk: 0, def: 2, move: 3, glyph: '⚐', tech: null,          civilian: true, canExplore: true },
     warrior:   { name: 'Warrior',   cost: 15, hp: 14, atk: 4, def: 3, move: 2, glyph: '⚔', tech: null },
+    spearman:  { name: 'Spearman',  cost: 18, hp: 14, atk: 4, def: 6, move: 2, glyph: '†', tech: null, vs: { mounted: 0.5 } },
     archer:    { name: 'Archer',    cost: 25, hp: 10, atk: 5, def: 2, move: 2, glyph: '➹', tech: 'archery',     ranged: 2 },
-    horseman:  { name: 'Horseman',  cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry' },
+    horseman:  { name: 'Horseman',  cost: 35, hp: 14, atk: 6, def: 3, move: 4, glyph: '♞', tech: 'husbandry', class: 'mounted' },
     swordsman: { name: 'Swordsman', cost: 45, hp: 18, atk: 8, def: 5, move: 2, glyph: '⚔', tech: 'steel' },
-    pikeman:   { name: 'Pikeman',   cost: 38, hp: 20, atk: 6, def: 9, move: 2, glyph: '⛏', tech: 'feudalism' },
-    knight:    { name: 'Knight',    cost: 60, hp: 22, atk: 11, def: 6, move: 4, glyph: '♘', tech: 'chivalry' },
+    pikeman:   { name: 'Pikeman',   cost: 38, hp: 20, atk: 6, def: 9, move: 2, glyph: '⛏', tech: 'feudalism', vs: { mounted: 0.5 } },
+    knight:    { name: 'Knight',    cost: 60, hp: 22, atk: 11, def: 6, move: 4, glyph: '♘', tech: 'chivalry', class: 'mounted' },
     catapult:  { name: 'Catapult',  cost: 40, hp: 8,  atk: 7, def: 1, move: 2, glyph: '⊕', tech: 'engineering', ranged: 2, siege: true },
     trebuchet: { name: 'Trebuchet', cost: 55, hp: 10, atk: 10, def: 2, move: 2, glyph: '⊗', tech: 'mathematics', ranged: 2, siege: true },
     cannon:    { name: 'Cannon',    cost: 70, hp: 14, atk: 14, def: 3, move: 2, glyph: '◎', tech: 'metallurgy',  ranged: 2, siege: true },
@@ -89,13 +90,15 @@
     battleship:{ name: 'Battleship',cost: 110, hp: 36, atk: 26, def: 14, move: 4, glyph: '⛟', tech: 'combustion', naval: true, ranged: 2, siege: true, requires: 'oil' },
     fighter:   { name: 'Fighter',   cost: 90, hp: 20, atk: 18, def: 6, move: 6, glyph: '✈', tech: 'mass_production', ranged: 2, air: true, requires: 'oil' },
     // Information-age apex units
+    submarine: { name: 'Submarine', cost: 80, hp: 20, atk: 18, def: 10, move: 4, glyph: '◗', tech: 'electronics', naval: true, vs: { naval: 1.0 } },
+    carrier:   { name: 'Carrier',   cost: 95, hp: 40, atk: 6,  def: 8,  move: 4, glyph: '▭', tech: 'electronics', naval: true, carrier: true },
     bomber:    { name: 'Bomber',    cost: 95, hp: 22, atk: 22, def: 6, move: 6, glyph: '➶', tech: 'rocketry',  ranged: 3, siege: true, air: true },
     modern_armor: { name: 'Modern Armor', cost: 120, hp: 38, atk: 30, def: 22, move: 4, glyph: '▰', tech: 'robotics', requires: 'oil' },
     nuke:      { name: 'Nuke',      cost: 150, hp: 6,  atk: 1, def: 0, move: 6, glyph: '☢', tech: 'nuclear_fission', ranged: 5, nuke: true, requiresWonder: 'manhattan_project' },
     // Faction unique units (sidegrades that REPLACE a base unit for one faction)
     legionary: { name: 'Legionary', cost: 16, hp: 16, atk: 6, def: 5, move: 2, glyph: '⚔', tech: null,        faction: 'ferrum', replaces: 'warrior' },
     nightblade:{ name: 'Nightblade', cost: 42, hp: 18, atk: 10, def: 4, move: 3, glyph: '⚔', tech: 'steel',     faction: 'umbra',  replaces: 'swordsman' },
-    bloodrider:{ name: 'Bloodrider', cost: 32, hp: 14, atk: 8, def: 3, move: 5, glyph: '♞', tech: 'husbandry',  faction: 'vorne',  replaces: 'horseman' },
+    bloodrider:{ name: 'Bloodrider', cost: 32, hp: 14, atk: 8, def: 3, move: 5, glyph: '♞', tech: 'husbandry',  faction: 'vorne',  replaces: 'horseman', class: 'mounted' },
     dromon:    { name: 'Dromon',    cost: 30, hp: 16, atk: 7, def: 4, move: 4, glyph: '⛵', tech: 'sailing',     faction: 'myrr',   naval: true, replaces: 'galley' },
     raider:    { name: 'Raider',    cost: 0,  hp: 10, atk: 3, def: 2, move: 2, glyph: '⚔', tech: null,          barb: true },
     great_general:   { name: 'Great General',   cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚑', tech: null, civilian: true, great: true },
@@ -119,6 +122,7 @@
     knight:    { to: 'tank',       tech: 'combustion',  cost: 45 },
     caravel:   { to: 'battleship', tech: 'combustion',  cost: 45 },
     tank:      { to: 'modern_armor', tech: 'robotics',  cost: 50 },
+    spearman:  { to: 'pikeman',     tech: 'feudalism',  cost: 18 },
     // Faction uniques upgrade into the standard next-tier so they don't obsolete
     legionary: { to: 'swordsman',  tech: 'steel',       cost: 25 },
     bloodrider:{ to: 'knight',     tech: 'chivalry',    cost: 28 },
@@ -241,6 +245,7 @@
     museum:       { name: 'Museum',        cost: 70, culture: 4, tech: 'acoustics' },
     broadcast_tower:{ name: 'Broadcast Tower', cost: 95, culture: 6, tech: 'computers' },
     castle:       { name: 'Castle',        cost: 60, def:  6, tech: 'feudalism' },
+    barracks:     { name: 'Barracks',      cost: 40, tech: 'iron', trainPromo: true },
     stock_exchange:{name: 'Stock Exchange',cost: 70, gold: 6, tech: 'economics' },
     // Modern buildings — late ceilings in each lane
     hospital:        { name: 'Hospital',         cost: 75, food: 3, tech: 'sanitation' },
@@ -1423,9 +1428,12 @@
     var udef = UNITS[unit.type];
     // Naval units: water only
     if (udef.naval) return tile.terrain === 'water';
-    // Water tiles: only workers with Sailing tech
+    // Water tiles: workers with Sailing (to build fishing boats), or — once a civ
+    // has Navigation — ANY land unit may embark and cross the sea.
     if (tile.terrain === 'water') {
-      return !!(udef.canImprove && state.civs[unit.civ].techs && state.civs[unit.civ].techs.sailing);
+      var wtech = (state.civs[unit.civ] && state.civs[unit.civ].techs) || {};
+      if (udef.canImprove && wtech.sailing) return true;
+      return !!wtech.navigation;   // embarkation
     }
     // Standard impassable check for land tiles
     if (ter.impassable) return false;
@@ -4454,6 +4462,9 @@
     bomber:    drawArcher,      // air
     modern_armor: drawSwordsman,// armored apex
     nuke:      drawCatapult,    // missile
+    spearman:  drawSwordsman,   // footman
+    submarine: drawGalley,      // ship
+    carrier:   drawGalley,      // ship
     legionary: drawWarrior,     // faction uniques reuse their base sprite
     nightblade:drawSwordsman,
     bloodrider:drawHorseman,
@@ -4745,9 +4756,15 @@
     var aPower = aDef.atk + atkTechBonus(attacker);
     // Siege (unit flag or promotion) halves a city's defensive bonus.
     if ((aDef.siege || attacker.promoSiege) && dTile.city) dBonus = dBonus * 0.5;
+    // Class counters — Spearman/Pikeman vs mounted, Submarine vs naval, etc.
+    var aClass = unitClassOf(aDef), dClass = unitClassOf(dDef);
+    if (aDef.vs && dClass && aDef.vs[dClass]) aPower *= (1 + aDef.vs[dClass]);
     var dPower = (dDef.def + (defender.promoDef || 0)) * (1 + dBonus);
+    if (dDef.vs && aClass && dDef.vs[aClass]) dPower *= (1 + dDef.vs[aClass]);
+    if (defender.embarked) dPower *= 0.4;   // land units caught at sea are nearly helpless
     return aPower / (aPower + dPower);
   }
+  function unitClassOf(def) { return def.class || (def.naval ? 'naval' : def.air ? 'air' : null); }
   // Expected-damage forecast; the +0..3 random jitter is shown as a range.
   function combatForecast(attacker, defender, ranged) {
     var ratio = combatRatio(attacker, defender, ranged);
@@ -5365,6 +5382,7 @@
     unit.c = c; unit.r = r;
     unit.moves = Math.max(0, unit.moves - 1);
     unit.fortified = false;
+    if (!UNITS[unit.type].naval) unit.embarked = (t.terrain === 'water');   // land units embark at sea
     t.unit = unit;
     if (unit.civ === 'player') {
       sfxMove();
@@ -5517,6 +5535,14 @@
     }
     // Unit promotion attack bonus
     bonus += (unit.promoAtk || 0);
+    // Carrier aura — a friendly Carrier on an adjacent tile lends +1 attack.
+    if (!UNITS[unit.type].civilian) {
+      var cns = neighbors(unit.c, unit.r);
+      for (var ci = 0; ci < cns.length; ci++) {
+        var ctt = tileAt(cns[ci][0], cns[ci][1]);
+        if (ctt && ctt.unit && ctt.unit.civ === unit.civ && UNITS[ctt.unit.type] && UNITS[ctt.unit.type].carrier) { bonus += 1; break; }
+      }
+    }
     // Great General bonus
     var gb = state.civs[unit.civ].generalBonus;
     if (gb && gb.turnsLeft > 0 && !UNITS[unit.type].civilian) bonus += gb.atk;
@@ -5868,6 +5894,12 @@
         var spawnTile = findSpawnTile(city, p);
         if (spawnTile) {
           spawnUnit(city.civ, p, spawnTile[0], spawnTile[1]);
+          // Barracks / Heroic Epic — new military units muster pre-trained.
+          var trained = tileAt(spawnTile[0], spawnTile[1]);
+          if (trained && trained.unit && !UNITS[p].civilian && (city.buildings.barracks || city.buildings.heroic_epic)) {
+            aiPickPromotion(trained.unit);   // auto-applies one promotion (no modal)
+            if (city.buildings.heroic_epic) aiPickPromotion(trained.unit);   // Heroic Epic adds a second
+          }
           if (city.civ === 'player') logEvent(city.name + ' trained ' + UNITS[p].name, 'success');
         }
       }
@@ -10586,7 +10618,9 @@
     TECH_ORDER: TECH_ORDER,
     AGES: AGES,
     SPACE_PARTS_NEEDED: SPACE_PARTS_NEEDED,
-    nukeStrike: nukeStrike
+    nukeStrike: nukeStrike,
+    canEnterTile: canEnterTile,
+    unitClassOf: unitClassOf
   };
 
   if (document.readyState === 'loading') {
