@@ -883,6 +883,7 @@ body {
 .hud-cell.age-cell.renaissance{color: #b388ff; background: rgba(179,136,255,0.08); border-color: rgba(179,136,255,0.35); }
 .hud-cell.age-cell.industrial{ color: #ffd34d; background: rgba(255,211,77,0.08);  border-color: rgba(255,211,77,0.35); }
 .hud-cell.age-cell.modern    { color: #00ff88; background: rgba(0,255,136,0.08);   border-color: rgba(0,255,136,0.35); }
+.hud-cell.age-cell.information{ color: #ff5cf0; background: rgba(255,92,240,0.08);  border-color: rgba(255,92,240,0.40); }
 .hud-cell.hud-tech {
   flex: 1;
   justify-content: flex-end;

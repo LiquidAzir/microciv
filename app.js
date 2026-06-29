@@ -5025,12 +5025,13 @@
     if (ageEl) {
       ageEl.textContent = age.name.toUpperCase();
       var cell = ageEl.parentElement;
-      cell.classList.remove('classical', 'medieval', 'renaissance', 'modern', 'industrial');
+      cell.classList.remove('classical', 'medieval', 'renaissance', 'modern', 'industrial', 'information');
       if (age.name === 'Classical') cell.classList.add('classical');
       if (age.name === 'Medieval') cell.classList.add('medieval');
       if (age.name === 'Renaissance') cell.classList.add('renaissance');
       if (age.name === 'Industrial') cell.classList.add('industrial');
       if (age.name === 'Modern') cell.classList.add('modern');
+      if (age.name === 'Information') cell.classList.add('information');
     }
 
     // CIV chip (top HUD)
@@ -10629,6 +10630,7 @@
     availableProducibles: availableProducibles,
     openCity: openCity,
     draw: draw,
+    updateHud: updateHud,
     setGovernment: setGovernment,
     aiPickGovernment: aiPickGovernment,
     recomputeIncome: recomputeIncome,
