@@ -5719,8 +5719,12 @@
     var y = workableYields(city);
 
     // Stability / unrest — bank the net change, clamp, and track open revolt.
+    // A city with no net pressure slowly RECOVERS (drifts back to calm) so a
+    // revolt is always a recoverable hazard, never a permanent state.
     if (typeof city.unrest !== 'number') city.unrest = 0;
-    city.unrest = Math.max(0, Math.min(city.pop * UNREST_CAP_MULT, city.unrest + cityUnrestDelta(city)));
+    var uDelta = cityUnrestDelta(city);
+    if (uDelta <= 0) uDelta -= 1;   // passive recovery when content keeps pace
+    city.unrest = Math.max(0, Math.min(city.pop * UNREST_CAP_MULT, city.unrest + uDelta));
     var revolting = cityRevolting(city);
     if (revolting) {
       if (!city.revoltTurns && city.civ === 'player') showToast(city.name + ' is on the brink of revolt!', 'error');
