@@ -225,15 +225,15 @@
   }
 
   var BUILDINGS = {
-    granary:  { name: 'Granary',    cost: 30, food: 2, tech: 'pottery'  },
-    library:  { name: 'Library',    cost: 30, sci:  2, tech: 'writing'  },
+    granary:  { name: 'Granary',    cost: 24, food: 2, tech: 'pottery'  },
+    library:  { name: 'Library',    cost: 24, sci:  2, tech: 'writing'  },
     walls:    { name: 'Walls',      cost: 40, def:  4, tech: 'masonry'  },
     bastion:  { name: 'Bastion',    cost: 45, def:  6, tech: 'masonry', faction: 'tellus', replaces: 'walls' },
     market:   { name: 'Market',     cost: 50, gold: 3, tech: 'currency' },
     aqueduct: { name: 'Aqueduct',   cost: 45, food: 3, tech: 'engineering' },
     temple:   { name: 'Temple',     cost: 40, sci:  3, content: 2, culture: 3, faith: 2, tech: 'theology' },
     shrine:   { name: 'Shrine',     cost: 30, faith: 3, culture: 1, tech: 'theology' },
-    monument: { name: 'Monument',   cost: 25, culture: 2 },
+    monument: { name: 'Monument',   cost: 20, culture: 2 },
     sun_spire: { name: 'Sun Spire',  cost: 30, culture: 4, content: 1, faction: 'solaris', replaces: 'monument' },
     university:{name: 'University', cost: 70, sci:  4, tech: 'education' },
     bank:     { name: 'Bank',       cost: 55, gold: 4, tech: 'banking' },
@@ -325,11 +325,11 @@
   var SPACE_PARTS_NEEDED = 6;   // build this many parts → Space Race victory
 
   var TECHS = {
-    pottery:     { name: 'Pottery',      cost:  14, req: [],                          unlocks: 'Granary' },
-    writing:     { name: 'Writing',      cost:  22, req: ['pottery'],                 unlocks: 'Library' },
-    sailing:     { name: 'Sailing',      cost:  25, req: ['pottery'],                 unlocks: 'Galley, Fishing Boats' },
-    archery:     { name: 'Archery',      cost:  25, req: [],                          unlocks: 'Archer' },
-    masonry:     { name: 'Masonry',      cost:  30, req: ['pottery'],                 unlocks: 'Walls' },
+    pottery:     { name: 'Pottery',      cost:  10, req: [],                          unlocks: 'Granary' },
+    writing:     { name: 'Writing',      cost:  16, req: ['pottery'],                 unlocks: 'Library' },
+    sailing:     { name: 'Sailing',      cost:  18, req: ['pottery'],                 unlocks: 'Galley, Fishing Boats' },
+    archery:     { name: 'Archery',      cost:  18, req: [],                          unlocks: 'Archer' },
+    masonry:     { name: 'Masonry',      cost:  22, req: ['pottery'],                 unlocks: 'Walls' },
     husbandry:   { name: 'Husbandry',    cost:  35, req: ['archery'],                 unlocks: 'Horseman' },
     currency:    { name: 'Currency',     cost:  45, req: ['masonry'],                 unlocks: 'Market' },
     iron:        { name: 'Metalworking', cost:  60, req: ['husbandry','currency'],    unlocks: '+2 atk Warriors' },
@@ -342,8 +342,8 @@
     banking:     { name: 'Banking',      cost:  90, req: ['theology','currency'],     unlocks: 'Bank' },
     // Expansion — parallel "lanes" (production, economy, culture, naval, deeper
     // military + science) so each era offers a meaningful "which next" choice.
-    mining:        { name: 'Mining',         cost:  16, req: [],                         unlocks: '+1 prod from Mines' },
-    agriculture:   { name: 'Agriculture',    cost:  20, req: ['pottery'],                unlocks: '+1 food from Farms' },
+    mining:        { name: 'Mining',         cost:  12, req: [],                         unlocks: '+1 prod from Mines' },
+    agriculture:   { name: 'Agriculture',    cost:  14, req: ['pottery'],                unlocks: '+1 food from Farms' },
     trade:         { name: 'Trade',          cost:  34, req: ['currency'],               unlocks: 'Harbor' },
     construction:  { name: 'Construction',   cost:  42, req: ['masonry'],                unlocks: 'Workshop' },
     mathematics:   { name: 'Mathematics',    cost:  50, req: ['masonry','currency'],     unlocks: 'Trebuchet' },
@@ -5296,7 +5296,7 @@
   // GAME LOGIC
   // =====================================================================
   function workableYields(city) {
-    var food = 2, prod = 1, gold = 2;  // base city tile
+    var food = 2, prod = 2, gold = 2;  // base city tile (prod floor keeps early builds moving)
     var fb = (FACTIONS[state.civs[city.civ].faction] || {}).bonus || {};
     if (fb.food) food += fb.food;
     if (fb.prod) prod += fb.prod;
@@ -5410,9 +5410,10 @@
   }
 
   function cityScience(city) {
-    // Floor of 2/turn so the very first city isn't crawling at 1 sci/turn
-    // while Pottery is being researched.
-    var sci = 2 + Math.floor((city.pop - 1) / 2);
+    // Floor of 3/turn so the opening isn't a crawl — a lone pop-1 city still
+    // researches early techs in a few turns. The flat floor helps the early game
+    // far more (proportionally) than the late game.
+    var sci = 3 + Math.floor((city.pop - 1) / 2);
     var b = city.buildings || {};
     if (b.library)    sci += BUILDINGS.library.sci;     // +2
     if (b.temple)     sci += BUILDINGS.temple.sci;      // +3
@@ -5473,6 +5474,10 @@
   function cityCulturePerTurn(ct, civId) {
     var c = 0;
     var b = ct.buildings || {};
+    // The capital (your palace) radiates +2 culture from turn 1, so the civics
+    // track actually trickles forward in the early game. Flat — it doesn't scale
+    // with empire size, so it doesn't accelerate a late Cultural Ascendancy.
+    if (ct.capital) c += 2;
     // Data-driven: any building with a `culture` field contributes it.
     for (var k in b) { if (b[k] && BUILDINGS[k] && BUILDINGS[k].culture) c += BUILDINGS[k].culture; }
     var wb = state.wondersBuilt || {};
@@ -11071,6 +11076,7 @@
     civicsComplete: civicsComplete,
     canAdoptCivic: canAdoptCivic,
     progressCivic: progressCivic,
+    progressTech: progressTech,
     pickAiCivic: pickAiCivic,
     enqueueCivicWithPrereqs: enqueueCivicWithPrereqs,
     openCivics: openCivics,
@@ -11132,6 +11138,9 @@
     openCloudKeyboard: openCloudKeyboard,
     cloudKbState: function () { return { idx: cloudKb.idx, code: cloudKb.code }; },
     KB_KEYS: KB_KEYS,
+    BUILDINGS: BUILDINGS,
+    UNITS: UNITS,
+    TECHS: TECHS,
     getAge: getAge,
     TECH_ORDER: TECH_ORDER,
     AGES: AGES,
