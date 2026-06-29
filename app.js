@@ -68,6 +68,7 @@
     settler:   { name: 'Settler',   cost: 30, hp: 8,  atk: 0, def: 1, move: 2, glyph: '☗', tech: null,          civilian: true, canFound: true },
     worker:    { name: 'Worker',    cost: 20, hp: 8,  atk: 0, def: 1, move: 2, glyph: '⚒', tech: null,          civilian: true, canImprove: true },
     scout:     { name: 'Scout',     cost: 12, hp: 8,  atk: 0, def: 2, move: 3, glyph: '⚐', tech: null,          civilian: true, canExplore: true },
+    caravan:   { name: 'Caravan',   cost: 30, hp: 8,  atk: 0, def: 1, move: 2, glyph: '⇄', tech: 'currency',     civilian: true, trade: true },
     warrior:   { name: 'Warrior',   cost: 15, hp: 14, atk: 4, def: 3, move: 2, glyph: '⚔', tech: null },
     spearman:  { name: 'Spearman',  cost: 18, hp: 14, atk: 4, def: 6, move: 2, glyph: '†', tech: null, vs: { mounted: 0.5 } },
     archer:    { name: 'Archer',    cost: 25, hp: 10, atk: 5, def: 2, move: 2, glyph: '➹', tech: 'archery',     ranged: 2 },
@@ -1546,6 +1547,30 @@
     return { x: x, y: y };
   }
 
+  // Dashed lines linking the endpoints of every trade route the player can see.
+  // Gold = your active route, blue = a rival's, red = disrupted.
+  function drawTradeRoutes(size) {
+    var routes = state.tradeRoutes;
+    if (!routes || !routes.length) return;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 5]);
+    for (var i = 0; i < routes.length; i++) {
+      var rt = routes[i];
+      var fT = state.map[rt.fromR] && state.map[rt.fromR][rt.fromC];
+      var tT = state.map[rt.toR] && state.map[rt.toR][rt.toC];
+      if (!fT || !tT) continue;
+      if (!fT.explored.player && !tT.explored.player) continue;   // unseen by the player
+      var pa = pixelOf(rt.fromC, rt.fromR, size), pb = pixelOf(rt.toC, rt.toR, size);
+      var ax = pa.x - state.camera.x + size * SQRT3 / 2, ay = pa.y - state.camera.y + size;
+      var bx = pb.x - state.camera.x + size * SQRT3 / 2, by = pb.y - state.camera.y + size;
+      ctx.strokeStyle = rt.disrupted ? 'rgba(255,80,80,0.75)' : (rt.owner === 'player' ? 'rgba(255,211,77,0.65)' : 'rgba(120,180,255,0.45)');
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   // Inverse of pixelOf — converts a world-pixel coordinate to the nearest hex
   // (offset coords). Used by the canvas click/tap handler so a player on phone
   // or PC can interact by tapping a tile directly.
@@ -1912,6 +1937,7 @@
       log: [],
       turnLog: [],
       wondersBuilt: {},                  // wonder id -> civ id who built it
+      tradeRoutes: [],                   // {fromC,fromR,toC,toR,owner,intl,gold,disrupted}
       stats: { unitsKilled: 0, unitsLost: 0, barbsDefeated: 0 },
       diplomacy: defaultDiplomacy(),     // every civ pair at war; city-states at peace
       pacts: {},                         // dipKey -> true for active Defensive Pacts
@@ -2224,6 +2250,7 @@
         selected: state.selected,
         victory: state.victory,
         wondersBuilt: state.wondersBuilt,
+        tradeRoutes: state.tradeRoutes || [],
         stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
         diplomacy: state.diplomacy,
         pacts: state.pacts || {},
@@ -2336,6 +2363,7 @@
       state.log = state.log || [];
       state.turnLog = state.turnLog || [];
       state.wondersBuilt = state.wondersBuilt || {};
+      if (!Array.isArray(state.tradeRoutes)) state.tradeRoutes = [];
       state.stats = state.stats || { unitsKilled: 0, unitsLost: 0 };
       if (state.stats.barbsDefeated === undefined) state.stats.barbsDefeated = 0;
       // Backfill quests onto city-states from older saves
@@ -3808,6 +3836,7 @@
 
     // Territorial borders (between owners) — drawn after terrain, before entities
     drawBorders(size, inset);
+    drawTradeRoutes(size);   // dashed lines linking traded cities
 
     // --- PASS 2: Villages, cities, units ---
     // Drawn in a separate pass so name banners and sprites are never
@@ -4483,6 +4512,7 @@
     settler:   drawSettler,
     worker:    drawWorker,
     scout:     drawScout,
+    caravan:   drawWorker,
     warrior:   drawWarrior,
     archer:    drawArcher,
     horseman:  drawHorseman,
@@ -5428,8 +5458,101 @@
     // science) + Ideology (Freedom science)
     gpt += (civicSum(civ, 'perCityGold') + ideologyEff(civ, 'perCityGold')) * civ.cities.length;
     spt += (civicSum(civ, 'perCitySci') + ideologyEff(civ, 'perCitySci')) * civ.cities.length;
+    gpt += tradeRouteGold(civId);   // peaceful income from active trade routes
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
+  }
+
+  // ---- TRADE ROUTES — a peaceful income engine. A Caravan carries a route from
+  // its home city to another city (yours, or a foreign/city-state at peace); the
+  // route pays gold every turn, more for distance + city size, and 50% more if
+  // international. An enemy military unit next to either endpoint disrupts it.
+  function routeCityAt(c, r) { var t = tileAt(c, r); return t ? t.city : null; }
+  function maxTradeRoutes(civ) { return Math.max(1, civ.cities.length); }
+  function tradeRouteCount(civId) {
+    return (state.tradeRoutes || []).reduce(function (n, rt) { return n + (rt.owner === civId ? 1 : 0); }, 0);
+  }
+  function routeExists(owner, home, city) {
+    return (state.tradeRoutes || []).some(function (rt) {
+      if (rt.owner !== owner) return false;
+      var endA = (rt.fromC === home.c && rt.fromR === home.r && rt.toC === city.c && rt.toR === city.r);
+      var endB = (rt.fromC === city.c && rt.fromR === city.r && rt.toC === home.c && rt.toR === home.r);
+      return endA || endB;
+    });
+  }
+  function routeBaseGold(rt) {
+    var a = routeCityAt(rt.fromC, rt.fromR), b = routeCityAt(rt.toC, rt.toR);
+    if (!a || !b) return 0;
+    var dist = hexDist([rt.fromC, rt.fromR], [rt.toC, rt.toR]);
+    var g = 2 + Math.round(dist * 0.5) + Math.floor((a.pop + b.pop) / 2);
+    if (rt.intl) g = Math.round(g * 1.5);   // international routes are richer
+    return g;
+  }
+  function cityHasAdjacentEnemy(owner, c, r) {
+    var ns = neighbors(c, r);
+    for (var i = 0; i < ns.length; i++) {
+      var t = tileAt(ns[i][0], ns[i][1]);
+      if (t && t.unit && t.unit.civ !== owner && UNITS[t.unit.type] && !UNITS[t.unit.type].civilian && atWar(owner, t.unit.civ)) return true;
+    }
+    return false;
+  }
+  // A caravan can link to a city it's standing on (own) or adjacent to, that isn't
+  // its home and isn't an enemy's. Returns that city, or null.
+  function eligibleTradeCity(unit) {
+    if (!unit || !unit.homeCity) return null;
+    var spots = neighbors(unit.c, unit.r); spots.push([unit.c, unit.r]);
+    for (var i = 0; i < spots.length; i++) {
+      var t = tileAt(spots[i][0], spots[i][1]);
+      if (!t || !t.city) continue;
+      var city = t.city;
+      if (city.c === unit.homeCity.c && city.r === unit.homeCity.r) continue;   // not the home city
+      if (city.civ !== unit.civ && atWar(unit.civ, city.civ)) continue;          // can't trade with an enemy
+      if (routeExists(unit.civ, unit.homeCity, city)) continue;                  // already linked
+      return city;
+    }
+    return null;
+  }
+  function establishTradeRoute(unit) {
+    var civ = state.civs[unit.civ];
+    var home = unit.homeCity && routeCityAt(unit.homeCity.c, unit.homeCity.r);
+    if (!home || home.civ !== unit.civ) { if (unit.civ === 'player') showToast('This caravan has lost its home city'); return false; }
+    if (tradeRouteCount(unit.civ) >= maxTradeRoutes(civ)) { if (unit.civ === 'player') showToast('Trade route limit reached (' + maxTradeRoutes(civ) + ')'); return false; }
+    var dest = eligibleTradeCity(unit);
+    if (!dest) { if (unit.civ === 'player') showToast('Move the caravan next to another city first'); return false; }
+    var route = { fromC: home.c, fromR: home.r, toC: dest.c, toR: dest.r, owner: unit.civ, intl: dest.civ !== unit.civ, gold: 0, disrupted: false };
+    route.gold = routeBaseGold(route);
+    state.tradeRoutes.push(route);
+    killUnit(unit);   // the caravan is consumed establishing the route
+    recomputeIncome(unit.civ);
+    if (unit.civ === 'player') {
+      sfxBuild();
+      showToast('Trade route to ' + dest.name + '  +' + route.gold + ' gold/turn', 'success');
+      logEvent('Trade route opened: ' + home.name + ' ↔ ' + dest.name + ' (+' + route.gold + ' gold/turn' + (route.intl ? ', international' : '') + ')', 'success');
+      chronicle('Opened a trade route between ' + home.name + ' and ' + dest.name + '.');
+      queueYieldFx(dest.c, dest.r, '⇄ +' + route.gold, '#ffd34d', 'rgba(255,211,77,0.30)');
+    }
+    return true;
+  }
+  // Gold per turn from all of a civ's active (non-disrupted) trade routes.
+  function tradeRouteGold(civId) {
+    return (state.tradeRoutes || []).reduce(function (g, rt) {
+      return g + (rt.owner === civId && !rt.disrupted ? (rt.gold || 0) : 0);
+    }, 0);
+  }
+  // Per-turn maintenance: prune dead routes, refresh gold (cities grow) + disruption.
+  function updateTradeRoutes() {
+    if (!Array.isArray(state.tradeRoutes)) { state.tradeRoutes = []; return; }
+    state.tradeRoutes = state.tradeRoutes.filter(function (rt) {
+      var a = routeCityAt(rt.fromC, rt.fromR), b = routeCityAt(rt.toC, rt.toR);
+      if (!a || !b) return false;                                   // an endpoint city is gone
+      if (a.civ !== rt.owner) return false;                         // owner lost the home city
+      if (b.civ !== rt.owner && atWar(rt.owner, b.civ)) return false; // partner is now an enemy
+      return true;
+    });
+    state.tradeRoutes.forEach(function (rt) {
+      rt.gold = routeBaseGold(rt);
+      rt.disrupted = cityHasAdjacentEnemy(rt.owner, rt.fromC, rt.fromR) || cityHasAdjacentEnemy(rt.owner, rt.toC, rt.toR);
+    });
   }
 
   // Returns the militaristic CS-ally attack bonus for civId (0 if none allied).
@@ -5989,6 +6112,8 @@
             aiPickPromotion(trained.unit);   // auto-applies one promotion (no modal)
             if (city.buildings.heroic_epic) aiPickPromotion(trained.unit);   // Heroic Epic adds a second
           }
+          // A Caravan remembers the city that built it, so it can run a route home.
+          if (trained && trained.unit && UNITS[p].trade) trained.unit.homeCity = { c: city.c, r: city.r };
           if (city.civ === 'player') logEvent(city.name + ' trained ' + UNITS[p].name, 'success');
         }
       }
@@ -7401,6 +7526,7 @@
     // Player end-of-turn
     var pl = state.civs.player;
     state.turnLog = [];                  // fresh log for events from this round
+    updateTradeRoutes();                 // prune dead routes, refresh gold + disruption first
     pl.cities.forEach(function (ct) { cityBombard(ct); });   // cities fire at adjacent enemies
     recomputeIncome('player');
     pl.cities.forEach(processCity);
@@ -8900,6 +9026,20 @@
             closeModal();
             draw();
           }
+        });
+      }
+      // Caravan — establish a trade route to an adjacent city
+      if (def.trade) {
+        var destCity = eligibleTradeCity(u);
+        var atCap = tradeRouteCount('player') >= maxTradeRoutes(civPl);
+        var canTrade = !!destCity && !atCap;
+        actions.push({
+          icon: '⇄',
+          primary: canTrade,
+          title: canTrade ? 'Trade Route to ' + destCity.name : 'Establish Trade Route',
+          sub: atCap ? 'Route limit reached (' + maxTradeRoutes(civPl) + ')' : destCity ? '+' + routeBaseGold({ fromC: u.homeCity.c, fromR: u.homeCity.r, toC: destCity.c, toR: destCity.r, intl: destCity.civ !== 'player' }) + ' gold/turn' + (destCity.civ !== 'player' ? ' · international' : '') : 'Move next to another city first',
+          disabled: !canTrade,
+          do: function () { establishTradeRoute(u); closeModal(); draw(); }
         });
       }
       // Great person activation
@@ -10744,6 +10884,12 @@
     combatRatio: combatRatio,
     moveUnit: moveUnit,
     spawnUnit: spawnUnit,
+    establishTradeRoute: establishTradeRoute,
+    eligibleTradeCity: eligibleTradeCity,
+    tradeRouteGold: tradeRouteGold,
+    updateTradeRoutes: updateTradeRoutes,
+    maxTradeRoutes: maxTradeRoutes,
+    neighbors: neighbors,
     PROMOTIONS: PROMOTIONS,
     factionEff: factionEff,
     factionUnitFor: factionUnitFor,
