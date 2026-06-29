@@ -231,7 +231,8 @@
     bastion:  { name: 'Bastion',    cost: 45, def:  6, tech: 'masonry', faction: 'tellus', replaces: 'walls' },
     market:   { name: 'Market',     cost: 50, gold: 3, tech: 'currency' },
     aqueduct: { name: 'Aqueduct',   cost: 45, food: 3, tech: 'engineering' },
-    temple:   { name: 'Temple',     cost: 40, sci:  3, content: 2, culture: 3, tech: 'theology' },
+    temple:   { name: 'Temple',     cost: 40, sci:  3, content: 2, culture: 3, faith: 2, tech: 'theology' },
+    shrine:   { name: 'Shrine',     cost: 30, faith: 3, culture: 1, tech: 'theology' },
     monument: { name: 'Monument',   cost: 25, culture: 2 },
     sun_spire: { name: 'Sun Spire',  cost: 30, culture: 4, content: 1, faction: 'solaris', replaces: 'monument' },
     university:{name: 'University', cost: 70, sci:  4, tech: 'education' },
@@ -242,7 +243,7 @@
     harbor:       { name: 'Harbor',        cost: 45, food: 2, gold: 2, tech: 'trade', coastal: true },
     observatory:  { name: 'Observatory',   cost: 65, sci:  5, tech: 'astronomy' },
     amphitheater: { name: 'Amphitheater',  cost: 35, culture: 1, content: 2, tech: 'drama' },
-    cathedral:    { name: 'Cathedral',     cost: 60, culture: 2, content: 3, tech: 'acoustics' },
+    cathedral:    { name: 'Cathedral',     cost: 60, culture: 2, content: 3, faith: 2, tech: 'acoustics' },
     museum:       { name: 'Museum',        cost: 70, culture: 4, tech: 'acoustics' },
     broadcast_tower:{ name: 'Broadcast Tower', cost: 95, culture: 6, tech: 'computers' },
     castle:       { name: 'Castle',        cost: 60, def:  6, tech: 'feudalism' },
@@ -458,6 +459,72 @@
     return (i && i.eff && i.eff[key]) || 0;
   }
   function ideologyUnlocked(civ) { return AGES.indexOf(getAge(civ)) >= IDEOLOGY_AGE; }
+
+  // RELIGION — accumulate Faith (Shrine/Temple/Cathedral), found ONE faith with a
+  // chosen Belief, and it spreads city-to-city by pressure each turn. Convert a
+  // majority of the world's cities → a Religious victory.
+  var RELIGION_POOL = [
+    { id: 'solhar',  name: 'Solhar',           icon: '☀' },
+    { id: 'deepway', name: 'The Deep Way',     icon: '🌊' },
+    { id: 'starlit', name: 'Starlit Communion', icon: '✦' },
+    { id: 'emberite',name: 'The Ember Creed',  icon: '🔥' },
+    { id: 'verdant', name: 'Verdant Path',     icon: '🍃' },
+    { id: 'ironvow', name: 'The Iron Vow',     icon: '⚔' }
+  ];
+  // Beliefs — tithe is founder-side (gold per following city anywhere); the rest
+  // boost every city that FOLLOWS the religion (folded by religionCityEff).
+  var BELIEFS = {
+    tithe:       { name: 'Tithe',       desc: '+1 gold to you per city that follows your faith', founderGold: 1 },
+    piety:       { name: 'Piety',       desc: '+1 culture in every city that follows your faith', cityEff: { culture: 1 } },
+    scholarship: { name: 'Scholarship', desc: '+1 science in every city that follows your faith', cityEff: { sci: 1 } },
+    fertility:   { name: 'Fertility',   desc: '+1 food in every city that follows your faith',    cityEff: { food: 1 } }
+  };
+  var BELIEF_ORDER = ['tithe', 'piety', 'scholarship', 'fertility'];
+  var RELIGION_FOUND_COST = 60;   // faith banked before a faith can be founded
+  var RELIGION_RANGE = 5;         // hexes a holy/religious city radiates pressure
+  var RELIGION_VICTORY_FRAC = 0.6; // share of all cities needed for a Religious win
+
+  // Faith generated per turn by a civ's holy buildings.
+  function faithPerTurn(civ) {
+    var f = 0;
+    civ.cities.forEach(function (ct) {
+      var b = ct.buildings || {};
+      if (b.shrine) f += BUILDINGS.shrine.faith;
+      if (b.temple) f += BUILDINGS.temple.faith;
+      if (b.cathedral) f += BUILDINGS.cathedral.faith;
+    });
+    return f;
+  }
+  function canFoundReligion(civ) {
+    return !civ.religionId && (civ.faith || 0) >= RELIGION_FOUND_COST && foundedReligionCount() < RELIGION_POOL.length;
+  }
+  function foundedReligionCount() { return Object.keys(state.religions || {}).length; }
+  function religionDef(id) { return id && state.religions ? state.religions[id] : null; }
+  // The belief-yield a FOLLOWING city earns (piety/scholarship/fertility).
+  function religionCityEff(city, key) {
+    var rd = city && city.religion ? religionDef(city.religion) : null;
+    if (!rd) return 0;
+    var bel = BELIEFS[rd.belief];
+    return (bel && bel.cityEff && bel.cityEff[key]) || 0;
+  }
+  // Cities anywhere that follow a given religion.
+  function religionFollowerCount(id) {
+    if (!id) return 0;
+    var n = 0;
+    CIV_SIDES.concat(['cs']).forEach(function (cid) {
+      var c = state.civs[cid];
+      if (c && c.cities) c.cities.forEach(function (ct) { if (ct.religion === id) n++; });
+    });
+    return n;
+  }
+  function totalCityCount() {
+    var n = 0;
+    CIV_SIDES.concat(['cs']).forEach(function (cid) {
+      var c = state.civs[cid];
+      if (c && c.cities) n += c.cities.length;
+    });
+    return n;
+  }
 
   // EDICTS — a fast, reactive lever (vs. governments, which are a slow identity
   // pick). Exactly one active at a time; it runs for a fixed duration then
@@ -1938,6 +2005,7 @@
       turnLog: [],
       wondersBuilt: {},                  // wonder id -> civ id who built it
       tradeRoutes: [],                   // {fromC,fromR,toC,toR,owner,intl,gold,disrupted}
+      religions: {},                     // religion id -> {name,icon,belief,founder,holyC,holyR}
       stats: { unitsKilled: 0, unitsLost: 0, barbsDefeated: 0 },
       diplomacy: defaultDiplomacy(),     // every civ pair at war; city-states at peace
       pacts: {},                         // dipKey -> true for active Defensive Pacts
@@ -2141,6 +2209,8 @@
       spaceParts: 0,              // Space Race progress (parts assembled)
       nationals: {},              // national wonders built (one per empire)
       ideology: null,             // late-game Ideology pick (Freedom/Order/Autocracy)
+      faith: 0,                   // banked faith toward founding a religion
+      religionId: null,           // the religion this civ founded (or null)
       // Dynamic grievance toward each other civ id (0 = cordial, higher = angrier).
       // Only AIs act on it; the player's map is unused.
       tension: {},
@@ -2251,6 +2321,7 @@
         victory: state.victory,
         wondersBuilt: state.wondersBuilt,
         tradeRoutes: state.tradeRoutes || [],
+        religions: state.religions || {},
         stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
         diplomacy: state.diplomacy,
         pacts: state.pacts || {},
@@ -2364,6 +2435,7 @@
       state.turnLog = state.turnLog || [];
       state.wondersBuilt = state.wondersBuilt || {};
       if (!Array.isArray(state.tradeRoutes)) state.tradeRoutes = [];
+      if (!state.religions || typeof state.religions !== 'object') state.religions = {};
       state.stats = state.stats || { unitsKilled: 0, unitsLost: 0 };
       if (state.stats.barbsDefeated === undefined) state.stats.barbsDefeated = 0;
       // Backfill quests onto city-states from older saves
@@ -2449,6 +2521,8 @@
         if (typeof cv.spaceParts !== 'number') cv.spaceParts = 0;
         if (!cv.nationals || typeof cv.nationals !== 'object') cv.nationals = {};
         if (typeof cv.ideology !== 'string') cv.ideology = null;
+        if (typeof cv.faith !== 'number') cv.faith = 0;
+        if (typeof cv.religionId !== 'string') cv.religionId = null;
       });
       // Backfill AI agendas — old saves get a distinct random one
       (function () {
@@ -5327,6 +5401,7 @@
     if (gaCiv && gaCiv.goldenAgeTurns > 0) { food += GOLDEN_AGE_YIELD; prod += GOLDEN_AGE_YIELD; gold += GOLDEN_AGE_YIELD; }
     // Adopted civics — Agrarianism / Environmentalism +food; Ideology +food per city
     if (gaCiv) food += civicSum(gaCiv, 'perCityFood') + ideologyEff(gaCiv, 'perCityFood');
+    food += religionCityEff(city, 'food');   // Fertility belief
 
     // Power Plant — multiplies this city's accumulated production (positive only)
     if (city.buildings.power_plant && prod > 0) prod = Math.round(prod * (1 + BUILDINGS.power_plant.prodMultiplier));
@@ -5354,6 +5429,7 @@
     if (civ && civ.goldenAgeTurns > 0) sci += GOLDEN_AGE_YIELD;
     // Adopted civics (Enlightenment) — +science per city
     if (civ) sci += civicSum(civ, 'perCitySci');
+    sci += religionCityEff(city, 'sci');   // Scholarship belief
     // Adjacency bonuses for science buildings
     sci += buildingAdjacency(city).sci;
     // Per-city wonder science: Library of Alexandria + University of Sankore
@@ -5407,6 +5483,7 @@
     // Adopted civics that boost culture in every city
     var civ = state.civs[civId];
     if (civ) c += civicSum(civ, 'perCityCulture') + ideologyEff(civ, 'perCityCulture');
+    c += religionCityEff(ct, 'culture');   // Piety belief
     return c;
   }
 
@@ -5459,6 +5536,11 @@
     gpt += (civicSum(civ, 'perCityGold') + ideologyEff(civ, 'perCityGold')) * civ.cities.length;
     spt += (civicSum(civ, 'perCitySci') + ideologyEff(civ, 'perCitySci')) * civ.cities.length;
     gpt += tradeRouteGold(civId);   // peaceful income from active trade routes
+    // Tithe belief — the founder earns gold per city worldwide following their faith.
+    if (civ.religionId) {
+      var rdef = religionDef(civ.religionId);
+      if (rdef && BELIEFS[rdef.belief] && BELIEFS[rdef.belief].founderGold) gpt += BELIEFS[rdef.belief].founderGold * religionFollowerCount(civ.religionId);
+    }
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
   }
@@ -7273,6 +7355,120 @@
     setIdeology(civ, pick);
   }
 
+  // ---- RELIGION mechanics ----
+  // Found a religion in a civ's best city, spending its banked faith.
+  function foundReligion(civ, religionId, belief) {
+    if (!civ || !canFoundReligion(civ) || !religionId || state.religions[religionId] || !BELIEFS[belief]) return false;
+    var poolDef = null;
+    for (var i = 0; i < RELIGION_POOL.length; i++) if (RELIGION_POOL[i].id === religionId) poolDef = RELIGION_POOL[i];
+    if (!poolDef) return false;
+    // Holy city = the civ's highest-pop city (its religious heart).
+    var holy = civ.cities[0];
+    civ.cities.forEach(function (ct) { if (ct.pop > (holy ? holy.pop : 0)) holy = ct; });
+    if (!holy) return false;
+    state.religions[religionId] = { id: religionId, name: poolDef.name, icon: poolDef.icon, belief: belief, founder: civ.id, holyC: holy.c, holyR: holy.r };
+    civ.religionId = religionId;
+    civ.faith = Math.max(0, (civ.faith || 0) - RELIGION_FOUND_COST);
+    holy.religion = religionId;
+    holy.holyCity = true;
+    recomputeIncome(civ.id);
+    if (civ.id === 'player') {
+      sfxWonder();
+      showToast('Founded ' + poolDef.name + '!', 'success');
+      logEvent('Founded ' + poolDef.name + ' in ' + holy.name + ' — belief: ' + BELIEFS[belief].name, 'success');
+      chronicle('Founded the faith of ' + poolDef.name + ' in ' + holy.name + '.');
+      queueYieldFx(holy.c, holy.r, poolDef.icon + ' ' + poolDef.name, '#ffd34d', 'rgba(255,211,77,0.35)');
+    } else {
+      logEvent((CIVS[civ.id] ? CIVS[civ.id].name : civ.id) + ' founded ' + poolDef.name, 'info');
+    }
+    return true;
+  }
+  // AI founds a faith (belief by personality) the moment it can afford one.
+  function aiFoundReligion(civ) {
+    if (!canFoundReligion(civ)) return;
+    var used = {}; for (var k in state.religions) used[state.religions[k].id] = 1;
+    var pick = null;
+    for (var i = 0; i < RELIGION_POOL.length; i++) if (!used[RELIGION_POOL[i].id]) { pick = RELIGION_POOL[i].id; break; }
+    if (!pick) return;
+    var belief = { scientific: 'scholarship', economic: 'tithe', peaceful: 'piety' }[civ.personality] || 'fertility';
+    foundReligion(civ, pick, belief);
+  }
+  // Each turn, founded religions radiate pressure to nearby cities; every city
+  // adopts whichever faith presses hardest (holy cities are locked; the current
+  // faith gets a small incumbency edge to damp border flip-flop).
+  function spreadReligion() {
+    if (!state.religions || !foundedReligionCount()) return;
+    var holy = {};   // religionId -> [ {c,r} ] holy-city coords
+    var sources = []; // every city that follows a religion is a pressure source
+    CIV_SIDES.concat(['cs']).forEach(function (cid) {
+      var c = state.civs[cid];
+      if (!c || !c.cities) return;
+      c.cities.forEach(function (ct) { if (ct.religion) sources.push(ct); });
+    });
+    if (!sources.length) return;
+    CIV_SIDES.concat(['cs']).forEach(function (cid) {
+      var c = state.civs[cid];
+      if (!c || !c.cities) return;
+      c.cities.forEach(function (ct) {
+        if (ct.holyCity) return;                 // holy cities never convert
+        var pressure = {};
+        sources.forEach(function (src) {
+          if (src === ct) return;
+          var d = hexDist([ct.c, ct.r], [src.c, src.r]);
+          if (d > RELIGION_RANGE) return;
+          var p = (src.holyCity ? 2 : 1) / (1 + d);
+          pressure[src.religion] = (pressure[src.religion] || 0) + p;
+        });
+        if (ct.religion) pressure[ct.religion] = (pressure[ct.religion] || 0) * 1.25 + 0.15;  // incumbency
+        var best = ct.religion || null, bestP = ct.religion ? pressure[ct.religion] : 0;
+        for (var rid in pressure) { if (pressure[rid] > bestP) { bestP = pressure[rid]; best = rid; } }
+        if (best && best !== ct.religion) ct.religion = best;
+      });
+    });
+  }
+  function checkReligionVictory() {
+    if (state.victory) return;
+    var total = totalCityCount();
+    if (total < 3) return;   // not meaningful on a tiny early map
+    CIV_SIDES.forEach(function (cid) {
+      var c = state.civs[cid];
+      if (!c || !c.religionId) return;
+      if (religionFollowerCount(c.religionId) / total >= RELIGION_VICTORY_FRAC) declareVictory(cid, 'religion');
+    });
+  }
+  // Religion picker — choose a faith name + a belief, spending banked faith.
+  function openReligion() {
+    var civ = state.civs.player;
+    var actions = [];
+    if (civ.religionId) {
+      var rd = religionDef(civ.religionId);
+      var followers = religionFollowerCount(civ.religionId), total = totalCityCount();
+      actions.push({ header: true, icon: rd ? rd.icon : '☧', title: rd ? rd.name : 'Your Faith', sub: 'Belief: ' + (BELIEFS[rd.belief] ? BELIEFS[rd.belief].name : '?') + ' · ' + followers + '/' + total + ' cities follow' });
+      actions.push({ icon: '✦', title: 'Faith per turn', sub: '+' + faithPerTurn(civ) + ' faith · ' + Math.round((civ.faith || 0)) + ' banked', disabled: true, do: function () {} });
+    } else if (canFoundReligion(civ)) {
+      actions.push({ header: true, icon: '☧', title: 'Found a Religion', sub: 'Pick a faith, then a belief (' + Math.round(civ.faith || 0) + '/' + RELIGION_FOUND_COST + ' faith)' });
+      var used = {}; for (var k in state.religions) used[k] = 1;
+      RELIGION_POOL.forEach(function (rel) {
+        if (used[rel.id]) return;
+        actions.push({ icon: rel.icon, title: rel.name, sub: 'Found this faith', do: function () { openBeliefPicker(rel.id); } });
+      });
+    } else {
+      actions.push({ header: true, icon: '☧', title: 'Faith', sub: foundedReligionCount() >= RELIGION_POOL.length ? 'All religions have been founded' : 'Build Shrines & Temples — ' + Math.round(civ.faith || 0) + '/' + RELIGION_FOUND_COST + ' faith (+' + faithPerTurn(civ) + '/turn)' });
+    }
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Religion');
+  }
+  function openBeliefPicker(religionId) {
+    var actions = [];
+    var rel = null; for (var i = 0; i < RELIGION_POOL.length; i++) if (RELIGION_POOL[i].id === religionId) rel = RELIGION_POOL[i];
+    actions.push({ header: true, icon: rel ? rel.icon : '☧', title: rel ? rel.name : 'Belief', sub: 'Choose this faith’s guiding belief' });
+    BELIEF_ORDER.forEach(function (b) {
+      actions.push({ icon: '✦', title: BELIEFS[b].name, sub: BELIEFS[b].desc, do: function () { if (foundReligion(state.civs.player, religionId, b)) { updateHud(); save(); } closeModal(); draw(); } });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); openReligion(); } });
+    renderDiplomacyActions(actions, 'Belief');
+  }
+
   // Edict picker — a fast reactive stance with a single sharp tradeoff.
   function openEdicts() {
     var civ = state.civs.player;
@@ -7486,6 +7682,11 @@
       { kind: 'economic',   frac: econ,                               label: Math.round(civ.gold) + '/' + ECONOMIC_VICTORY_GOLD + ' gold' },
       { kind: 'space',      frac: (civ.spaceParts || 0) / SPACE_PARTS_NEEDED, label: (civ.spaceParts || 0) + '/' + SPACE_PARTS_NEEDED + ' spaceship' }
     ];
+    if (civ.religionId) {
+      var relTot = totalCityCount();
+      var relFol = religionFollowerCount(civ.religionId);
+      paths.push({ kind: 'religion', frac: relTot ? (relFol / relTot) / RELIGION_VICTORY_FRAC : 0, label: relFol + '/' + relTot + ' faithful' });
+    }
     paths.sort(function (a, b) { return b.frac - a.frac; });
     return paths[0];
   }
@@ -7538,6 +7739,7 @@
     pl.culPerTurn = plCpt;                              // drives the Civics track + HUD
     accrueEraPoints(pl, true);                          // bank Era Points / fire Golden Age
     progressCivic(pl);                                  // advance the adopted civic
+    pl.faith = (pl.faith || 0) + faithPerTurn(pl);      // bank faith toward founding / spread
     checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
@@ -7575,6 +7777,8 @@
         aiPickGovernment(c);
         aiPickEdict(c);
         aiPickIdeology(c);   // and an Ideology once it reaches the Modern age
+        c.faith = (c.faith || 0) + faithPerTurn(c);
+        aiFoundReligion(c);  // and founds a faith once it can afford one
       });
 
       // Decay general bonuses + tick down government anarchy for all civs
@@ -7609,6 +7813,9 @@
         }
       }
 
+      // Religions radiate to nearby cities, then check for a Religious win.
+      spreadReligion();
+      checkReligionVictory();
       // Culture + economic victory checks (every civ, every turn)
       checkProgressVictories();
       checkVictoryRaceAlerts();   // warn when someone nears the finish line
@@ -9193,6 +9400,18 @@
       });
     }
 
+    // Religion — shown once a civ can generate faith (has theology / a shrine path)
+    if (civPl.religionId || canFoundReligion(civPl) || faithPerTurn(civPl) > 0 || (civPl.faith || 0) > 0) {
+      var rdp = religionDef(civPl.religionId);
+      actions.push({
+        icon: rdp ? rdp.icon : '☧',
+        title: 'Religion',
+        sub: rdp ? rdp.name + ' · ' + religionFollowerCount(civPl.religionId) + '/' + totalCityCount() + ' cities' : (canFoundReligion(civPl) ? 'Found a religion now!' : 'Faith ' + Math.round(civPl.faith || 0) + '/' + RELIGION_FOUND_COST),
+        primary: canFoundReligion(civPl),
+        do: function () { closeModal(); openReligion(); }
+      });
+    }
+
     // Tile yield overlay toggle
     actions.push({ icon: '⬡', title: showYieldOverlay ? 'Hide Yields' : 'Show Yields', sub: 'Food / prod / gold per tile', do: function () { showYieldOverlay = !showYieldOverlay; showToast(showYieldOverlay ? 'Yields ON' : 'Yields OFF'); closeModal(); draw(); } });
 
@@ -9268,7 +9487,9 @@
       if (u >= thr) { label = 'REVOLT'; col = '#ff5a5a'; }
       else if (u >= thr * 0.5) { label = 'Restless ' + u + '/' + thr; col = '#ffb14d'; }
       else { label = 'Content'; col = '#7bdc8a'; }
-      moodEl.textContent = label + (delta > 0 ? ' ▲' : delta < 0 ? ' ▼' : '');
+      var relStr = '';
+      if (city.religion) { var crd = religionDef(city.religion); if (crd) relStr = '   ' + crd.icon + ' ' + crd.name + (city.holyCity ? ' ✦' : ''); }
+      moodEl.textContent = label + (delta > 0 ? ' ▲' : delta < 0 ? ' ▼' : '') + relStr;
       moodEl.style.color = col;
     }
 
@@ -9668,14 +9889,16 @@
       science:    'You researched every technology.',
       culture:    'You adopted every civic — a Cultural Ascendancy.',
       economic:   'You held ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.',
-      space:      'You won the Space Race — your ship reaches the stars first.'
+      space:      'You won the Space Race — your ship reaches the stars first.',
+      religion:   'Your faith swept the world — a Religious victory.'
     };
     var VICTORY_MSG_LOSS = {
       domination: ' captured all rival capitals.',
       science:    ' completed all research first.',
       culture:    ' achieved a Cultural Ascendancy first.',
       economic:   ' amassed ' + ECONOMIC_VICTORY_GOLD + '+ gold for ' + ECONOMIC_VICTORY_TURNS + ' turns.',
-      space:      ' won the Space Race.'
+      space:      ' won the Space Race.',
+      religion:   ' converted the world to their faith.'
     };
     if (winner === 'player') {
       title.textContent = 'Victory';
@@ -10922,7 +11145,19 @@
     ideologyUnlocked: ideologyUnlocked,
     setIdeology: setIdeology,
     openIdeology: openIdeology,
-    nationalAvailable: nationalAvailable
+    nationalAvailable: nationalAvailable,
+    foundReligion: foundReligion,
+    canFoundReligion: canFoundReligion,
+    spreadReligion: spreadReligion,
+    religionFollowerCount: religionFollowerCount,
+    faithPerTurn: faithPerTurn,
+    religionCityEff: religionCityEff,
+    checkReligionVictory: checkReligionVictory,
+    totalCityCount: totalCityCount,
+    openReligion: openReligion,
+    RELIGION_FOUND_COST: RELIGION_FOUND_COST,
+    RELIGION_POOL: RELIGION_POOL,
+    BELIEFS: BELIEFS
   };
 
   if (document.readyState === 'loading') {
