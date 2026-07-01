@@ -2336,27 +2336,63 @@
         lastEventTurn: state.lastEventTurn || 0
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
-      scheduleCloudPush();
+      // NOTE: no cloud push here — local saves are free (no KV cap); cloud writes
+      // are driven by the debounced safety net + hide/close flush + manual Upload
+      // (see scheduleCloudPush / cloudPush / init).
     } catch (e) { /* ignore quota */ }
   }
 
   // ---- Cloud save sync (optional; see config.js / cloud.js) --------------
+  /* cloud-write-reduce-v1 — dedup + throttle + backoff so we don't blow the
+     Cloudflare KV free-tier 1,000-writes/day cap. Local saves are free/uncapped;
+     cloud writes happen only on: a debounced push after a real change (≥60s
+     apart), a hide/pagehide flush, a 5-min safety net, or an explicit Upload. */
   var cloudPushTimer = 0, cloudPullPromise = null;
+  var _cloudSig = null, _lastPushAt = 0, _pushBackoff = 0;
 
-  // Debounced upload: compress the current save into a tiny { t, z } envelope
-  // and PUT it. Debouncing means rapid saves only send the final state.
+  // Signature of a save with the volatile sync timestamp zeroed, so unchanged
+  // state (e.g. opening a menu) doesn't look like a change. Only the top-level
+  // `t` is stripped — nested per-entry timestamps (log, etc.) are real state.
+  function sigOf(raw) { return raw ? raw.replace(/"t"\s*:\s*\d+/, '"t":0') : null; }
+
+  // Debounced upload — coalesces rapid saves into one push. The cloud doesn't
+  // need second-freshness; the throttle + dedup inside cloudPush do the real work.
   function scheduleCloudPush() {
     if (!window.__CLOUD || !window.__CLOUD.enabled) return;
     clearTimeout(cloudPushTimer);
-    cloudPushTimer = setTimeout(function () {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      var t = Date.now();
-      try { t = JSON.parse(raw).t || t; } catch (e) {}
-      encodeSavePayload(raw).then(function (z) {
-        window.__CLOUD.put({ t: t, z: z });
-      }).catch(function () {});
-    }, 2500);
+    cloudPushTimer = setTimeout(function () { cloudPush(false, false); }, 4000);
+  }
+
+  // Push the local save to the cloud. Returns Promise<bool> (true = accepted or
+  // already synced). Rules: skip if content unchanged since the last *successful*
+  // push (even on flush — covers mobile screen-lock storms); throttle non-flush
+  // pushes to >=60s; back off ~60s after a failed write (explicit punches through);
+  // mark synced only after the worker accepts the write so failures retry.
+  function cloudPush(flush, explicit) {
+    if (!window.__CLOUD || !window.__CLOUD.enabled) return Promise.resolve(false);
+    clearTimeout(cloudPushTimer);
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return Promise.resolve(false);
+    var sig = sigOf(raw);
+    if (sig === _cloudSig) return Promise.resolve(true); // unchanged — no write, even on flush
+    var now = Date.now();
+    if (!explicit && _pushBackoff && now < _pushBackoff) {            // cool down after a failed write
+      if (!flush) cloudPushTimer = setTimeout(function () { cloudPush(false, false); }, _pushBackoff - now + 500);
+      return Promise.resolve(false);
+    }
+    if (!flush && _lastPushAt && now - _lastPushAt < 60000) {         // throttle non-flush to 1/min
+      cloudPushTimer = setTimeout(function () { cloudPush(false, false); }, 60000 - (now - _lastPushAt) + 500);
+      return Promise.resolve(false);
+    }
+    var t = now; try { t = JSON.parse(raw).t || t; } catch (e) {}
+    _lastPushAt = now;
+    return encodeSavePayload(raw).then(function (z) {
+      return window.__CLOUD.put({ t: t, z: z }).then(function (ok) {
+        if (ok) { _cloudSig = sig; _pushBackoff = 0; }   // synced only on success
+        else _pushBackoff = Date.now() + 60000;           // backoff on failure
+        return ok;
+      });
+    }).catch(function () { _pushBackoff = Date.now() + 60000; return false; });
   }
 
   // Adopt the remote save iff it's newer-or-equal to the local one (last-write-wins).
@@ -2380,11 +2416,8 @@
   // Explicit "Upload this device's game now" — force-push the local save under
   // the current sync code (ignores the debounce). Returns Promise<bool>.
   function cloudPushNow() {
-    if (!window.__CLOUD || !window.__CLOUD.enabled) return Promise.resolve(false);
-    var raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return Promise.resolve(false);
-    var t = Date.now(); try { t = JSON.parse(raw).t || t; } catch (e) {}
-    return encodeSavePayload(raw).then(function (z) { return window.__CLOUD.put({ t: t, z: z }); }).catch(function () { return false; });
+    // Explicit "Upload now" — flush + explicit punch through throttle/backoff.
+    return cloudPush(true, true);
   }
   // Explicit "Download the cloud game now" — force-overwrite the local save with
   // the remote one regardless of timestamps (the player asked for it).
@@ -2407,7 +2440,11 @@
     cloudPullPromise = window.__CLOUD.pull().then(function (remote) {
       if (!remote) return;
       return mergeRemoteSave(remote).then(function (adopted) {
-        if (adopted) { setupTitleButtons(); showToast('Cloud save synced', 'success'); }
+        if (adopted) {
+          var raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) _cloudSig = sigOf(raw); // baseline so we don't echo the adopted save back
+          setupTitleButtons(); showToast('Cloud save synced', 'success');
+        }
       });
     }).catch(function () {});
   }
@@ -10851,6 +10888,114 @@
   });
 
   // =====================================================================
+  // GAMEPAD (Bluetooth / USB controller)
+  // =====================================================================
+  // Translates a Standard-mapping gamepad into the SAME synthetic key events
+  // the keyboard handler already processes, so every existing rule — combo
+  // detection, modal focus, busy-locking, victory checks — applies to the
+  // controller unchanged. Runs alongside touch, mouse, keyboard, and the
+  // Neural Band; no other input method is disabled.
+  var gpActive = false;            // is the poll loop running?
+  var gpPrev = {};                 // control id -> was-pressed last frame
+  var gpRepeatAt = {};             // direction id -> next auto-repeat time (ms)
+  var GP_DEADZONE = 0.5;           // analog-stick threshold to count as a press
+  var GP_REPEAT_DELAY = 380;       // ms a direction is held before it repeats
+  var GP_REPEAT_RATE = 110;        // ms between repeats while still held
+
+  // Standard-mapping button index -> the key its press emits. The d-pad and
+  // left stick are handled separately (they auto-repeat); these fire once per
+  // press, mirroring a single keystroke.
+  var GP_BUTTON_KEYS = {
+    0: 'Enter',    // A — confirm / act on the tile under the cursor
+    1: 'Escape',   // B — cancel selection / close menu / cycle to next unit
+    2: 'm',        // X — toggle cursor <-> scroll mode
+    3: 't',        // Y — open the research menu
+    4: 'z',        // LB — cycle zoom (FAR / NORMAL / CLOSE)
+    5: 'z',        // RB — cycle zoom
+    8: 'Escape',   // Back / View — cancel
+    9: 'e'         // Start / Menu — end turn
+  };
+
+  function dispatchGamepadKey(key) {
+    // Reuse the keyboard path verbatim — same code handles all five inputs.
+    onKeyDown({ key: key, preventDefault: function () {} });
+  }
+
+  function gpButtonDown(gp, i) {
+    var b = gp.buttons[i];
+    if (!b) return false;
+    return typeof b === 'object' ? (b.pressed || b.value > 0.5) : b > 0.5;
+  }
+
+  // One directional "virtual button" per arrow, fed by the d-pad OR the left
+  // stick. The dominant stick axis wins so a diagonal push never fires two
+  // arrows at once (grid movement is one tile at a time).
+  function gpDirections(gp) {
+    var ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
+    var horiz = Math.abs(ax) >= Math.abs(ay);
+    return {
+      ArrowUp:    gpButtonDown(gp, 12) || (!horiz && ay < -GP_DEADZONE),
+      ArrowDown:  gpButtonDown(gp, 13) || (!horiz && ay >  GP_DEADZONE),
+      ArrowLeft:  gpButtonDown(gp, 14) || ( horiz && ax < -GP_DEADZONE),
+      ArrowRight: gpButtonDown(gp, 15) || ( horiz && ax >  GP_DEADZONE)
+    };
+  }
+
+  function getActiveGamepad() {
+    if (!navigator.getGamepads) return null;
+    var pads = navigator.getGamepads();
+    for (var i = 0; i < pads.length; i++) if (pads[i] && pads[i].connected) return pads[i];
+    return null;
+  }
+
+  function pollGamepad() {
+    if (!gpActive) return;
+    var gp = getActiveGamepad();
+    if (gp) {
+      var now = Date.now();
+      // Directions: fire on the initial press, then auto-repeat while held so
+      // holding a direction walks the cursor / scrolls a menu, like a keyboard.
+      var dirs = gpDirections(gp);
+      for (var d in dirs) {
+        if (dirs[d]) {
+          if (!gpPrev[d]) { dispatchGamepadKey(d); gpRepeatAt[d] = now + GP_REPEAT_DELAY; }
+          else if (now >= gpRepeatAt[d]) { dispatchGamepadKey(d); gpRepeatAt[d] = now + GP_REPEAT_RATE; }
+        }
+        gpPrev[d] = dirs[d];
+      }
+      // Action buttons: edge-triggered, one keystroke per press (no repeat).
+      for (var idx in GP_BUTTON_KEYS) {
+        var pressed = gpButtonDown(gp, +idx);
+        var id = 'b' + idx;
+        if (pressed && !gpPrev[id]) dispatchGamepadKey(GP_BUTTON_KEYS[idx]);
+        gpPrev[id] = pressed;
+      }
+    }
+    requestAnimationFrame(pollGamepad);
+  }
+
+  function startGamepadLoop() {
+    if (gpActive) return;
+    gpActive = true;
+    requestAnimationFrame(pollGamepad);
+  }
+
+  function initGamepad() {
+    if (!('getGamepads' in navigator)) return;   // unsupported browser — no-op
+    window.addEventListener('gamepadconnected', function () {
+      showToast('🎮 Controller connected');
+      startGamepadLoop();
+    });
+    window.addEventListener('gamepaddisconnected', function () {
+      // Stop polling only once the last pad is gone; reset edge/repeat state.
+      if (!getActiveGamepad()) { gpActive = false; gpPrev = {}; gpRepeatAt = {}; }
+    });
+    // Some browsers don't emit "connected" for a pad paired before load until
+    // its first input — start polling now if one is already visible.
+    if (getActiveGamepad()) startGamepadLoop();
+  }
+
+  // =====================================================================
   // INIT
   // =====================================================================
   function init() {
@@ -10870,6 +11015,7 @@
     // device viewport IS 600x600 so this is always 1.0.
     updateAppScale();
     window.addEventListener('resize', updateAppScale);
+    initGamepad();            // Bluetooth / USB controller — translated to keys
     // Swallow the synthetic "ghost click" a touch tap fires ~300ms later: if a
     // click lands near a recent canvas tap, it's the ghost (it would otherwise
     // hit a menu row that opened under the finger) — eat it. Real menu taps are
@@ -10882,6 +11028,13 @@
       if (dt < 800 && near) { e.stopPropagation(); e.preventDefault(); }
     }, true);
     cloudInit();              // pull any newer cloud save before Continue
+    // Cloud writes are decoupled from the (free, local) saves: a 5-min safety net
+    // while playing, plus an immediate content-deduped flush when the tab is hidden
+    // or unloaded — so a mobile browser hard-killing the tab still syncs, without
+    // writing on every action (KV free tier is only 1,000 writes/day).
+    setInterval(function () { cloudPush(false, false); }, 300000);
+    document.addEventListener('visibilitychange', function () { if (document.hidden) { save(); cloudPush(true, false); } });
+    window.addEventListener('pagehide', function () { save(); cloudPush(true, false); });
     setupTitleButtons();
     showScreen('title');
   }
