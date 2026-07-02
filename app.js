@@ -124,7 +124,9 @@
     great_prophet:   { name: 'Great Prophet',   cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '☧', tech: null, civilian: true, great: true, prophet: true },
     // Religious units — bought with Faith (not production), spread / defend a faith.
     missionary:      { name: 'Missionary',      cost: 0, hp: 6, atk: 0, def: 1, move: 3, glyph: '☩', tech: null, civilian: true, faithUnit: true },
-    inquisitor:      { name: 'Inquisitor',      cost: 0, hp: 6, atk: 0, def: 2, move: 2, glyph: '☨', tech: null, civilian: true, faithUnit: true, purge: true }
+    inquisitor:      { name: 'Inquisitor',      cost: 0, hp: 6, atk: 0, def: 2, move: 2, glyph: '☨', tech: null, civilian: true, faithUnit: true, purge: true },
+    // Living history — excavates dig sites for culture + era points
+    archaeologist:   { name: 'Archaeologist',   cost: 45, hp: 8, atk: 0, def: 1, move: 2, glyph: '⚱', tech: 'astronomy', civilian: true, dig: true }
   };
 
   // Unit upgrade paths: type -> { to, tech, cost }
@@ -1685,6 +1687,15 @@
       logEvent('War with ' + enemy + '!', 'error');
       chronicle((a === 'player' ? 'Declared war on ' : 'War declared by ') + leaderOf(enemyId).name + ' of ' + enemy + '.');
     }
+    // Vassals follow their overlord to war — and an attack on a vassal brings
+    // in its overlord (plus the overlord's other vassals, transitively-ish).
+    if (state.vassals) {
+      for (var vk in state.vassals) {
+        var lord = state.vassals[vk];
+        if (lord === a && vk !== b && !atWar(vk, b)) state.diplomacy[dipKey(vk, b)] = 'war';
+        if (vk === b && lord !== a && !atWar(lord, a)) state.diplomacy[dipKey(lord, a)] = 'war';
+      }
+    }
   }
 
   // =====================================================================
@@ -2291,6 +2302,10 @@
       stats: { unitsKilled: 0, unitsLost: 0, barbsDefeated: 0 },
       diplomacy: defaultDiplomacy(),     // every civ pair at war; city-states at peace
       pacts: {},                         // dipKey -> true for active Defensive Pacts
+      vassals: {},                       // vassal civ id -> overlord civ id
+      digSites: [],                      // living history: {c,r,label,turn} ruins
+      eraQuestsDone: {},                 // era quest id -> true once paid out
+      barbBribe: null,                   // { target, turns } — clans hunt this civ
       pendingPeace: null,                // { from: civId } when AI offers peace
       freetech: false                     // great scientist free tech pick
     };
@@ -2466,6 +2481,7 @@
       researchQueue: [],            // player-set research plan (prereq chain)
       greatPoints: { culture: 0, military: 0, faith: 0 },
       greatPeopleSpawned: 0,
+      spyOps: [],          // espionage missions in flight (see SPY_MISSIONS)
       generalBonus: null,
       economicCountdown: 0,
       // Government / Civics + Golden Ages (Modern-era strategic systems)
@@ -2608,6 +2624,10 @@
         stats: state.stats || { unitsKilled: 0, unitsLost: 0 },
         diplomacy: state.diplomacy,
         pacts: state.pacts || {},
+        vassals: state.vassals || {},
+        digSites: state.digSites || [],
+        eraQuestsDone: state.eraQuestsDone || {},
+        barbBribe: state.barbBribe || null,
         pendingPeace: state.pendingPeace || null,
         pendingDilemma: state.pendingDilemma || null,
         pendingCrisis: state.pendingCrisis || null,
@@ -2819,6 +2839,10 @@
       setCivSides(ALL_AI_IDS.filter(function (id) { return state.civs[id]; }));
       state.diplomacy = Object.assign(defaultDiplomacy(), state.diplomacy || {});
       if (!state.pacts || typeof state.pacts !== 'object') state.pacts = {};
+      if (!state.vassals || typeof state.vassals !== 'object') state.vassals = {};
+      if (!Array.isArray(state.digSites)) state.digSites = [];
+      if (!state.eraQuestsDone || typeof state.eraQuestsDone !== 'object') state.eraQuestsDone = {};
+      if (state.barbBribe === undefined) state.barbBribe = null;
       // Re-apply factions so CIVS colors/names match the saved game
       CIV_SIDES.forEach(function (id) {
         var fid = state.civs[id].faction || 'solaris';
@@ -2866,6 +2890,7 @@
         if (typeof cv.faith !== 'number') cv.faith = 0;
         if (typeof cv.religionId !== 'string') cv.religionId = null;
         if (typeof cv.pantheon !== 'string') cv.pantheon = null;
+        if (!Array.isArray(cv.spyOps)) cv.spyOps = [];
       });
       // Backfill AI agendas — old saves get a distinct random one
       (function () {
@@ -3797,12 +3822,136 @@
   }
 
   function drawImprovement(cx, cy, size, kind) {
+    // At FAR zoom the detailed art is smaller than its own line weights and
+    // reads as noise — swap to compact, high-contrast badges that stay legible.
+    if (size <= 30) { drawImprovementCompact(cx, cy, size, kind); return; }
     if (kind === 'farm') drawFarmImprovement(cx, cy, size);
     else if (kind === 'mine') drawMineImprovement(cx, cy, size);
     else if (kind === 'pasture') drawPastureImprovement(cx, cy, size);
     else if (kind === 'lumber') drawLumberImprovement(cx, cy, size);
     else if (kind === 'quarry') drawQuarryImprovement(cx, cy, size);
     else if (kind === 'fishing_boats') drawFishingBoatsImprovement(cx, cy, size);
+    else if (kind === 'oil_well') drawOilWellImprovement(cx, cy, size);
+  }
+
+  // Minimal one-glance badges for FAR zoom: a dark plate + one bold signature
+  // shape per improvement, in its accent colour. No fine lines — everything is
+  // at least 2px so it survives the additive display at 26px hexes.
+  function drawImprovementCompact(cx, cy, size, kind) {
+    var s = size * 0.46;                 // badge half-width
+    var y = cy + size * 0.18;            // sit low in the hex, like the full art
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(cx, y, s, s * 0.62, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (kind === 'farm') {               // three wheat stripes
+      ctx.fillStyle = '#e8b858';
+      ctx.fillRect(cx - s * 0.7, y - s * 0.36, s * 1.4, 2);
+      ctx.fillRect(cx - s * 0.7, y - s * 0.02, s * 1.4, 2);
+      ctx.fillRect(cx - s * 0.7, y + s * 0.32, s * 1.4, 2);
+    } else if (kind === 'mine') {        // black arch on a grey mound
+      ctx.fillStyle = '#8a8a96';
+      ctx.beginPath();
+      ctx.arc(cx, y + s * 0.3, s * 0.62, Math.PI, 0);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(cx, y + s * 0.3, s * 0.30, Math.PI, 0);
+      ctx.fill();
+    } else if (kind === 'pasture') {     // fence: two posts + rail
+      ctx.fillStyle = '#a06a2c';
+      ctx.fillRect(cx - s * 0.5, y - s * 0.4, 2, s * 0.8);
+      ctx.fillRect(cx + s * 0.5 - 2, y - s * 0.4, 2, s * 0.8);
+      ctx.fillRect(cx - s * 0.6, y - s * 0.1, s * 1.2, 2);
+    } else if (kind === 'lumber') {      // two stacked logs
+      ctx.fillStyle = '#8a5a2c';
+      ctx.fillRect(cx - s * 0.65, y - s * 0.28, s * 1.3, 3);
+      ctx.fillRect(cx - s * 0.65, y + s * 0.10, s * 1.3, 3);
+      ctx.fillStyle = '#5a3018';
+      ctx.fillRect(cx - s * 0.65, y - s * 0.28, 3, 3);
+      ctx.fillRect(cx - s * 0.65, y + s * 0.10, 3, 3);
+    } else if (kind === 'quarry') {      // two pale blocks
+      ctx.fillStyle = '#aeaeb6';
+      ctx.fillRect(cx - s * 0.55, y - s * 0.30, s * 0.5, s * 0.5);
+      ctx.fillRect(cx + s * 0.05, y - s * 0.05, s * 0.5, s * 0.5);
+    } else if (kind === 'fishing_boats') { // boat hull + mast
+      ctx.fillStyle = '#8a5a2c';
+      ctx.beginPath();
+      ctx.moveTo(cx - s * 0.6, y);
+      ctx.lineTo(cx + s * 0.6, y);
+      ctx.lineTo(cx + s * 0.35, y + s * 0.35);
+      ctx.lineTo(cx - s * 0.35, y + s * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillRect(cx - 1, y - s * 0.5, 2, s * 0.5);
+    } else if (kind === 'oil_well') {    // derrick triangle + crown
+      ctx.strokeStyle = '#c8b088';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - s * 0.45, y + s * 0.4);
+      ctx.lineTo(cx, y - s * 0.5);
+      ctx.lineTo(cx + s * 0.45, y + s * 0.4);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#101010';
+      ctx.beginPath();
+      ctx.ellipse(cx, y + s * 0.45, s * 0.4, s * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Oil derrick — lattice tower over a dark pool, style-matched to the other
+  // hand-drawn improvements (previously oil wells had NO art and were invisible).
+  function drawOilWellImprovement(cx, cy, size) {
+    var h = size * 0.62, w = size * 0.55;
+    var baseY = cy + size * 0.32;
+    var px = Math.max(1, size / 18);
+    // Oil pool at the base
+    ctx.fillStyle = '#0a0a0c';
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY, w * 0.75, size * 0.13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1c1c22';
+    ctx.beginPath();
+    ctx.ellipse(cx, baseY - 1, w * 0.55, size * 0.09, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Derrick legs (tapered lattice tower)
+    ctx.strokeStyle = '#2a1c10';
+    ctx.lineWidth = px * 1.6;
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2, baseY);
+    ctx.lineTo(cx, baseY - h);
+    ctx.moveTo(cx + w / 2, baseY);
+    ctx.lineTo(cx, baseY - h);
+    ctx.stroke();
+    ctx.strokeStyle = '#7a5a2c';
+    ctx.lineWidth = px * 0.9;
+    ctx.beginPath();
+    ctx.moveTo(cx - w / 2 + 1, baseY - 1);
+    ctx.lineTo(cx, baseY - h + 1);
+    ctx.moveTo(cx + w / 2 - 1, baseY - 1);
+    ctx.lineTo(cx, baseY - h + 1);
+    ctx.stroke();
+    // Crossbars
+    ctx.strokeStyle = '#5a3e1c';
+    ctx.lineWidth = Math.max(1, px * 0.7);
+    for (var i = 1; i <= 3; i++) {
+      var t = i / 4;
+      var lw = (w / 2) * (1 - t);
+      var ly = baseY - h * t;
+      ctx.beginPath();
+      ctx.moveTo(cx - lw, ly);
+      ctx.lineTo(cx + lw, ly);
+      ctx.stroke();
+    }
+    // Crown block at the top
+    ctx.fillStyle = '#1a0e08';
+    ctx.fillRect(cx - px * 1.6, baseY - h - px * 2, px * 3.2, px * 2.4);
+    // Gusher droplets
+    ctx.fillStyle = '#3a3a44';
+    ctx.fillRect(cx - 1, baseY - h - px * 4, 2, 2);
+    ctx.fillRect(cx + 2, baseY - h - px * 3, 2, 2);
+    ctx.lineWidth = 1;
   }
 
   function drawFishingBoatsImprovement(cx, cy, size) {
@@ -4207,7 +4356,14 @@
         }
 
         hexPath(cx, cy, inset);
-        ctx.fillStyle = terrain.color;
+        // Subtle per-tile brightness variation (seeded, stable) so broad fields
+        // of one terrain read as organic ground, not flat fill. Water keeps its
+        // flat base — its own radial depth gradient paints over it anyway.
+        if (t.terrain === 'water') {
+          ctx.fillStyle = terrain.color;
+        } else {
+          ctx.fillStyle = shade(terrain.color, 0.93 + (tileHash(c, r) % 5) * 0.035);
+        }
         ctx.fill();
         ctx.save();
         ctx.clip();                      // clip decals to hex
@@ -4266,9 +4422,10 @@
 
         // Skip tiles with nothing to draw in this pass
         var hasVillage = t.village && t.explored.player;
+        var hasDig = !t.village && !t.city && t.explored.player && digSiteAt(c, r);
         var hasCity = !!t.city;
         var hasUnit = t.unit && visible;
-        if (!hasVillage && !hasCity && !hasUnit) continue;
+        if (!hasVillage && !hasDig && !hasCity && !hasUnit) continue;
 
         var p = pixelOf(c, r, size);
         var cx = p.x - state.camera.x + size * SQRT3 / 2;
@@ -4278,6 +4435,10 @@
         // Tribal village
         if (hasVillage) {
           drawVillage(cx, cy, size);
+        }
+        // Dig site — ruins waiting for an Archaeologist
+        if (hasDig) {
+          drawDigSite(cx, cy, size);
         }
 
         // City
@@ -4789,12 +4950,32 @@
 
   function drawCitySprite(cx, cy, size, city) {
     var civ = CIVS[city.civ];
+    // Holy city — a soft golden aura behind the whole settlement
+    if (city.holyCity) {
+      ctx.save();
+      ctx.shadowColor = '#ffd700';
+      ctx.shadowBlur = size * 0.55;
+      ctx.fillStyle = 'rgba(255,215,0,0.14)';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, size * 0.62, size * 0.52, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
     shadowBlob(cx, cy, size * 1.1);
     var p = makeSpriteCtx(cx, cy, size * 1.05, 16, 14);
     var c = spriteColors(civ);
     // Ground/base
     p(2,12,12,2, '#2a2418');
     p(2,12,12,1, '#000');
+    // Sprawl — flanking houses appear as the city grows (pop 4+, more at 7+)
+    if (city.pop >= 4) {
+      p(0,10,3,1, c.K); p(0,11,3,2, c.O); p(1,12,1,1, c.K);       // left cottage
+      p(13,10,3,1, c.K); p(13,11,3,2, c.O); p(14,12,1,1, c.K);    // right cottage
+    }
+    if (city.pop >= 7) {
+      p(0,8,2,1, c.K); p(0,9,2,2, c.B); p(0,9,2,1, c.O);          // upper-left hut
+      p(14,8,2,1, c.K); p(14,9,2,2, c.B); p(14,9,2,1, c.O);       // upper-right hut
+    }
     // Outer walls
     p(1,8,14,5, c.K);
     p(2,9,12,3, shade(civ.color, 0.45));
@@ -4832,6 +5013,22 @@
     if (city.capital) {
       p(7,4,1,1, c.Y);
       p(8,4,1,1, c.Y);
+    }
+    // Walls building — stone corner towers bracketing the ramparts
+    if (city.buildings && city.buildings.walls) {
+      p(0,6,2,1, c.K); p(0,7,2,6, c.m); p(0,7,2,1, c.M);          // left tower
+      p(14,6,2,1, c.K); p(14,7,2,6, c.m); p(14,7,2,1, c.M);       // right tower
+      p(0,6,1,1, c.m); p(15,6,1,1, c.m);                          // merlons
+    }
+    // Open revolt — flames on the walls and a smoke pall overhead
+    if (typeof cityRevolting === 'function' && cityRevolting(city)) {
+      p(3,8,1,1, c.R); p(4,7,1,1, c.Y);
+      p(11,8,1,1, c.R); p(12,7,1,1, c.Y);
+      ctx.fillStyle = 'rgba(80,80,88,0.6)';
+      ctx.beginPath();
+      ctx.arc(cx - size * 0.10, cy - size * 0.62, size * 0.10, 0, Math.PI * 2);
+      ctx.arc(cx + size * 0.06, cy - size * 0.72, size * 0.08, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     // Name banner
@@ -4925,11 +5122,281 @@
     p(6,12,2,2, c.B);
   }
 
+  // ---- Era & specialist sprites (same 14×14 pixel idiom) ----
+  function drawSpearman(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Spear (right) — tall shaft with bright leaf head
+    p(11,0,1,1, c.M); p(11,1,1,1, c.W);
+    p(11,2,1,9, c.O); p(11,4,1,1, c.B);
+    // Helmet
+    p(5,1,4,1, c.K); p(4,2,1,2, c.K); p(9,2,1,2, c.K);
+    p(5,2,4,1, c.C); p(5,3,4,1, c.D); p(5,2,1,1, c.L);
+    // Face
+    p(5,4,4,2, c.S); p(5,4,4,1, c.D);
+    p(6,5,1,1, c.K); p(8,5,1,1, c.K);
+    // Body
+    p(4,6,6,1, c.K);
+    p(4,7,6,3, c.C); p(4,7,6,1, c.D); p(5,8,4,1, c.L);
+    p(4,10,6,1, c.K); p(4,11,6,1, c.B);
+    // Tall kite shield (left)
+    p(1,6,1,6, c.K); p(3,6,1,6, c.K); p(2,6,1,1, c.K); p(2,12,1,1, c.K);
+    p(2,7,1,5, c.L); p(2,9,1,1, c.Y);
+    // Spear arm
+    p(10,6,1,3, c.D);
+    // Legs
+    p(5,12,1,2, c.K); p(8,12,1,2, c.K); p(6,12,2,2, c.D);
+  }
+
+  function drawKnight(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Lance (right) — upright with pennant
+    p(12,0,1,1, c.M); p(12,1,1,7, c.O); p(13,1,1,2, c.C);
+    // Barded (armored) warhorse
+    p(2,8,10,1, c.K);                       // back outline
+    p(2,9,9,2, c.D);                        // civ barding
+    p(3,9,7,1, c.C);                        // barding highlight
+    p(10,7,2,1, c.K); p(11,6,2,1, c.K);     // neck + head outline
+    p(11,7,2,2, c.B); p(12,6,1,1, c.B);     // head
+    p(12,5,1,1, c.K);                       // ear
+    p(12,7,1,1, c.K);                       // eye
+    p(1,9,1,2, c.K);                        // tail
+    // Horse legs
+    p(3,11,1,3, c.K); p(6,11,1,3, c.K); p(9,11,1,3, c.K);
+    // Armored rider
+    p(5,2,3,1, c.K);                        // helm top
+    p(5,3,3,1, c.M);                        // steel helm
+    p(6,4,1,1, c.K);                        // visor slit
+    p(5,0,1,2, c.Y);                        // plume
+    p(4,5,4,1, c.K);                        // shoulders
+    p(4,6,4,2, c.M); p(4,6,4,1, c.C);       // steel torso, civ tabard stripe
+    p(9,6,1,2, c.M);                        // lance arm
+  }
+
+  function drawCannonSprite(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Barrel — angled up-right in steps
+    p(4,8,4,2, c.m); p(6,7,4,2, c.m); p(9,6,3,2, c.m);
+    p(5,8,3,1, c.M); p(7,7,2,1, c.M); p(9,6,2,1, c.M);   // top highlight
+    p(11,5,2,1, c.K); p(12,6,1,2, c.K);                  // muzzle rim
+    // Wheel
+    p(4,8,3,1, c.K); p(3,9,1,3, c.K); p(7,9,1,3, c.K); p(4,12,3,1, c.K);
+    p(4,9,3,3, c.O); p(5,10,1,1, c.B);                   // spoked hub
+    // Carriage trail
+    p(7,11,4,1, c.B); p(10,12,2,1, c.B);
+    // Cannonball stack + civ crest
+    p(1,11,1,1, c.m); p(2,12,1,1, c.m); p(1,12,1,1, c.K);
+    p(5,9,1,1, c.C);
+  }
+
+  function drawTank(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Treads
+    p(1,9,12,3, c.K);
+    p(2,10,10,1, c.m);
+    p(3,10,1,1, c.K); p(5,10,1,1, c.K); p(7,10,1,1, c.K); p(9,10,1,1, c.K);  // bogeys
+    // Hull
+    p(2,6,10,1, c.K);
+    p(2,7,10,2, c.C); p(3,7,8,1, c.L); p(2,8,10,1, c.D);
+    p(3,7,1,1, c.W);                       // headlamp glint
+    // Turret + barrel
+    p(5,3,4,1, c.K);
+    p(5,4,4,2, c.C); p(6,4,2,1, c.L);
+    p(7,3,1,1, c.K);                       // hatch
+    p(9,4,4,1, c.m); p(13,4,1,1, c.K);     // gun + muzzle
+  }
+
+  function drawBattleship(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Hull — long grey with pointed bow (right)
+    p(0,9,13,1, c.K);
+    p(1,10,11,2, c.m); p(1,10,11,1, c.M);
+    p(12,10,1,1, c.m); p(13,10,1,1, c.K);   // bow
+    p(2,11,9,1, c.D);                       // civ waterline stripe
+    // Superstructure + bridge
+    p(4,5,4,1, c.K); p(4,6,4,3, c.M);
+    p(5,6,2,1, c.K);                        // bridge windows
+    p(6,3,1,2, c.K);                        // mast
+    // Gun turrets (fore points right, aft points left)
+    p(9,7,2,2, c.m); p(11,7,2,1, c.K);
+    p(2,7,2,2, c.m); p(0,8,2,1, c.K);
+    // Waves
+    p(0,12,13,1, '#164070'); p(1,13,11,1, '#081e3c');
+  }
+
+  function drawSubmarine(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Low hull at the waterline
+    p(1,9,12,1, c.K);
+    p(2,10,10,2, c.m); p(2,10,10,1, c.M);
+    p(1,10,1,1, c.K); p(12,10,1,1, c.K);    // tapered ends
+    p(3,11,8,1, c.D);                       // civ stripe
+    // Conning tower + periscope
+    p(6,6,3,1, c.K); p(6,7,3,2, c.m); p(6,7,3,1, c.M);
+    p(7,4,1,2, c.K); p(7,4,1,1, c.W);
+    // Waterline foam + waves
+    p(3,9,2,1, '#8ab0d0'); p(9,9,2,1, '#8ab0d0');
+    p(0,12,14,1, '#164070'); p(2,13,10,1, '#081e3c');
+  }
+
+  function drawCarrier(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Flat flight deck spanning the hex
+    p(0,7,14,1, c.K);
+    p(0,8,13,2, c.m);
+    p(1,8,12,1, c.M);                       // deck edge highlight
+    p(2,11,10,1, c.D);                      // civ waterline stripe
+    // Runway centre dashes
+    p(2,8,1,1, c.W); p(5,8,1,1, c.W); p(8,8,1,1, c.W);
+    // Island (right) + radar mast
+    p(10,4,3,1, c.K); p(10,5,3,2, c.m); p(10,5,3,1, c.M);
+    p(11,2,1,2, c.K);
+    // Parked aircraft silhouette (left)
+    p(3,6,3,1, c.C); p(4,5,1,1, c.C);
+    // Waves
+    p(0,12,14,1, '#164070'); p(1,13,12,1, '#081e3c');
+  }
+
+  function drawFighter(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Top-down jet, nose up
+    p(6,0,2,1, c.K);                        // nose tip
+    p(6,1,2,2, c.m);                        // nose cone
+    p(6,3,2,2, c.K); p(6,3,1,1, c.W);       // canopy + glint
+    p(6,5,2,6, c.M);                        // fuselage
+    // Swept wings
+    p(4,5,6,1, c.C);
+    p(2,6,10,1, c.C);
+    p(1,7,12,1, c.D);
+    // Tailplane + fin
+    p(5,10,4,1, c.C); p(6,11,2,1, c.D);
+    // Afterburner
+    p(6,12,2,1, c.Y); p(6,13,2,1, c.R);
+  }
+
+  function drawBomber(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Long fuselage, nose up
+    p(6,0,2,1, c.K);
+    p(6,1,2,11, c.M); p(6,2,1,10, c.W);     // fuselage + spine highlight
+    // Broad straight wings
+    p(0,5,14,1, c.C);
+    p(0,6,14,2, c.C); p(0,7,14,1, c.D);
+    // Engine nacelles
+    p(2,6,1,2, c.K); p(4,6,1,2, c.K); p(9,6,1,2, c.K); p(11,6,1,2, c.K);
+    // Twin tail
+    p(4,11,2,1, c.C); p(8,11,2,1, c.C); p(5,12,4,1, c.D);
+  }
+
+  function drawMissile(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Launch gantry (right)
+    p(10,1,1,11, c.m);
+    p(9,3,1,1, c.m); p(9,6,1,1, c.m); p(9,9,1,1, c.m);
+    // Rocket — nose, body, hazard band, fins
+    p(6,0,2,1, c.K);
+    p(6,1,2,2, c.R);
+    p(6,3,2,6, c.M); p(6,3,1,6, c.W);
+    p(6,5,2,1, c.C);                        // civ band
+    p(6,8,2,1, c.Y);                        // hazard band
+    p(4,9,2,2, c.D); p(8,9,2,2, c.D);       // fins
+    p(4,9,1,1, c.K); p(9,9,1,1, c.K);
+    p(6,9,2,2, c.m);                        // engine skirt
+    // Launch pad
+    p(3,11,9,1, c.K); p(2,12,11,1, c.m);
+  }
+
+  function drawMissionary(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Staff with golden cross (right)
+    p(11,4,1,8, c.O);
+    p(11,1,1,3, c.Y); p(10,2,3,1, c.Y);
+    // Hooded head
+    p(5,0,4,1, c.K);
+    p(5,1,4,2, c.C); p(5,1,1,1, c.L);
+    // Face
+    p(5,3,4,2, c.S); p(5,3,4,1, c.D);
+    p(6,4,1,1, c.K); p(8,4,1,1, c.K);
+    // White robe with civ trim
+    p(4,5,6,1, c.K);
+    p(4,6,6,6, c.W);
+    p(4,6,1,6, c.C); p(9,6,1,6, c.C);       // trim
+    p(5,7,4,1, '#d8d8e0');                  // fold shading
+    p(4,9,6,1, c.O);                        // rope belt
+    p(4,12,6,1, c.K);                       // hem
+    // Staff arm
+    p(10,6,1,2, c.S);
+  }
+
+  function drawInquisitor(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Torch (left) — flame over shaft
+    p(2,3,1,1, c.Y); p(1,4,3,1, c.R); p(2,5,1,1, c.Y);
+    p(2,6,1,5, c.B);
+    // Deep hood — face in shadow, pale eyes
+    p(4,0,6,1, c.K);
+    p(4,1,6,3, c.D); p(5,1,1,1, c.C);
+    p(5,3,4,2, c.K);
+    p(6,4,1,1, c.W); p(8,4,1,1, c.W);
+    // Dark robe with civ sash
+    p(4,5,6,1, c.K);
+    p(4,6,6,6, c.D);
+    p(4,8,6,1, c.C);                        // sash
+    p(6,6,1,6, c.K);                        // robe fold
+    p(4,12,6,1, c.K);                       // hem
+    // Torch arm
+    p(3,6,1,2, c.D);
+  }
+
+  function drawCaravan(cx, cy, size, civ) {
+    shadowBlob(cx, cy, size);
+    var p = makeSpriteCtx(cx, cy, size, 14, 14);
+    var c = spriteColors(civ);
+    // Canopy — civ-colored covered wagon
+    p(4,3,7,1, c.K);
+    p(3,4,9,1, c.K);
+    p(4,4,7,1, c.L);
+    p(3,5,9,4, c.C);
+    p(3,5,1,4, c.D); p(11,5,1,4, c.D);
+    p(4,6,7,1, c.L);
+    // Bed + tow pole
+    p(2,9,11,1, c.B);
+    p(0,9,2,1, c.O);
+    // Wheels
+    p(3,10,3,3, c.K); p(4,11,1,1, c.O);
+    p(9,10,3,3, c.K); p(10,11,1,1, c.O);
+    // Goods sacks peeking out front
+    p(1,7,2,2, c.O); p(1,7,2,1, c.Y);
+  }
+
   var UNIT_DRAW = {
     settler:   drawSettler,
     worker:    drawWorker,
     scout:     drawScout,
-    caravan:   drawWorker,
+    caravan:   drawCaravan,
     warrior:   drawWarrior,
     archer:    drawArcher,
     horseman:  drawHorseman,
@@ -4937,35 +5404,41 @@
     catapult:  drawCatapult,
     musketman: drawMusketman,
     galley:    drawGalley,
-    // Expansion units reuse the closest thematic sprite (civ color distinguishes them)
-    pikeman:   drawSwordsman,   // armored footman
-    knight:    drawHorseman,    // mounted
-    trebuchet: drawCatapult,    // siege
-    cannon:    drawCatapult,    // siege
+    // Era sprites — every line has its own silhouette now
+    spearman:  drawSpearman,    // spear + tall shield
+    pikeman:   drawSpearman,    // pike wall (heavier era, same silhouette)
+    knight:    drawKnight,      // barded warhorse + lance
+    trebuchet: drawCatapult,    // wooden siege
+    cannon:    drawCannonSprite,// wheeled field gun
     rifleman:  drawMusketman,   // gunpowder infantry
-    caravel:   drawGalley,      // ship
-    // Modern units reuse the closest thematic sprite
-    infantry:  drawMusketman,   // gunpowder infantry line
-    artillery: drawCatapult,    // siege
-    tank:      drawSwordsman,   // armored ground apex
-    battleship:drawGalley,      // ship
-    fighter:   drawArcher,      // fast ranged
-    bomber:    drawArcher,      // air
-    modern_armor: drawSwordsman,// armored apex
-    nuke:      drawCatapult,    // missile
-    spearman:  drawSwordsman,   // footman
-    submarine: drawGalley,      // ship
-    carrier:   drawGalley,      // ship
-    legionary: drawWarrior,     // faction uniques reuse their base sprite
+    caravel:   drawGalley,      // sail era
+    // Modern units
+    infantry:  drawMusketman,   // rifle line
+    artillery: drawCannonSprite,// big gun
+    tank:      drawTank,        // treads + turret
+    battleship:drawBattleship,  // grey steel, gun turrets
+    fighter:   drawFighter,     // swept-wing jet
+    bomber:    drawBomber,      // broad-wing heavy
+    modern_armor: drawTank,     // armored apex
+    nuke:      drawMissile,     // rocket on its gantry
+    submarine: drawSubmarine,   // conning tower at the waterline
+    carrier:   drawCarrier,     // flat-top
+    // Faction uniques reuse their base line's sprite (civ color distinguishes)
+    legionary: drawWarrior,
     nightblade:drawSwordsman,
     bloodrider:drawHorseman,
     dromon:    drawGalley,
     raider:    drawWarrior,  // reuses warrior sprite; civ color makes it grey
+    // Civilians & specialists
+    missionary:    drawMissionary,
+    inquisitor:    drawInquisitor,
+    archaeologist: drawWorker,   // a digger by trade
     great_general:   drawGreatPerson,
     great_scientist: drawGreatPerson,
     great_engineer:  drawGreatPerson,
     great_merchant:  drawGreatPerson,
-    great_artist:    drawGreatPerson
+    great_artist:    drawGreatPerson,
+    great_prophet:   drawGreatPerson
   };
 
   function drawGreatPerson(cx, cy, size, civ) {
@@ -5317,7 +5790,12 @@
 
     if (defender.hp <= 0) {
       attacker.kills = (attacker.kills || 0) + 1;
-      if (attacker.civ === 'player') { state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1; if (defender.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); } }
+      if (attacker.civ === 'player') {
+        state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+        if (defender.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); }
+        // Every 4th kill marks the field — future archaeology (living history)
+        if (state.stats.unitsKilled % 4 === 0) addDigSite(defender.c, defender.r, 'a great battlefield');
+      }
       if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
       checkPromotion(attacker);
@@ -6133,7 +6611,12 @@
     if (defender.hp <= 0) {
       // Kill tracking & promotions
       attacker.kills = (attacker.kills || 0) + 1;
-      if (attacker.civ === 'player') { state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1; if (defender.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); } }
+      if (attacker.civ === 'player') {
+        state.stats.unitsKilled = (state.stats.unitsKilled || 0) + 1;
+        if (defender.civ === 'barb') { state.stats.barbsDefeated = (state.stats.barbsDefeated || 0) + 1; checkCsQuests(); }
+        // Every 4th kill marks the field — future archaeology (living history)
+        if (state.stats.unitsKilled % 4 === 0) addDigSite(defender.c, defender.r, 'a great battlefield');
+      }
       if (defender.civ === 'player') state.stats.unitsLost = (state.stats.unitsLost || 0) + 1;
       killUnit(defender);
       checkPromotion(attacker);
@@ -6379,6 +6862,7 @@
       if (t0) t0.city = null;
       if (oldOwnerId === 'player') logEvent(city.name + ' was razed by raiders!', 'error');
       showToast(city.name + ' razed by raiders!', 'error');
+      addDigSite(city.c, city.r, 'the ruins of ' + city.name);   // the world remembers
       recomputeBorders();
       recomputeVisibility(oldOwnerId);
       recomputeIncome(oldOwnerId);
@@ -6437,11 +6921,16 @@
     // We count how many rival original capitals this civ controls vs how many rivals exist.
     var rivalCount = CIV_SIDES.length - 1;
     var capturedRivalCapitals = 0;
+    var subduedRivals = {};                                   // capital held OR vassalized
     state.civs[newOwnerId].cities.forEach(function (ct) {
       if (ct.capital && ct.originalCiv && ct.originalCiv !== newOwnerId) {
-        capturedRivalCapitals++;
+        subduedRivals[ct.originalCiv] = 1;
       }
     });
+    CIV_SIDES.forEach(function (rid) {
+      if (rid !== newOwnerId && state.vassals && state.vassals[rid] === newOwnerId) subduedRivals[rid] = 1;
+    });
+    capturedRivalCapitals = Object.keys(subduedRivals).length;
     if (capturedRivalCapitals >= rivalCount) declareVictory(newOwnerId, 'domination');
   }
 
@@ -7158,6 +7647,364 @@
   var prophetFoundingUnit = null;
 
   // =====================================================================
+  // BARBARIAN CLANS — the raiders are a market, not just a menace. While any
+  // clan raiders roam, the player can HIRE one (it defects, joining your army)
+  // or BRIBE the clans to march on a chosen rival for a few turns. Gold gets a
+  // military outlet; a rushed player gets a desperation lever.
+  // =====================================================================
+  var CLAN_HIRE_COST = 45;
+  var CLAN_BRIBE_COST = 60;
+  var CLAN_BRIBE_TURNS = 8;
+
+  function clansAvailable() {
+    return !!(state && state.civs.barb && state.civs.barb.units.length);
+  }
+  // Nearest living raider to the hiring civ's capital.
+  function nearestRaiderTo(civId) {
+    var civ = state.civs[civId];
+    var home = civ && civ.cities[0];
+    if (!home || !clansAvailable()) return null;
+    var best = null, bestD = Infinity;
+    state.civs.barb.units.forEach(function (u) {
+      var d = hexDist([home.c, home.r], [u.c, u.r]);
+      if (d < bestD) { bestD = d; best = u; }
+    });
+    return best;
+  }
+  // Pay a raider to defect — same unit object switches sides where it stands.
+  function hireRaider(civId) {
+    var civ = state.civs[civId];
+    if (!civ || civ.gold < CLAN_HIRE_COST) return false;
+    var u = nearestRaiderTo(civId);
+    if (!u) return false;
+    civ.gold -= CLAN_HIRE_COST;
+    var barbUnits = state.civs.barb.units;
+    barbUnits.splice(barbUnits.indexOf(u), 1);
+    u.civ = civId;
+    u.hp = u.maxHp;
+    u.moves = 0;                       // takes the rest of the turn to swear in
+    civ.units.push(u);
+    if (civId === 'player') {
+      sfxAlly();
+      showToast('Raider hired — they fight for you now', 'success');
+      logEvent('Hired a clan raider into your army (−' + CLAN_HIRE_COST + 'g)', 'success');
+      recomputeVisibility('player');
+    }
+    return true;
+  }
+  // Point the clans at a rival for a few turns.
+  function bribeClans(targetId) {
+    var pl = state.civs.player;
+    if (pl.gold < CLAN_BRIBE_COST || !clansAvailable()) return false;
+    if (!state.civs[targetId] || !state.civs[targetId].cities.length) return false;
+    pl.gold -= CLAN_BRIBE_COST;
+    state.barbBribe = { target: targetId, turns: CLAN_BRIBE_TURNS };
+    var tn = CIVS[targetId] ? CIVS[targetId].name : targetId;
+    showToast('The clans march on ' + tn, 'success');
+    logEvent('Bribed the clans to raid ' + tn + ' for ' + CLAN_BRIBE_TURNS + ' turns (−' + CLAN_BRIBE_COST + 'g)', 'success');
+    return true;
+  }
+  // Nearest unit/city of one specific civ, within range.
+  function findNearestOf(u, civId, range) {
+    var c = state.civs[civId];
+    if (!c) return null;
+    var best = null, bestD = Infinity;
+    c.units.forEach(function (e) { var d = hexDist([u.c, u.r], [e.c, e.r]); if (d < bestD) { bestD = d; best = [e.c, e.r]; } });
+    (c.cities || []).forEach(function (ct) { var d = hexDist([u.c, u.r], [ct.c, ct.r]); if (d < bestD) { bestD = d; best = [ct.c, ct.r]; } });
+    return bestD <= range ? best : null;
+  }
+
+  // Clans menu — hire the nearest raider, or aim the horde at a rival.
+  function openClans() {
+    var pl = state.civs.player;
+    var actions = [];
+    var n = state.civs.barb.units.length;
+    actions.push({ header: true, icon: '🏴', title: 'Barbarian Clans', sub: n + ' raider' + (n !== 1 ? 's' : '') + ' roam the wilds · gold talks' });
+    if (state.barbBribe && state.barbBribe.turns > 0) {
+      var bn = CIVS[state.barbBribe.target] ? CIVS[state.barbBribe.target].name : state.barbBribe.target;
+      actions.push({ icon: '⚔', title: 'Clans raiding ' + bn, sub: state.barbBribe.turns + ' turn' + (state.barbBribe.turns !== 1 ? 's' : '') + ' remaining', disabled: true, do: function () {} });
+    }
+    actions.push({
+      icon: '⚔', title: 'Hire a Raider (' + CLAN_HIRE_COST + 'g)',
+      sub: 'The nearest raider defects to your army',
+      disabled: pl.gold < CLAN_HIRE_COST,
+      do: function () { if (hireRaider('player')) { updateHud(); save(); } closeModal(); draw(); }
+    });
+    AI_SIDES.forEach(function (aiId) {
+      var ai = state.civs[aiId];
+      if (!ai || !ai.cities.length) return;
+      actions.push({
+        icon: '🏴', title: 'Bribe clans vs ' + CIVS[aiId].name + ' (' + CLAN_BRIBE_COST + 'g)',
+        sub: 'Raiders hunt them for ' + CLAN_BRIBE_TURNS + ' turns',
+        disabled: pl.gold < CLAN_BRIBE_COST,
+        do: function () { if (bribeClans(aiId)) { updateHud(); save(); } closeModal(); draw(); }
+      });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Barbarian Clans');
+  }
+
+  // =====================================================================
+  // LIVING HISTORY — the world remembers this game. Razed cities and great
+  // battles leave DIG SITES stamped with what actually happened; a late-game
+  // Archaeologist excavates them for culture + Era Points and a chronicle
+  // callback. Plus ERA QUESTS: small standing objectives that pay Era Points,
+  // giving the early/mid game direction without any new resource.
+  // =====================================================================
+  var DIG_SITE_CAP = 10;      // most sites the world keeps (oldest drop off)
+  var DIG_ERA_POINTS = 12;    // era points per excavation
+  var DIG_CULTURE = 15;       // great-people culture per excavation
+
+  function digSiteAt(c, r) {
+    var list = state && state.digSites;
+    if (!list) return null;
+    for (var i = 0; i < list.length; i++) if (list[i].c === c && list[i].r === r) return list[i];
+    return null;
+  }
+  function addDigSite(c, r, label) {
+    if (!state.digSites) state.digSites = [];
+    if (digSiteAt(c, r)) return;
+    var t = tileAt(c, r);
+    if (!t || TERRAIN[t.terrain].impassable) return;
+    state.digSites.push({ c: c, r: r, label: label, turn: state.turn });
+    while (state.digSites.length > DIG_SITE_CAP) state.digSites.shift();
+  }
+  // Excavate the site under an Archaeologist: culture + era points + a story.
+  function excavate(unit) {
+    var site = digSiteAt(unit.c, unit.r);
+    if (!site) return false;
+    var civ = state.civs[unit.civ];
+    civ.eraPoints = (civ.eraPoints || 0) + DIG_ERA_POINTS;
+    if (civ.greatPoints) civ.greatPoints.culture += DIG_CULTURE;
+    state.digSites.splice(state.digSites.indexOf(site), 1);
+    unit.moves = 0;
+    if (unit.civ === 'player') {
+      sfxResearch();
+      showToast('Excavated ' + site.label + '!', 'success');
+      logEvent('Unearthed relics of ' + site.label + ' (turn ' + site.turn + ') — +' + DIG_ERA_POINTS + ' era pts, +' + DIG_CULTURE + ' culture', 'success');
+      chronicle('Archaeologists unearthed ' + site.label + ', a story from turn ' + site.turn + '.');
+    }
+    return true;
+  }
+  // Small ruined-column marker on explored dig-site tiles.
+  function drawDigSite(cx, cy, size) {
+    var s = size * 0.30;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + s * 0.7, s * 1.2, s * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#cfc6a8';
+    ctx.fillRect(cx - s * 0.9, cy - s * 0.3, s * 0.35, s);          // standing column
+    ctx.fillRect(cx - s * 0.1, cy + s * 0.15, s * 0.9, s * 0.3);    // fallen column
+    ctx.fillStyle = '#8f8668';
+    ctx.fillRect(cx - s * 0.9, cy - s * 0.3, s * 0.35, s * 0.2);    // capital
+    ctx.fillRect(cx + s * 0.35, cy + s * 0.1, s * 0.3, s * 0.2);    // rubble
+  }
+
+  // ERA QUESTS — standing objectives; each pays Era Points once, checked at
+  // the start of every player turn against state the game already tracks.
+  var ERA_QUESTS = [
+    { id: 'settle3',  desc: 'Found 3 cities',            pts: 15, check: function (pl) { return pl.cities.length >= 3; } },
+    { id: 'classical',desc: 'Reach the Classical age',   pts: 10, check: function (pl) { return AGES.indexOf(getAge(pl)) >= 1; } },
+    { id: 'slayer5',  desc: 'Slay 5 enemy units',        pts: 12, check: function () { return (state.stats.unitsKilled || 0) >= 5; } },
+    { id: 'barb3',    desc: 'Defeat 3 barbarians',       pts: 10, check: function () { return (state.stats.barbsDefeated || 0) >= 3; } },
+    { id: 'faithful', desc: 'Found a religion',          pts: 12, check: function (pl) { return !!pl.religionId; } },
+    { id: 'wonder1',  desc: 'Build a World Wonder',      pts: 15, check: function () { for (var k in (state.wondersBuilt || {})) if (state.wondersBuilt[k] === 'player') return true; return false; } },
+    { id: 'trader2',  desc: 'Run 2 trade routes at once',pts: 12, check: function () { return (state.tradeRoutes || []).filter(function (rt) { return rt.owner === 'player'; }).length >= 2; } },
+    { id: 'metropolis', desc: 'Grow a city to pop 6',    pts: 12, check: function (pl) { return pl.cities.some(function (ct) { return ct.pop >= 6; }); } }
+  ];
+  function checkEraQuests() {
+    if (!state.eraQuestsDone) state.eraQuestsDone = {};
+    var pl = state.civs.player;
+    ERA_QUESTS.forEach(function (q) {
+      if (state.eraQuestsDone[q.id]) return;
+      if (!q.check(pl)) return;
+      state.eraQuestsDone[q.id] = true;
+      pl.eraPoints = (pl.eraPoints || 0) + q.pts;
+      showToast('Quest: ' + q.desc + ' ✓ (+' + q.pts + ' era pts)', 'success');
+      logEvent('Era quest complete — ' + q.desc + ' (+' + q.pts + ' era points)', 'success');
+    });
+  }
+
+  // =====================================================================
+  // ESPIONAGE — menu-driven spy missions, no units to move. Spy slots unlock
+  // with the ages (Classical: 1, Renaissance: 2). Assign a slot to a mission
+  // against a rival; it resolves after N turns with visible odds. Getting
+  // caught fires the existing tension/memory diplomacy machinery, so spying
+  // is a real relationship risk, not a free lever.
+  // =====================================================================
+  var SPY_MISSIONS = {
+    steal_tech: { name: 'Steal Technology',    icon: '⚗', turns: 6, base: 0.50, desc: 'Learn one tech this rival knows' },
+    sabotage:   { name: 'Sabotage Production', icon: '⚒', turns: 5, base: 0.55, desc: 'Wreck the banked production in their capital' },
+    incite:     { name: 'Incite Unrest',       icon: '☢', turns: 4, base: 0.60, desc: 'Foment +8 unrest in their capital' },
+    counter:    { name: 'Counterintelligence', icon: '⛨', turns: 0, base: 1.0,  desc: 'Guard: −25% odds for spies targeting you' }
+  };
+  var SPY_MISSION_ORDER = ['steal_tech', 'sabotage', 'incite', 'counter'];
+  var SPY_CAUGHT_TENSION = 15;
+
+  // Spy slots by age: none before Classical, 2 from the Renaissance on.
+  function spySlots(civ) {
+    var idx = AGES.indexOf(getAge(civ));
+    return idx >= 3 ? 2 : idx >= 1 ? 1 : 0;
+  }
+  function civHasCounterintel(civ) {
+    return (civ.spyOps || []).some(function (op) { return op.type === 'counter'; });
+  }
+  // Success odds: mission base + an age-advantage nudge − target counterintel.
+  function spyOdds(civ, targetId, type) {
+    var m = SPY_MISSIONS[type];
+    if (!m || type === 'counter') return 1;
+    var target = state.civs[targetId];
+    if (!target) return 0;
+    var edge = (AGES.indexOf(getAge(civ)) - AGES.indexOf(getAge(target))) * 0.06;
+    var guard = civHasCounterintel(target) ? 0.25 : 0;
+    return Math.max(0.15, Math.min(0.90, m.base + edge - guard));
+  }
+  // Assign a free slot. Counterintel is a standing posture (no timer, no target).
+  function assignSpy(civ, type, targetId) {
+    if (!civ.spyOps) civ.spyOps = [];
+    if (civ.spyOps.length >= spySlots(civ)) return false;
+    var m = SPY_MISSIONS[type];
+    if (!m) return false;
+    if (type === 'counter') { civ.spyOps.push({ type: 'counter' }); return true; }
+    if (!state.civs[targetId] || !state.civs[targetId].cities.length) return false;
+    civ.spyOps.push({ type: type, target: targetId, turnsLeft: m.turns });
+    return true;
+  }
+  // A tech the target knows and this civ doesn't (owner prereqs satisfied first,
+  // any known-by-target tech as fallback) — cheapest first.
+  function stealableTech(civ, target) {
+    var pool = TECH_ORDER.filter(function (k) { return target.techs[k] && !civ.techs[k]; });
+    var ready = pool.filter(function (k) { return TECHS[k].req.every(function (r) { return civ.techs[r]; }); });
+    var pick = (ready.length ? ready : pool);
+    pick.sort(function (a, b) { return TECHS[a].cost - TECHS[b].cost; });
+    return pick[0] || null;
+  }
+  // Tick + resolve one civ's missions at end of round.
+  function processSpyOps(civId) {
+    var civ = state.civs[civId];
+    if (!civ || !civ.spyOps || !civ.spyOps.length) return;
+    var meName = CIVS[civId] ? CIVS[civId].name : civId;
+    civ.spyOps = civ.spyOps.filter(function (op) {
+      if (op.type === 'counter') return true;                      // standing guard
+      var target = state.civs[op.target];
+      if (!target || !target.cities.length) return false;          // target gone
+      op.turnsLeft--;
+      if (op.turnsLeft > 0) return true;
+      var themName = CIVS[op.target] ? CIVS[op.target].name : op.target;
+      if (rnd() < spyOdds(civ, op.target, op.type)) {
+        // --- Success ---
+        if (op.type === 'steal_tech') {
+          var k = stealableTech(civ, target);
+          if (k) {
+            civ.techs[k] = true;
+            if (civ.currentTech === k) { civ.currentTech = null; civ.techProgress = 0; }
+            if (civId === 'player') { logEvent('Your spies stole ' + TECHS[k].name + ' from ' + themName + '!', 'success'); chronicle('Spies stole the secret of ' + TECHS[k].name + ' from ' + themName + '.'); }
+            else if (op.target === 'player') logEvent(meName + ' stole ' + TECHS[k].name + ' from you!', 'error');
+          }
+        } else if (op.type === 'sabotage') {
+          var cap = target.cities[0];
+          if (cap) {
+            cap.prod = 0;
+            if (civId === 'player') logEvent('Your spies sabotaged production in ' + cap.name + '!', 'success');
+            else if (op.target === 'player') logEvent('Saboteurs wrecked production in ' + cap.name + '!', 'error');
+          }
+        } else if (op.type === 'incite') {
+          var cap2 = target.cities[0];
+          if (cap2) {
+            cap2.unrest = (cap2.unrest || 0) + 8;
+            if (civId === 'player') logEvent('Your agents incited unrest in ' + cap2.name + '!', 'success');
+            else if (op.target === 'player') logEvent('Foreign agents incited unrest in ' + cap2.name + '!', 'error');
+          }
+        }
+      } else {
+        // --- Caught! The victim's grudge machinery reacts. ---
+        if (AI_SIDES.indexOf(op.target) >= 0) {
+          if (civId === 'player') remember(op.target, 'We caught your spies red-handed', SPY_CAUGHT_TENSION);
+          else addTension(op.target, civId, SPY_CAUGHT_TENSION, 'spying');
+        }
+        if (civId === 'player') logEvent('Your spy was caught by ' + themName + '!', 'error');
+        else if (op.target === 'player') logEvent('You caught a spy from ' + meName + '!', 'success');
+      }
+      return false;                                                // slot freed
+    });
+  }
+  // Withdraw a standing counterintel posture (frees the slot).
+  function cancelCounterintel(civ) {
+    if (!civ.spyOps) return;
+    civ.spyOps = civ.spyOps.filter(function (op) { return op.type !== 'counter'; });
+  }
+  // AI espionage: fill free slots by personality — scientists steal, warmongers
+  // sabotage, the rest split incite / guard. Targets the strongest rival.
+  function aiRunEspionage(civId) {
+    var civ = state.civs[civId];
+    if (!civ || !civ.cities.length) return;
+    if (!civ.spyOps) civ.spyOps = [];
+    while (civ.spyOps.length < spySlots(civ)) {
+      var pref = { scientific: 'steal_tech', aggressive: 'sabotage', economic: 'incite' }[civ.personality] || 'counter';
+      if (pref !== 'counter') {
+        var best = null, bestP = -1;
+        CIV_SIDES.forEach(function (oid) {
+          if (oid === civId) return;
+          var o = state.civs[oid];
+          if (!o || !o.cities.length) return;
+          var p = civPower(o);
+          if (p > bestP) { bestP = p; best = oid; }
+        });
+        if (!best || !assignSpy(civ, pref, best)) { if (!civHasCounterintel(civ)) assignSpy(civ, 'counter'); else break; }
+      } else {
+        if (civHasCounterintel(civ) || !assignSpy(civ, 'counter')) break;
+      }
+    }
+  }
+
+  // Espionage menu — slots, standing guard, and a target→mission two-step.
+  function openEspionage() {
+    var civ = state.civs.player;
+    if (!civ.spyOps) civ.spyOps = [];
+    var actions = [];
+    var slots = spySlots(civ);
+    actions.push({ header: true, icon: '🕵', title: 'Espionage', sub: civ.spyOps.length + '/' + slots + ' spies deployed · next slot at ' + (slots < 2 ? 'the Renaissance' : 'max') });
+    civ.spyOps.forEach(function (op) {
+      if (op.type === 'counter') {
+        actions.push({ icon: '⛨', title: 'Counterintelligence active', sub: 'Guarding your empire · tap to recall', do: function () { cancelCounterintel(civ); showToast('Counterintel recalled'); closeModal(); openEspionage(); } });
+      } else {
+        var m = SPY_MISSIONS[op.type];
+        var tn = CIVS[op.target] ? CIVS[op.target].name : op.target;
+        actions.push({ icon: m.icon, title: m.name + ' → ' + tn, sub: op.turnsLeft + ' turn' + (op.turnsLeft !== 1 ? 's' : '') + ' to resolution', disabled: true, do: function () {} });
+      }
+    });
+    if (civ.spyOps.length < slots) {
+      AI_SIDES.forEach(function (aiId) {
+        var ai = state.civs[aiId];
+        if (!ai || !ai.cities.length) return;
+        actions.push({ icon: '➤', title: 'Deploy vs ' + CIVS[aiId].name, sub: 'Pick a mission', primary: true, do: function () { closeModal(); openSpyMissionPicker(aiId); } });
+      });
+      if (!civHasCounterintel(civ)) {
+        actions.push({ icon: '⛨', title: 'Counterintelligence', sub: SPY_MISSIONS.counter.desc, do: function () { assignSpy(civ, 'counter'); showToast('Counterintel active', 'success'); save(); closeModal(); openEspionage(); } });
+      }
+    }
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    renderDiplomacyActions(actions, 'Espionage');
+  }
+  function openSpyMissionPicker(targetId) {
+    var civ = state.civs.player;
+    var actions = [];
+    actions.push({ header: true, icon: '🕵', title: 'Mission vs ' + CIVS[targetId].name, sub: 'Resolves in N turns · shown odds include their defenses' });
+    SPY_MISSION_ORDER.forEach(function (k) {
+      if (k === 'counter') return;
+      var m = SPY_MISSIONS[k];
+      var odds = Math.round(spyOdds(civ, targetId, k) * 100);
+      actions.push({ icon: m.icon, title: m.name + ' (' + odds + '%)', sub: m.desc + ' · ' + m.turns + ' turns', do: function () {
+        if (assignSpy(civ, k, targetId)) { showToast('Spy deployed: ' + m.name, 'success'); save(); }
+        closeModal(); draw();
+      } });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); openEspionage(); } });
+    renderDiplomacyActions(actions, 'Mission');
+  }
+
+  // =====================================================================
   // AI DIPLOMACY — dynamic tension
   // Each AI builds grievance toward other civs over time: cities crowding its
   // borders, a rival's runaway power, and hostile acts all raise tension; it
@@ -7278,9 +8125,18 @@
       var plTension = tensionOf(aiId, 'player');
       if (atWar(aiId, 'player')) {
         var plMil = militaryCount(state.civs.player);
-        // Offer peace if weaker — but a furious AI keeps fighting (tension cuts
-        // its willingness to sue for peace).
-        if (aiMil < plMil * 0.5 && aiCiv.cities.length <= state.civs.player.cities.length && state.turn >= 8) {
+        // A broken AI sues for VASSALAGE: it lost its original capital, or is
+        // down to a rump state against a far stronger player. Capitulation
+        // beats annihilation — and spares the player the mop-up war.
+        var lostCapital = !aiCiv.cities.some(function (ct) { return ct.capital && ct.originalCiv === aiId; });
+        var rump = aiCiv.cities.length <= 2 && civPower(aiCiv) < civPower(state.civs.player) * 0.45;
+        if (!isVassal(aiId) && (lostCapital || rump) && state.turn >= 10) {
+          if (!state.pendingPeace && rnd() < 0.4) {
+            state.pendingPeace = { from: aiId, kind: 'vassal' };
+          }
+        } else if (aiMil < plMil * 0.5 && aiCiv.cities.length <= state.civs.player.cities.length && state.turn >= 8) {
+          // Offer peace if weaker — but a furious AI keeps fighting (tension cuts
+          // its willingness to sue for peace).
           if (!state.pendingPeace && rnd() < 0.3 * per.peaceMul * (1 - plTension / 150)) {
             state.pendingPeace = { from: aiId };
           }
@@ -7330,6 +8186,53 @@
     });
   }
 
+  // =====================================================================
+  // VASSALS — a beaten AI capitulates instead of fighting to the last city.
+  // A vassal keeps its cities but pays tribute, follows its overlord into
+  // wars, and counts as subdued for Domination. Player-only overlord.
+  // =====================================================================
+  var VASSAL_TRIBUTE = 4;          // gold/turn a vassal pays (capped by its purse)
+
+  function isVassal(civId) { return !!(state.vassals && state.vassals[civId]); }
+  function vassalsOf(overlordId) {
+    var out = [];
+    for (var k in (state.vassals || {})) if (state.vassals[k] === overlordId) out.push(k);
+    return out;
+  }
+  function makeVassal(civId, overlordId) {
+    if (!state.vassals) state.vassals = {};
+    state.vassals[civId] = overlordId;
+    makePeace(overlordId, civId);
+    // The new vassal joins its overlord's current wars.
+    CIV_SIDES.forEach(function (x) {
+      if (x === civId || x === overlordId) return;
+      if (atWar(overlordId, x) && !atWar(civId, x)) state.diplomacy[dipKey(civId, x)] = 'war';
+    });
+    logEvent((CIVS[civId] ? CIVS[civId].name : civId) + ' capitulated — now your vassal', 'success');
+    chronicle(leaderOf(civId).name + ' bent the knee and became your vassal.');
+    checkDominationByVassalage(overlordId);
+  }
+  function releaseVassal(civId) {
+    if (!state.vassals || !state.vassals[civId]) return;
+    delete state.vassals[civId];
+    // Gratitude: releasing a vassal wipes most of its grudge.
+    if (AI_SIDES.indexOf(civId) >= 0) addTension(civId, 'player', -25, 'released');
+    logEvent((CIVS[civId] ? CIVS[civId].name : civId) + ' released from vassalage', 'info');
+  }
+  // Domination now counts a rival as subdued if you hold its original capital
+  // OR it is your vassal — vassalizing the last rival wins without the mop-up.
+  function checkDominationByVassalage(overlordId) {
+    if (state.victory || overlordId !== 'player') return;
+    var rivals = CIV_SIDES.filter(function (id) { return id !== overlordId; });
+    var subdued = 0;
+    rivals.forEach(function (rid) {
+      if (isVassal(rid)) { subdued++; return; }
+      var holdsCap = state.civs[overlordId].cities.some(function (ct) { return ct.capital && ct.originalCiv === rid; });
+      if (holdsCap) subdued++;
+    });
+    if (subdued >= rivals.length) declareVictory(overlordId, 'domination');
+  }
+
   function showPeaceOffer() {
     if (!state.pendingPeace) return;
     var offer = state.pendingPeace;
@@ -7337,7 +8240,19 @@
     var fromName = CIVS[fromId] ? CIVS[fromId].name : 'Enemy';
     var kind = offer.kind || 'peace';
     var actions = [];
-    if (kind === 'alliance') {
+    if (kind === 'vassal') {
+      actions.push({
+        icon: '⚜', primary: true, title: 'Accept Capitulation',
+        sub: fromName + ' becomes your vassal · +' + VASSAL_TRIBUTE + 'g/turn tribute · joins your wars · counts for Domination',
+        do: function () { makeVassal(fromId, 'player'); sfxAlly(); showToast(fromName + ' is now your vassal', 'success'); state.pendingPeace = null; closeModal(); draw(); updateHud(); }
+      });
+      actions.push({
+        icon: '⚔', title: 'Refuse — finish them', danger: true,
+        sub: 'Continue the war',
+        do: function () { state.pendingPeace = null; closeModal(); draw(); }
+      });
+      renderDiplomacyActions(actions, fromName + ' Offers Capitulation');
+    } else if (kind === 'alliance') {
       actions.push({
         icon: '★', primary: true, title: 'Accept Alliance',
         sub: 'Permanent peace pact with ' + fromName,
@@ -7581,6 +8496,12 @@
       // Skip only if civ is fully eliminated (no cities, no units)
       if (!aiCiv || (aiCiv.cities.length === 0 && aiCiv.units.length === 0)) return;
       var aiName = CIVS[aiId].name;
+      // A vassal shows a status card instead of the usual war/trade options.
+      if (isVassal(aiId) && state.vassals[aiId] === 'player') {
+        actions.push({ header: true, icon: '⚜', title: aiName + ' — your vassal', sub: 'Pays ' + VASSAL_TRIBUTE + 'g/turn tribute · fights your wars · counts for Domination' });
+        actions.push({ icon: '🕊', title: 'Release ' + aiName, sub: 'Grant independence · they remember the kindness', do: function () { releaseVassal(aiId); showToast(aiName + ' released', 'success'); closeModal(); openDiplomacy(); } });
+        return;
+      }
       // Always fall back to a defined personality so the % displays + action
       // probabilities don't throw on a malformed save.
       var per = AI_PERSONALITIES[aiCiv.personality] || AI_PERSONALITIES.peaceful;
@@ -8005,6 +8926,13 @@
     if (state.lastCrisis) {
       actions.push({ header: true, disabled: true, icon: '⚠', title: 'Last Crisis: ' + state.lastCrisis.name, sub: state.lastCrisis.age + ' world · turn ' + state.lastCrisis.turn });
     }
+    // Era quests — standing objectives that pay Era Points once each.
+    var qdone = state.eraQuestsDone || {};
+    var openQ = ERA_QUESTS.filter(function (q) { return !qdone[q.id]; });
+    actions.push({ header: true, disabled: true, icon: '🎯', title: 'Era Quests — ' + (ERA_QUESTS.length - openQ.length) + '/' + ERA_QUESTS.length + ' complete', sub: 'Each pays Era Points toward your next Golden Age' });
+    openQ.slice(0, 4).forEach(function (q) {
+      actions.push({ icon: '◇', title: q.desc, sub: '+' + q.pts + ' era points', disabled: true, do: function () {} });
+    });
     actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
     renderDiplomacyActions(actions, 'Era & Government');
   }
@@ -8271,6 +9199,7 @@
         aiFoundReligion(c);  // and founds a faith once it can afford one
         aiReform(c);         // and reforms with a 2nd belief once it has reach
         aiReligiousSpread(c); // buy/send missionaries + inquisitors with spare faith
+        aiRunEspionage(id);   // fill free spy slots by personality
       });
 
       // Decay general bonuses + tick down government anarchy for all civs
@@ -8284,7 +9213,25 @@
         if (cv.governmentTurns > 0) cv.governmentTurns--;   // anarchy countdown
         if (cv.goldenAgeTurns > 0) cv.goldenAgeTurns--;     // golden-age countdown
         if (cv.edictTurns > 0) { cv.edictTurns--; if (cv.edictTurns <= 0) cv.edict = null; }  // edict lapses
+        processSpyOps(id);                                  // tick + resolve spy missions
       });
+
+      // Clan bribe wears off
+      if (state.barbBribe && state.barbBribe.turns > 0) {
+        state.barbBribe.turns--;
+        if (state.barbBribe.turns <= 0) state.barbBribe = null;
+      }
+
+      // Vassal tribute — each vassal sends gold to its overlord (capped by purse)
+      if (state.vassals) {
+        for (var vId in state.vassals) {
+          var vas = state.civs[vId], lord = state.civs[state.vassals[vId]];
+          if (!vas || !lord || !vas.cities.length) continue;
+          var pay = Math.min(VASSAL_TRIBUTE, Math.max(0, vas.gold));
+          vas.gold -= pay;
+          lord.gold += pay;
+        }
+      }
 
       // Lead-scaled era crisis when the world crosses into a new high age
       maybeFireEraCrisis();
@@ -8335,6 +9282,7 @@
       CIV_SIDES.forEach(function (id) { recomputeVisibility(id); });
       recomputeIncome('player');
       checkCsQuests();   // award alliances for quests completed during the turn
+      checkEraQuests();  // standing era objectives -> Era Points
 
       // Multi-turn movement: continue queued moves
       playerAutoMove();
@@ -9129,6 +10077,12 @@
     // Attack adjacent if any
     var adj = adjacentEnemy(u);
     if (adj) { attack(u, adj.unit); return; }
+    // Bribed clans march on the paymaster's chosen rival first (wider radius —
+    // they're being paid to go out of their way).
+    if (state.barbBribe && state.barbBribe.turns > 0) {
+      var bribed = findNearestOf(u, state.barbBribe.target, 8);
+      if (bribed) { aiStepToward(u, bribed); return; }
+    }
     // Step toward the closest player unit/city within 4 tiles, else wander
     var target = findNearestEnemy(u, 4);
     if (target) aiStepToward(u, target);
@@ -9767,6 +10721,11 @@
                       'Activate';
         actions.push({ icon: '✦', primary: true, title: 'Activate', sub: gpLabel, do: function () { closeModal(); activateGreatPerson(u); draw(); } });
       }
+      // Archaeologist — excavate the dig site underfoot
+      if (UNITS[u.type].dig) {
+        var site = digSiteAt(u.c, u.r);
+        actions.push({ icon: '⚱', primary: !!site, title: 'Excavate', sub: site ? 'Unearth ' + site.label + ' · +' + DIG_ERA_POINTS + ' era pts, +' + DIG_CULTURE + ' culture' : 'Move onto a ruins tile first', disabled: !site, do: function () { if (excavate(u)) { updateHud(); save(); } closeModal(); draw(); } });
+      }
       // Missionary — spread your faith to a nearby city (costs a charge)
       if (u.type === 'missionary') {
         var relM = civMajorityReligion(civPl);
@@ -9909,6 +10868,27 @@
       sub: curEd ? curEd.name + ' · ' + civPl.edictTurns + 'T left' : 'Proclaim a timed stance',
       do: function () { closeModal(); openEdicts(); }
     });
+
+    // Espionage — spy missions, unlocked from the Classical age
+    if (spySlots(civPl) > 0) {
+      var opsN = (civPl.spyOps || []).length;
+      actions.push({
+        icon: '🕵',
+        title: 'Espionage',
+        sub: opsN ? opsN + '/' + spySlots(civPl) + ' spies deployed' : 'Deploy spies · steal, sabotage, guard',
+        do: function () { closeModal(); openEspionage(); }
+      });
+    }
+
+    // Barbarian Clans — hire or bribe the raiders, while any roam
+    if (clansAvailable()) {
+      actions.push({
+        icon: '🏴',
+        title: 'Barbarian Clans',
+        sub: (state.barbBribe && state.barbBribe.turns > 0) ? 'Raiding ' + (CIVS[state.barbBribe.target] ? CIVS[state.barbBribe.target].name : '?') + ' · ' + state.barbBribe.turns + 'T' : 'Hire a raider · bribe the horde',
+        do: function () { closeModal(); openClans(); }
+      });
+    }
 
     // Ideology — a late-game culture identity, unlocked in the Modern age
     if (ideologyUnlocked(civPl)) {
@@ -11826,6 +12806,34 @@
     reformReligion: reformReligion,
     aiReform: aiReform,
     civMajorityReligion: civMajorityReligion,
+    SPY_MISSIONS: SPY_MISSIONS,
+    spySlots: spySlots,
+    spyOdds: spyOdds,
+    assignSpy: assignSpy,
+    processSpyOps: processSpyOps,
+    aiRunEspionage: aiRunEspionage,
+    civHasCounterintel: civHasCounterintel,
+    stealableTech: stealableTech,
+    openEspionage: openEspionage,
+    VASSAL_TRIBUTE: VASSAL_TRIBUTE,
+    isVassal: isVassal,
+    vassalsOf: vassalsOf,
+    makeVassal: makeVassal,
+    releaseVassal: releaseVassal,
+    checkDominationByVassalage: checkDominationByVassalage,
+    showPeaceOffer: showPeaceOffer,
+    digSiteAt: digSiteAt,
+    addDigSite: addDigSite,
+    excavate: excavate,
+    ERA_QUESTS: ERA_QUESTS,
+    checkEraQuests: checkEraQuests,
+    CLAN_HIRE_COST: CLAN_HIRE_COST,
+    CLAN_BRIBE_COST: CLAN_BRIBE_COST,
+    clansAvailable: clansAvailable,
+    hireRaider: hireRaider,
+    bribeClans: bribeClans,
+    findNearestOf: findNearestOf,
+    openClans: openClans,
     MISSIONARY_FAITH_COST: MISSIONARY_FAITH_COST,
     INQUISITOR_FAITH_COST: INQUISITOR_FAITH_COST,
     MISSIONARY_CHARGES: MISSIONARY_CHARGES,
