@@ -14,13 +14,27 @@
     massive: { w: 28, h: 28, label: 'Massive', desc: '28×28' }
   };
   var MAP_SIZE_ORDER = ['small', 'normal', 'large', 'huge', 'massive'];
+  // Each tier scales FOUR things across a smooth ladder: how hard the AI hits
+  // (aiAtkBonus), when it turns aggressive (aiAggroTurn), and — the big one —
+  // its ECONOMY: a yield handicap on AI production/science/gold (aiYield) and a
+  // growth handicap on AI food surplus (aiGrowth), plus a small starting-gold
+  // jump on the top tiers. The human is never handicapped; only AI rivals scale
+  // (city-states / barbarians are exempt). Normal = no handicaps (1.0).
   var DIFFICULTIES = {
-    chieftain: { label: 'Chieftain', desc: 'Very forgiving — passive AI', aiAtkBonus: -2, aiAggroTurn: 30, aiExtraWarrior: false },
-    easy:      { label: 'Easy',      desc: 'Relaxed AI, late aggression', aiAtkBonus: -1, aiAggroTurn: 20, aiExtraWarrior: false },
-    normal:    { label: 'Normal',    desc: 'Balanced challenge',          aiAtkBonus: 0,  aiAggroTurn: 10, aiExtraWarrior: false },
-    hard:      { label: 'Hard',      desc: 'Aggressive AI, tough fights',  aiAtkBonus: 1,  aiAggroTurn: 8,  aiExtraWarrior: true },
-    brutal:    { label: 'Brutal',    desc: 'Relentless — early rushes',    aiAtkBonus: 2,  aiAggroTurn: 5,  aiExtraWarrior: true }
+    chieftain: { label: 'Chieftain', desc: 'Passive AI · weak economy',        aiAtkBonus: -2, aiAggroTurn: 30, aiExtraWarrior: false, aiYield: 0.75, aiGrowth: 0.80, aiStartGold: 0 },
+    easy:      { label: 'Easy',      desc: 'Relaxed AI · slower to develop',    aiAtkBonus: -1, aiAggroTurn: 20, aiExtraWarrior: false, aiYield: 0.90, aiGrowth: 0.90, aiStartGold: 0 },
+    normal:    { label: 'Normal',    desc: 'Balanced · no handicaps',           aiAtkBonus: 0,  aiAggroTurn: 10, aiExtraWarrior: false, aiYield: 1.00, aiGrowth: 1.00, aiStartGold: 0 },
+    hard:      { label: 'Hard',      desc: 'Aggressive AI · stronger economy',  aiAtkBonus: 1,  aiAggroTurn: 8,  aiExtraWarrior: true,  aiYield: 1.20, aiGrowth: 1.15, aiStartGold: 20 },
+    brutal:    { label: 'Brutal',    desc: 'Relentless · fast, rich, early rush', aiAtkBonus: 2,  aiAggroTurn: 5,  aiExtraWarrior: true,  aiYield: 1.40, aiGrowth: 1.30, aiStartGold: 40 }
   };
+  // Active difficulty definition + the economic handicap for a given civ. The
+  // human (and city-states / barbarians) always run at 1.0; only AI rivals scale.
+  function diffOf() { return DIFFICULTIES[(state && state.difficulty) || selectedDifficulty || 'normal'] || DIFFICULTIES.normal; }
+  function aiEcoMult(civId, key) {
+    if (civId === 'player' || AI_SIDES.indexOf(civId) < 0) return 1;
+    var d = diffOf();
+    return (key === 'growth' ? d.aiGrowth : d.aiYield) || 1;
+  }
   // Slider order, easiest → hardest
   var DIFFICULTY_ORDER = ['chieftain', 'easy', 'normal', 'hard', 'brutal'];
   var selectedMapSize = 'normal';
@@ -2457,10 +2471,11 @@
     });
     var starterWar = factionUnitFor(state.civs[civId], 'warrior');   // Ferrum starts with a Legionary
     if (ns.length > 0) spawnUnit(civId, starterWar, ns[0][0], ns[0][1]);
-    // Hard difficulty: AI gets an extra warrior
+    // Higher difficulty: AI gets an extra warrior + a small starting-gold jump.
     var diff = DIFFICULTIES[state.difficulty || 'normal'] || DIFFICULTIES.normal;
-    if (diff.aiExtraWarrior && civId !== 'player' && ns.length > 1) {
-      spawnUnit(civId, starterWar, ns[1][0], ns[1][1]);
+    if (civId !== 'player') {
+      if (diff.aiExtraWarrior && ns.length > 1) spawnUnit(civId, starterWar, ns[1][0], ns[1][1]);
+      if (diff.aiStartGold) state.civs[civId].gold += diff.aiStartGold;
     }
   }
 
@@ -5800,6 +5815,15 @@
     gpt += tradeRouteGold(civId);   // peaceful income from active trade routes
     // Tithe belief — the founder earns gold per city worldwide following their faith.
     gpt += founderYield(civ, 'founderGold');
+    // Difficulty economy handicap (AI rivals only): scale science, and scale gold
+    // only when it's a surplus so a deficit is never amplified into bankruptcy.
+    // Science is left unrounded (it's never shown for the AI) so the fractional
+    // edge compounds through techProgress instead of collapsing adjacent tiers.
+    var eco = aiEcoMult(civId, 'yield');
+    if (eco !== 1) {
+      spt = spt * eco;
+      if (gpt > 0) gpt = Math.round(gpt * eco);
+    }
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
   }
@@ -6387,8 +6411,11 @@
       city.revoltTurns = 0;
     }
 
-    // Growth
-    city.food += (y.food - city.pop * 2);
+    // Growth — difficulty scales an AI city's food SURPLUS only (a deficit still
+    // starves at full rate; we never make higher difficulty starve the AI faster).
+    var net = y.food - city.pop * 2;
+    if (net > 0) net *= aiEcoMult(city.civ, 'growth');
+    city.food += net;
     if (city.food < 0) {
       city.pop = Math.max(1, city.pop - 1);
       city.food = 0;
@@ -6401,8 +6428,9 @@
       if (city.civ === 'player') { logEvent(city.name + ' grew to pop ' + city.pop, 'success'); queueYieldFx(city.c, city.r, '+1 pop', '#7bff9d', 'rgba(0,255,136,0.30)'); }
     }
 
-    // Production — a city in open revolt produces nothing this turn.
-    city.prod += revolting ? 0 : y.prod;
+    // Production — a city in open revolt produces nothing this turn. AI rivals'
+    // output is scaled by the difficulty yield handicap.
+    city.prod += (revolting ? 0 : y.prod) * aiEcoMult(city.civ, 'yield');
     var p = city.producing;
     var cost = 0, isBuilding = false;
     if (UNITS[p]) cost = UNITS[p].cost;
@@ -11566,6 +11594,9 @@
     setGovernment: setGovernment,
     aiPickGovernment: aiPickGovernment,
     recomputeIncome: recomputeIncome,
+    DIFFICULTIES: DIFFICULTIES,
+    diffOf: diffOf,
+    aiEcoMult: aiEcoMult,
     activeGovernment: activeGovernment,
     openGovernment: openGovernment,
     accrueEraPoints: accrueEraPoints,
