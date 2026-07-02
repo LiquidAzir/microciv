@@ -1893,28 +1893,30 @@
       map.push(row);
     }
 
-    // Base terrain noise with climate bands.
-    // Latitude is r normalized to 0..1 where 0=north (cold), 1=south (hot).
+    // Base terrain noise with climate bands. Latitude is r normalized to 0..1
+    // (0 = north/cold, 1 = south/hot). The extremes are kept NARROW and gentle so
+    // only the true poles are tundra and only the deep south is desert — the broad
+    // temperate middle stays lush and workable. Bands are fractions of the height,
+    // so the terrain mix is consistent at every map size.
     for (var r = 0; r < MAP_H; r++) {
       var lat = r / (MAP_H - 1);
-      var cold = Math.max(0, 1 - lat * 2.2);        // strong near top
-      var hot  = Math.max(0, (lat - 0.55) * 2.2);   // strong near bottom
+      var cold = Math.max(0, 1 - lat * 3.0);        // strong only in the top ~17%
+      var hot  = Math.max(0, (lat - 0.68) * 3.1);   // strong only in the bottom ~15%
       for (var c = 0; c < MAP_W; c++) {
         var t = map[r][c];
         var roll = rnd();
-        // Cold band: tundra dominant near top
-        if (cold > 0.5 && roll < 0.55) { t.terrain = 'tundra'; continue; }
-        if (cold > 0.2 && roll < 0.25) { t.terrain = 'tundra'; continue; }
-        // Hot band: desert dominant near bottom
-        if (hot > 0.5 && roll < 0.55) { t.terrain = 'desert'; continue; }
-        if (hot > 0.2 && roll < 0.30) { t.terrain = 'desert'; continue; }
-        // Temperate
-        if (roll < 0.34) t.terrain = 'grass';
-        else if (roll < 0.58) t.terrain = 'plains';
-        else if (roll < 0.74) t.terrain = 'forest';
-        else if (roll < 0.85) t.terrain = 'hills';
-        else if (roll < 0.91) t.terrain = 'desert';
-        else if (roll < 0.96) t.terrain = 'mountain';
+        // Polar tundra / equatorial desert — thinner and less dense than before.
+        if (cold > 0.5 && roll < 0.45) { t.terrain = 'tundra'; continue; }
+        if (cold > 0.2 && roll < 0.18) { t.terrain = 'tundra'; continue; }
+        if (hot > 0.5 && roll < 0.45) { t.terrain = 'desert'; continue; }
+        if (hot > 0.2 && roll < 0.18) { t.terrain = 'desert'; continue; }
+        // Temperate core — grass/plains/forest dominate; desert no longer intrudes
+        // here, so fertile land is the rule and badlands are a regional accent.
+        if (roll < 0.32) t.terrain = 'grass';
+        else if (roll < 0.55) t.terrain = 'plains';
+        else if (roll < 0.71) t.terrain = 'forest';
+        else if (roll < 0.83) t.terrain = 'hills';
+        else if (roll < 0.90) t.terrain = 'mountain';
         else t.terrain = 'water';
       }
     }
@@ -1946,10 +1948,16 @@
     for (var r = 0; r < MAP_H; r++) {
       for (var c = 0; c < MAP_W; c++) {
         if (c === 0 || r === 0 || c === MAP_W - 1 || r === MAP_H - 1) {
-          if (rnd() < 0.35) map[r][c].terrain = 'water';
+          if (rnd() < 0.12) map[r][c].terrain = 'water';
         }
       }
     }
+
+    // Interior lakes / small seas — scaled by AREA so water coverage stays
+    // roughly constant at every map size (the perimeter frame alone thins out on
+    // big maps) and naval units have water to sail inland. Kept as small organic
+    // blobs so they never wall the continent into disconnected pieces.
+    carveLakes(map, Math.round(MAP_W * MAP_H / 70));
 
     // Sprinkle resources across the map based on terrain compatibility
     var resourceList = Object.keys(RESOURCES);
@@ -1999,6 +2007,11 @@
     }
     ensureResource('oil', Math.max(3, Math.round(MAP_W / 6)));
     ensureResource('coal', Math.max(2, Math.round(MAP_W / 8)));
+    // Floors for the early-game staples too, so no map (or start) is starved of
+    // the strategic + food resources that drive the opening.
+    ensureResource('iron',   Math.max(2, Math.round(MAP_W / 8)));
+    ensureResource('horses', Math.max(2, Math.round(MAP_W / 8)));
+    ensureResource('wheat',  Math.max(2, Math.round(MAP_W / 9)));
 
     // Natural wonders — scale with map size so big maps aren't covered by just
     // one volcano. Small 1 · Normal 2 · Large 3 · Huge 4 · Massive 5 of each.
@@ -2029,6 +2042,34 @@
       if (nc >= 0 && nc < MAP_W && nr >= 0 && nr < MAP_H) out.push([nc, nr]);
     }
     return out;
+  }
+
+  // Carve `seeds` organic interior water bodies by flood-growing small blobs of
+  // random size from random inland tiles. Small blobs keep the continent
+  // connected while giving inland coasts, lakes, and the odd small sea.
+  function carveLakes(map, seeds) {
+    for (var k = 0; k < seeds; k++) {
+      var c = rndInt(2, MAP_W - 3), r = rndInt(2, MAP_H - 3);
+      var t0 = map[r][c];
+      if (t0.terrain === 'water' || TERRAIN[t0.terrain].wonder) continue;
+      var target = rndInt(2, 6);
+      var seen = {}; seen[c + ',' + r] = 1;
+      map[r][c].terrain = 'water';
+      var made = 1, frontier = neighborsRaw(c, r);
+      while (made < target && frontier.length) {
+        var idx = Math.floor(rnd() * frontier.length);
+        var pick = frontier.splice(idx, 1)[0];
+        var key = pick[0] + ',' + pick[1];
+        if (seen[key]) continue;
+        seen[key] = 1;
+        var pt = map[pick[1]][pick[0]];
+        if (TERRAIN[pt.terrain].wonder) continue;   // don't drown natural wonders
+        pt.terrain = 'water';
+        made++;
+        var more = neighborsRaw(pick[0], pick[1]);
+        for (var m = 0; m < more.length; m++) if (!seen[more[m][0] + ',' + more[m][1]]) frontier.push(more[m]);
+      }
+    }
   }
 
   function placeRivers(map, count) {
@@ -2125,6 +2166,34 @@
     }
   }
 
+  // Rough per-tile food value used only to rate candidate city sites.
+  function tileFoodScore(terr) {
+    return { grass: 2, plains: 1, forest: 1, hills: 1, geyser: 2, water: 1, desert: 0, tundra: 0, mountain: 0, volcano: 0 }[terr] || 0;
+  }
+  // Quality of a would-be capital: the food, resources, workable land, and fresh
+  // water within two rings. Drives balanced starts — every civ gets a site near
+  // the top of the distribution, so no one spawns in a wasteland while a rival
+  // lands in a breadbasket.
+  function startQuality(map, c, r) {
+    var seen = {}; seen[c + ',' + r] = 1;
+    var q = [[c, r, 0]], hd = 0, food = 0, res = 0, workable = 0, fresh = 0;
+    while (hd < q.length) {
+      var cur = q[hd++], t = map[cur[1]][cur[0]];
+      food += tileFoodScore(t.terrain) + (t.river ? 1 : 0);
+      if (!TERRAIN[t.terrain].impassable) workable++;
+      if (t.resource) res++;
+      if (t.river) fresh = 1;
+      if (cur[2] < 2) {
+        var ns = neighborsRaw(cur[0], cur[1]);
+        for (var i = 0; i < ns.length; i++) {
+          var k = ns[i][0] + ',' + ns[i][1];
+          if (!seen[k]) { seen[k] = 1; q.push([ns[i][0], ns[i][1], cur[2] + 1]); }
+        }
+      }
+    }
+    return food + res * 2 + workable * 0.5 + fresh * 2;
+  }
+
   function pickStart(map, awayFrom) {
     // awayFrom can be a single [c,r] or an array of them
     var existing = [];
@@ -2134,7 +2203,11 @@
     // Scale minimum distance with map size
     var minDist = Math.max(4, Math.floor(Math.min(MAP_W, MAP_H) * 0.55));
     var fallbackDist = Math.max(3, minDist - 2);
-    for (var tries = 0; tries < 600; tries++) {
+    // Scan many valid sites and keep the HIGHEST-quality one. Every civ maximises
+    // the same score, so starts cluster near the top → high floor, low spread.
+    var best = null, bestScore = -Infinity;
+    for (var tries = 0; tries < 900; tries++) {
+      if (tries === 600 && !best) minDist = fallbackDist;   // relax spacing only if crowded
       var c = rndInt(2, MAP_W - 3);
       var r = rndInt(2, MAP_H - 3);
       var t = map[r][c];
@@ -2149,10 +2222,11 @@
       for (var j = 0; j < ns.length; j++) {
         if (!TERRAIN[map[ns[j][1]][ns[j][0]].terrain].impassable) ok++;
       }
-      if (ok >= 4) return [c, r];
-      if (tries > 300) minDist = fallbackDist;
+      if (ok < 4) continue;
+      var score = startQuality(map, c, r);
+      if (score > bestScore) { bestScore = score; best = [c, r]; }
     }
-    return [Math.floor(MAP_W / 2), Math.floor(MAP_H / 2)];
+    return best || [Math.floor(MAP_W / 2), Math.floor(MAP_H / 2)];
   }
 
   // =====================================================================
@@ -11651,6 +11725,11 @@
     seedToCode: seedToCode,
     codeToSeed: codeToSeed,
     seedFromString: seedFromString,
+    generateMap: generateMap,
+    pickStart: pickStart,
+    MAP_SIZES: MAP_SIZES,
+    _setSize: function (k) { var m = MAP_SIZES[k] || MAP_SIZES.normal; MAP_W = m.w; MAP_H = m.h; },
+    mapWH: function () { return [MAP_W, MAP_H]; },
     newGame: newGame,
     startDaily: startDaily,
     dailyKeyForToday: dailyKeyForToday,
