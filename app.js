@@ -106,7 +106,11 @@
     great_scientist: { name: 'Great Scientist', cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚗', tech: null, civilian: true, great: true },
     great_engineer:  { name: 'Great Engineer',  cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚙', tech: null, civilian: true, great: true },
     great_merchant:  { name: 'Great Merchant',  cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '⚖', tech: null, civilian: true, great: true },
-    great_artist:    { name: 'Great Artist',    cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '✦', tech: null, civilian: true, great: true }
+    great_artist:    { name: 'Great Artist',    cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '✦', tech: null, civilian: true, great: true },
+    great_prophet:   { name: 'Great Prophet',   cost: 0, hp: 4, atk: 0, def: 1, move: 2, glyph: '☧', tech: null, civilian: true, great: true, prophet: true },
+    // Religious units — bought with Faith (not production), spread / defend a faith.
+    missionary:      { name: 'Missionary',      cost: 0, hp: 6, atk: 0, def: 1, move: 3, glyph: '☩', tech: null, civilian: true, faithUnit: true },
+    inquisitor:      { name: 'Inquisitor',      cost: 0, hp: 6, atk: 0, def: 2, move: 2, glyph: '☨', tech: null, civilian: true, faithUnit: true, purge: true }
   };
 
   // Unit upgrade paths: type -> { to, tech, cost }
@@ -471,20 +475,199 @@
     { id: 'verdant', name: 'Verdant Path',     icon: '🍃' },
     { id: 'ironvow', name: 'The Iron Vow',     icon: '⚔' }
   ];
-  // Beliefs — tithe is founder-side (gold per following city anywhere); the rest
-  // boost every city that FOLLOWS the religion (folded by religionCityEff).
+  // Beliefs — founder-side ones (founderGold / founderFaith) pay the FOUNDER per
+  // following city anywhere; cityEff ones boost every city that FOLLOWS the faith
+  // (folded by religionCityEff); `spread` sharpens conversion pressure/range. A
+  // religion picks one belief at founding and may add a 2nd via Reformation.
   var BELIEFS = {
-    tithe:       { name: 'Tithe',       desc: '+1 gold to you per city that follows your faith', founderGold: 1 },
-    piety:       { name: 'Piety',       desc: '+1 culture in every city that follows your faith', cityEff: { culture: 1 } },
-    scholarship: { name: 'Scholarship', desc: '+1 science in every city that follows your faith', cityEff: { sci: 1 } },
-    fertility:   { name: 'Fertility',   desc: '+1 food in every city that follows your faith',    cityEff: { food: 1 } }
+    tithe:       { name: 'Tithe',          desc: '+1 gold to you per city that follows your faith',     founderGold: 1 },
+    pilgrimage:  { name: 'Pilgrimage',     desc: '+1 faith to you per city that follows your faith',    founderFaith: 1 },
+    piety:       { name: 'Piety',          desc: '+1 culture in every city that follows your faith',    cityEff: { culture: 1 } },
+    scholarship: { name: 'Scholarship',    desc: '+1 science in every city that follows your faith',    cityEff: { sci: 1 } },
+    fertility:   { name: 'Fertility',      desc: '+1 food in every city that follows your faith',       cityEff: { food: 1 } },
+    stewardship: { name: 'Stewardship',    desc: '+1 production in every city that follows your faith', cityEff: { prod: 1 } },
+    prosperity:  { name: 'Prosperity',     desc: '+1 gold in every city that follows your faith',       cityEff: { gold: 1 } },
+    zeal:        { name: 'Missionary Zeal', desc: 'Your faith spreads faster and 1 hex farther',        spread: { pressure: 0.6, range: 1 } }
   };
-  var BELIEF_ORDER = ['tithe', 'piety', 'scholarship', 'fertility'];
+  var BELIEF_ORDER = ['tithe', 'pilgrimage', 'piety', 'scholarship', 'fertility', 'stewardship', 'prosperity', 'zeal'];
+
+  // PANTHEONS — a cheap, EARLY faith pick (before a full religion) that buffs ALL
+  // of the civ's own cities regardless of which faith they follow. Kept after a
+  // religion is founded. One per civ.
+  var PANTHEONS = {
+    fertility_rites: { name: 'Fertility Rites',   desc: '+1 food in all your cities',       cityEff: { food: 1 } },
+    god_of_forge:    { name: 'God of the Forge',  desc: '+1 production in all your cities',  cityEff: { prod: 1 } },
+    god_of_commerce: { name: 'God of Commerce',   desc: '+1 gold in all your cities',        cityEff: { gold: 1 } },
+    goddess_wisdom:  { name: 'Goddess of Wisdom', desc: '+1 science in all your cities',      cityEff: { sci: 1 } },
+    stone_circles:   { name: 'Stone Circles',     desc: '+1 faith per turn per city',        faith: 1 }
+  };
+  var PANTHEON_ORDER = ['fertility_rites', 'god_of_forge', 'god_of_commerce', 'goddess_wisdom', 'stone_circles'];
+  var PANTHEON_COST = 20;         // faith spent to adopt a pantheon (cheap, early)
   var RELIGION_FOUND_COST = 60;   // faith banked before a faith can be founded
+  var REFORMATION_FOLLOWERS = 4;  // following cities before a faith may add a 2nd belief
   var RELIGION_RANGE = 5;         // hexes a holy/religious city radiates pressure
   var RELIGION_VICTORY_FRAC = 0.6; // share of all cities needed for a Religious win
 
-  // Faith generated per turn by a civ's holy buildings.
+  // The belief object(s) a religion carries (founding belief + optional Reformation belief).
+  function beliefsOf(rd) {
+    if (!rd) return [];
+    var out = [];
+    if (rd.belief && BELIEFS[rd.belief]) out.push(BELIEFS[rd.belief]);
+    if (rd.belief2 && BELIEFS[rd.belief2]) out.push(BELIEFS[rd.belief2]);
+    return out;
+  }
+  // Founder-side yield (founderGold / founderFaith) = per-belief rate × follower cities.
+  function founderYield(civ, key) {
+    if (!civ || !civ.religionId) return 0;
+    var per = 0;
+    beliefsOf(religionDef(civ.religionId)).forEach(function (b) { if (b[key]) per += b[key]; });
+    return per * religionFollowerCount(civ.religionId);
+  }
+  // Extra spread pressure / range a religion's beliefs grant (Missionary Zeal).
+  function religionSpread(rid) {
+    var extraP = 0, extraR = 0;
+    beliefsOf(religionDef(rid)).forEach(function (b) { if (b.spread) { extraP += b.spread.pressure || 0; extraR += b.spread.range || 0; } });
+    return { pressure: extraP, range: extraR };
+  }
+  // Pantheon helpers — a civ-wide buff on the owner's own cities.
+  function pantheonDef(civ) { return civ && civ.pantheon ? PANTHEONS[civ.pantheon] : null; }
+  function pantheonEff(civ, key) { var p = pantheonDef(civ); return (p && p.cityEff && p.cityEff[key]) || 0; }
+  function canFoundPantheon(civ) { return civ && !civ.pantheon && (civ.faith || 0) >= PANTHEON_COST; }
+  function foundPantheon(civ, id) {
+    if (!canFoundPantheon(civ) || !PANTHEONS[id]) return false;
+    civ.pantheon = id;
+    civ.faith = Math.max(0, (civ.faith || 0) - PANTHEON_COST);
+    recomputeIncome(civ.id);
+    return true;
+  }
+  // Reformation — a founded faith with enough reach may add a second belief.
+  function canReform(civ) {
+    if (!civ || !civ.religionId) return false;
+    var rd = religionDef(civ.religionId);
+    return rd && !rd.belief2 && religionFollowerCount(civ.religionId) >= REFORMATION_FOLLOWERS;
+  }
+  function reformReligion(civ, belief2) {
+    if (!canReform(civ) || !BELIEFS[belief2]) return false;
+    var rd = religionDef(civ.religionId);
+    if (rd.belief === belief2) return false;    // can't double up the same belief
+    rd.belief2 = belief2;
+    recomputeIncome(civ.id);
+    return true;
+  }
+  // The faith a civ identifies with: the one it founded, else its cities' majority.
+  function civMajorityReligion(civ) {
+    if (!civ) return null;
+    if (civ.religionId) return civ.religionId;
+    var counts = {}, best = null, bestN = 0;
+    (civ.cities || []).forEach(function (ct) {
+      if (!ct.religion) return;
+      counts[ct.religion] = (counts[ct.religion] || 0) + 1;
+      if (counts[ct.religion] > bestN) { bestN = counts[ct.religion]; best = ct.religion; }
+    });
+    return best;
+  }
+
+  // --- Religious units & faith economy ------------------------------------
+  var MISSIONARY_FAITH_COST = 40;   // faith to buy a Missionary
+  var INQUISITOR_FAITH_COST = 30;   // faith to buy an Inquisitor
+  var MISSIONARY_CHARGES    = 2;    // conversions a Missionary can perform
+  var CONVERSION_LOCK_TURNS = 8;    // turns a purged city resists reconversion
+
+  function faithUnitCost(type) { return type === 'missionary' ? MISSIONARY_FAITH_COST : type === 'inquisitor' ? INQUISITOR_FAITH_COST : 0; }
+  function canBuyFaithUnit(civ, type) {
+    if (!civ || !civ.cities.length || !civMajorityReligion(civ)) return false;   // need a faith to carry
+    return (civ.faith || 0) >= faithUnitCost(type);
+  }
+  // Buy a religious unit with faith; spawns it near the given city.
+  function buyFaithUnit(civ, city, type) {
+    if (!canBuyFaithUnit(civ, type) || !city) return null;
+    var spot = findSpawnTile(city, type);
+    if (!spot) return null;
+    civ.faith = Math.max(0, (civ.faith || 0) - faithUnitCost(type));
+    var u = spawnUnit(civ.id, type, spot[0], spot[1]);
+    if (u && type === 'missionary') u.spreadCharges = MISSIONARY_CHARGES;
+    return u;
+  }
+  // The city on a unit's tile, else an adjacent one, matching an optional filter.
+  function cityOnOrAdjacent(unit, filter) {
+    var here = tileAt(unit.c, unit.r);
+    if (here && here.city && (!filter || filter(here.city))) return here.city;
+    var ns = neighbors(unit.c, unit.r);
+    for (var i = 0; i < ns.length; i++) {
+      var t = tileAt(ns[i][0], ns[i][1]);
+      if (t && t.city && (!filter || filter(t.city))) return t.city;
+    }
+    return null;
+  }
+  // Missionary: convert a nearby city to the unit's faith, spending one charge.
+  function missionarySpread(unit) {
+    var civ = state.civs[unit.civ];
+    var rel = civMajorityReligion(civ);
+    if (!rel) return false;
+    var target = cityOnOrAdjacent(unit, function (ct) { return ct.religion !== rel && !ct.holyCity && !(ct.religionLockTurns > 0); });
+    if (!target) return false;
+    target.religion = rel;
+    unit.spreadCharges = (unit.spreadCharges || 1) - 1;
+    if (unit.civ === 'player') { sfxBuild(); logEvent(UNITS[unit.type].name + ' spread the faith to ' + target.name, 'success'); }
+    if (unit.spreadCharges <= 0) killUnit(unit); else unit.moves = 0;
+    return true;
+  }
+  // Inquisitor: reconvert one of your cities to your faith and lock it for a while.
+  function inquisitorPurge(unit) {
+    var civ = state.civs[unit.civ];
+    var rel = civMajorityReligion(civ);
+    if (!rel) return false;
+    var target = cityOnOrAdjacent(unit, function (ct) { return ct.civ === unit.civ; });
+    if (!target) return false;
+    target.religion = rel;
+    target.religionLockTurns = CONVERSION_LOCK_TURNS;
+    if (unit.civ === 'player') { sfxBuild(); logEvent('Inquisitor sanctified ' + target.name, 'success'); }
+    killUnit(unit);
+    return true;
+  }
+  // Great Prophet helpers — found for free, or imprint the faith on nearby cities.
+  function prophetCanFound(civ) { return civ && !civ.religionId && foundedReligionCount() < RELIGION_POOL.length; }
+  function prophetSpread(unit) {
+    var civ = state.civs[unit.civ];
+    var rel = civMajorityReligion(civ);
+    if (!rel) return false;
+    var tiles = [[unit.c, unit.r]].concat(neighbors(unit.c, unit.r));
+    var any = false;
+    tiles.forEach(function (xy) {
+      var t = tileAt(xy[0], xy[1]);
+      if (t && t.city && !t.city.holyCity && t.city.religion !== rel) { t.city.religion = rel; any = true; }
+    });
+    return any;
+  }
+  // AI faith play: purge a heretical home city, then send "a missionary" (abstract
+  // — spends the faith cost) to convert a rival/unconverted city near its borders.
+  function aiReligiousSpread(civ) {
+    var rel = civ.religionId;
+    if (!rel) return;
+    if ((civ.faith || 0) >= INQUISITOR_FAITH_COST) {
+      for (var i = 0; i < civ.cities.length; i++) {
+        var cc = civ.cities[i];
+        if (!cc.holyCity && cc.religion && cc.religion !== rel) { cc.religion = rel; cc.religionLockTurns = CONVERSION_LOCK_TURNS; civ.faith -= INQUISITOR_FAITH_COST; break; }
+      }
+    }
+    if ((civ.faith || 0) >= MISSIONARY_FAITH_COST) {
+      var best = null, bestD = Infinity;
+      CIV_SIDES.concat(['cs']).forEach(function (cid) {
+        var c = state.civs[cid];
+        if (!c || !c.cities) return;
+        c.cities.forEach(function (ct) {
+          if (ct.religion === rel || ct.holyCity || ct.religionLockTurns > 0) return;
+          var d = Infinity;
+          civ.cities.forEach(function (mc) { d = Math.min(d, hexDist([ct.c, ct.r], [mc.c, mc.r])); });
+          if (d <= RELIGION_RANGE + 2 && d < bestD) { bestD = d; best = ct; }
+        });
+      });
+      if (best) { best.religion = rel; civ.faith -= MISSIONARY_FAITH_COST; }
+    }
+  }
+
+  // Faith generated per turn: holy buildings + Stone Circles pantheon + the
+  // Pilgrimage belief (founder faith per following city).
   function faithPerTurn(civ) {
     var f = 0;
     civ.cities.forEach(function (ct) {
@@ -493,6 +676,9 @@
       if (b.temple) f += BUILDINGS.temple.faith;
       if (b.cathedral) f += BUILDINGS.cathedral.faith;
     });
+    var pd = pantheonDef(civ);
+    if (pd && pd.faith) f += pd.faith * civ.cities.length;
+    f += founderYield(civ, 'founderFaith');
     return f;
   }
   function canFoundReligion(civ) {
@@ -500,12 +686,12 @@
   }
   function foundedReligionCount() { return Object.keys(state.religions || {}).length; }
   function religionDef(id) { return id && state.religions ? state.religions[id] : null; }
-  // The belief-yield a FOLLOWING city earns (piety/scholarship/fertility).
+  // The belief-yield a FOLLOWING city earns, summed across the faith's belief(s).
   function religionCityEff(city, key) {
     var rd = city && city.religion ? religionDef(city.religion) : null;
-    if (!rd) return 0;
-    var bel = BELIEFS[rd.belief];
-    return (bel && bel.cityEff && bel.cityEff[key]) || 0;
+    var s = 0;
+    beliefsOf(rd).forEach(function (b) { if (b.cityEff && b.cityEff[key]) s += b.cityEff[key]; });
+    return s;
   }
   // Cities anywhere that follow a given religion.
   function religionFollowerCount(id) {
@@ -733,6 +919,14 @@
     content += civicSum(civ, 'perCityStability') + ideologyEff(civ, 'perCityStability');   // civics / Order ideology
     content += distinctLuxuries(civ);          // +1 per distinct luxury enjoyed
     if (civ && civ.goldenAgeTurns > 0) content += 2;
+    // Religious harmony vs. heresy: a city sharing your empire's faith is content;
+    // one converted to a rival faith breeds unrest. Only matters once your empire
+    // actually has a faith of its own (founded or majority-adopted).
+    var stateRel = civMajorityReligion(civ);
+    if (stateRel && city.religion) {
+      if (city.religion === stateRel) content += 1;       // devout, on-message
+      else d += 2;                                        // heresy at home
+    }
     return d - content;
   }
   // The unrest a city must bank before it revolts (flat tolerance + size).
@@ -2182,7 +2376,7 @@
       currentTech: null,
       techProgress: 0,
       researchQueue: [],            // player-set research plan (prereq chain)
-      greatPoints: { culture: 0, military: 0 },
+      greatPoints: { culture: 0, military: 0, faith: 0 },
       greatPeopleSpawned: 0,
       generalBonus: null,
       economicCountdown: 0,
@@ -2350,10 +2544,23 @@
   var cloudPushTimer = 0, cloudPullPromise = null;
   var _cloudSig = null, _lastPushAt = 0, _pushBackoff = 0;
 
-  // Signature of a save with the volatile sync timestamp zeroed, so unchanged
-  // state (e.g. opening a menu) doesn't look like a change. Only the top-level
-  // `t` is stripped — nested per-entry timestamps (log, etc.) are real state.
-  function sigOf(raw) { return raw ? raw.replace(/"t"\s*:\s*\d+/, '"t":0') : null; }
+  // Signature of a save with volatile fields neutralised, so only a MEANINGFUL
+  // game-state change counts as a "change" worth a (capped) KV write. We strip:
+  //   • t         — the sync timestamp, bumped on every save
+  //   • cursor/camera/zoom/mode/selected — per-device VIEW + selection state,
+  //     which is never worth syncing cross-device and would otherwise make
+  //     panning / zooming / picking a unit look like a change to push.
+  // Nested per-entry timestamps (log, etc.) are real state and left intact.
+  function sigOf(raw) {
+    if (!raw) return null;
+    try {
+      var o = JSON.parse(raw);
+      o.t = 0; o.cursor = 0; o.camera = 0; o.zoom = 0; o.mode = 0; o.selected = 0;
+      return JSON.stringify(o);
+    } catch (e) {
+      return raw.replace(/"t"\s*:\s*\d+/, '"t":0');   // fallback: strip top-level t only
+    }
+  }
 
   // Debounced upload — coalesces rapid saves into one push. The cloud doesn't
   // need second-freshness; the throttle + dedup inside cloudPush do the real work.
@@ -2380,14 +2587,22 @@
       if (!flush) cloudPushTimer = setTimeout(function () { cloudPush(false, false); }, _pushBackoff - now + 500);
       return Promise.resolve(false);
     }
-    if (!flush && _lastPushAt && now - _lastPushAt < 60000) {         // throttle non-flush to 1/min
-      cloudPushTimer = setTimeout(function () { cloudPush(false, false); }, 60000 - (now - _lastPushAt) + 500);
+    // Throttle: a background push waits >=60s; a leave-flush may go sooner but
+    // still keeps a >=15s gap (respects the KV "1 write/sec per key" limit and
+    // stops repeated tab-hide / screen-lock cycles from writing each time). An
+    // explicit "Upload now" bypasses the gap entirely.
+    var minGap = flush ? 15000 : 60000;
+    if (!explicit && _lastPushAt && now - _lastPushAt < minGap) {
+      // Non-flush pushes reschedule so the change still lands; a flush is fire-
+      // and-forget on the way out, so we just drop it (it was written <15s ago).
+      if (!flush) cloudPushTimer = setTimeout(function () { cloudPush(false, false); }, minGap - (now - _lastPushAt) + 500);
       return Promise.resolve(false);
     }
     var t = now; try { t = JSON.parse(raw).t || t; } catch (e) {}
     _lastPushAt = now;
     return encodeSavePayload(raw).then(function (z) {
-      return window.__CLOUD.put({ t: t, z: z }).then(function (ok) {
+      // keepalive on a leave-flush so the write survives the tab being torn down.
+      return window.__CLOUD.put({ t: t, z: z }, { keepalive: !!flush }).then(function (ok) {
         if (ok) { _cloudSig = sig; _pushBackoff = 0; }   // synced only on success
         else _pushBackoff = Date.now() + 60000;           // backoff on failure
         return ok;
@@ -2535,7 +2750,8 @@
       // Backfill great people fields from older saves
       CIV_SIDES.forEach(function (id) {
         var cv = state.civs[id];
-        if (!cv.greatPoints) cv.greatPoints = { culture: 0, military: 0 };
+        if (!cv.greatPoints) cv.greatPoints = { culture: 0, military: 0, faith: 0 };
+        if (cv.greatPoints.faith === undefined) cv.greatPoints.faith = 0;
         if (cv.greatPeopleSpawned === undefined) cv.greatPeopleSpawned = 0;
         if (cv.generalBonus === undefined) cv.generalBonus = null;
         if (cv.economicCountdown === undefined) cv.economicCountdown = 0;
@@ -2560,6 +2776,7 @@
         if (typeof cv.ideology !== 'string') cv.ideology = null;
         if (typeof cv.faith !== 'number') cv.faith = 0;
         if (typeof cv.religionId !== 'string') cv.religionId = null;
+        if (typeof cv.pantheon !== 'string') cv.pantheon = null;
       });
       // Backfill AI agendas — old saves get a distinct random one
       (function () {
@@ -5438,7 +5655,10 @@
     if (gaCiv && gaCiv.goldenAgeTurns > 0) { food += GOLDEN_AGE_YIELD; prod += GOLDEN_AGE_YIELD; gold += GOLDEN_AGE_YIELD; }
     // Adopted civics — Agrarianism / Environmentalism +food; Ideology +food per city
     if (gaCiv) food += civicSum(gaCiv, 'perCityFood') + ideologyEff(gaCiv, 'perCityFood');
-    food += religionCityEff(city, 'food');   // Fertility belief
+    // Religion beliefs (following city) + pantheon (all your cities): food / prod / gold.
+    food += religionCityEff(city, 'food') + pantheonEff(wcv, 'food');   // Fertility / Fertility Rites
+    prod += religionCityEff(city, 'prod') + pantheonEff(wcv, 'prod');   // Stewardship / God of the Forge
+    gold += religionCityEff(city, 'gold') + pantheonEff(wcv, 'gold');   // Prosperity / God of Commerce
 
     // Power Plant — multiplies this city's accumulated production (positive only)
     if (city.buildings.power_plant && prod > 0) prod = Math.round(prod * (1 + BUILDINGS.power_plant.prodMultiplier));
@@ -5467,7 +5687,7 @@
     if (civ && civ.goldenAgeTurns > 0) sci += GOLDEN_AGE_YIELD;
     // Adopted civics (Enlightenment) — +science per city
     if (civ) sci += civicSum(civ, 'perCitySci');
-    sci += religionCityEff(city, 'sci');   // Scholarship belief
+    sci += religionCityEff(city, 'sci') + pantheonEff(civ, 'sci');   // Scholarship / Goddess of Wisdom
     // Adjacency bonuses for science buildings
     sci += buildingAdjacency(city).sci;
     // Per-city wonder science: Library of Alexandria + University of Sankore
@@ -5525,7 +5745,7 @@
     // Adopted civics that boost culture in every city
     var civ = state.civs[civId];
     if (civ) c += civicSum(civ, 'perCityCulture') + ideologyEff(civ, 'perCityCulture');
-    c += religionCityEff(ct, 'culture');   // Piety belief
+    c += religionCityEff(ct, 'culture') + pantheonEff(civ, 'culture');   // Piety belief / pantheon
     return c;
   }
 
@@ -5579,10 +5799,7 @@
     spt += (civicSum(civ, 'perCitySci') + ideologyEff(civ, 'perCitySci')) * civ.cities.length;
     gpt += tradeRouteGold(civId);   // peaceful income from active trade routes
     // Tithe belief — the founder earns gold per city worldwide following their faith.
-    if (civ.religionId) {
-      var rdef = religionDef(civ.religionId);
-      if (rdef && BELIEFS[rdef.belief] && BELIEFS[rdef.belief].founderGold) gpt += BELIEFS[rdef.belief].founderGold * religionFollowerCount(civ.religionId);
-    }
+    gpt += founderYield(civ, 'founderGold');
     civ.goldPerTurn = gpt;
     civ.sciPerTurn = spt;
   }
@@ -6158,6 +6375,7 @@
     // A city with no net pressure slowly RECOVERS (drifts back to calm) so a
     // revolt is always a recoverable hazard, never a permanent state.
     if (typeof city.unrest !== 'number') city.unrest = 0;
+    if (city.religionLockTurns > 0) city.religionLockTurns--;   // conversion immunity wears off
     var uDelta = cityUnrestDelta(city);
     if (uDelta <= 0) uDelta -= 1;   // passive recovery when content keeps pace
     city.unrest = Math.max(0, Math.min(city.pop * UNREST_CAP_MULT, city.unrest + uDelta));
@@ -6463,6 +6681,7 @@
       if (u.tech && !civ.techs[u.tech]) continue;
       if (u.barb) continue;             // raiders aren't trainable
       if (u.great) continue;            // great people aren't trainable
+      if (u.faithUnit) continue;        // missionaries / inquisitors are FAITH-bought, not produced
       if (u.naval && city && !isCoastalCity(city)) continue; // naval only at coastal cities
       if (u.requires && !civHasResource(civ, u.requires)) continue; // strategic resource gate
       if (u.requiresWonder && !(state.wondersBuilt && state.wondersBuilt[u.requiresWonder] === civ.id)) continue; // e.g. Nuke needs Manhattan Project
@@ -6693,6 +6912,13 @@
     }
     // Recompute threshold after culture spawn may have incremented counter
     threshold = GP_THRESHOLD + civ.greatPeopleSpawned * 25;
+    // Faith → Great Prophet
+    if ((civ.greatPoints.faith || 0) >= threshold) {
+      civ.greatPoints.faith -= threshold;
+      civ.greatPeopleSpawned++;
+      spawnGreatPerson(civId, 'great_prophet');
+    }
+    threshold = GP_THRESHOLD + civ.greatPeopleSpawned * 25;
     // Military → Great General
     if (civ.greatPoints.military >= threshold) {
       civ.greatPoints.military -= threshold;
@@ -6757,6 +6983,18 @@
       civ.gold += 120;                          // a windfall (auto-activated, no CS targeting)
     } else if (type === 'great_artist') {
       triggerGoldenAge(civ, GOLDEN_AGE_LENGTH, false, 'Great Artist');
+    } else if (type === 'great_prophet') {
+      // Found a faith for free if it has none; otherwise imprint it on a home city.
+      if (prophetCanFound(civ)) {
+        var used = {}; for (var kk in state.religions) used[state.religions[kk].id] = 1;
+        var pick = null;
+        for (var pi = 0; pi < RELIGION_POOL.length; pi++) if (!used[RELIGION_POOL[pi].id]) { pick = RELIGION_POOL[pi].id; break; }
+        var pb = { scientific: 'scholarship', economic: 'tithe', peaceful: 'piety', expansionist: 'zeal', aggressive: 'zeal' }[civ.personality] || 'fertility';
+        if (pick) foundReligion(civ, pick, pb, { free: true });
+      } else {
+        var rel = civMajorityReligion(civ);
+        if (rel) for (var ci = 0; ci < civ.cities.length; ci++) { var cc = civ.cities[ci]; if (!cc.holyCity && cc.religion !== rel) { cc.religion = rel; break; } }
+      }
     }
   }
 
@@ -6795,9 +7033,27 @@
       logEvent('Great Merchant earned +120 gold' + (allied ? ' and allied a city-state' : ''), 'success');
     } else if (unit.type === 'great_artist') {
       triggerGoldenAge(civ, GOLDEN_AGE_LENGTH, true, 'Great Artist');
+    } else if (unit.type === 'great_prophet') {
+      // No faith yet → let the player pick a religion + belief (founded free); the
+      // belief picker consumes the prophet. Otherwise imprint the faith nearby.
+      if (prophetCanFound(civ)) {
+        prophetFoundingUnit = unit;
+        openReligion();
+        return;                       // prophet consumed inside the founding flow
+      }
+      if (prophetSpread(unit)) {
+        showToast('The Prophet spread your faith', 'success');
+        logEvent('A Great Prophet spread the faith', 'success');
+      } else {
+        showToast('No cities to convert nearby', 'error');
+        return;                       // don't waste the prophet on a no-op
+      }
     }
     killUnit(unit);
   }
+  // A Great Prophet the player is currently using to found a faith (consumed when
+  // a belief is chosen). Transient — never saved.
+  var prophetFoundingUnit = null;
 
   // =====================================================================
   // AI DIPLOMACY — dynamic tension
@@ -7398,9 +7654,15 @@
   }
 
   // ---- RELIGION mechanics ----
-  // Found a religion in a civ's best city, spending its banked faith.
-  function foundReligion(civ, religionId, belief) {
-    if (!civ || !canFoundReligion(civ) || !religionId || state.religions[religionId] || !BELIEFS[belief]) return false;
+  // Found a religion in a civ's best city, spending its banked faith. opts.free
+  // (a Great Prophet founding) skips both the faith-cost and the faith threshold.
+  function foundReligion(civ, religionId, belief, opts) {
+    opts = opts || {};
+    var free = !!opts.free;
+    if (!civ || !religionId || state.religions[religionId] || !BELIEFS[belief]) return false;
+    if (civ.religionId) return false;
+    if (foundedReligionCount() >= RELIGION_POOL.length) return false;
+    if (!free && (civ.faith || 0) < RELIGION_FOUND_COST) return false;
     var poolDef = null;
     for (var i = 0; i < RELIGION_POOL.length; i++) if (RELIGION_POOL[i].id === religionId) poolDef = RELIGION_POOL[i];
     if (!poolDef) return false;
@@ -7410,7 +7672,7 @@
     if (!holy) return false;
     state.religions[religionId] = { id: religionId, name: poolDef.name, icon: poolDef.icon, belief: belief, founder: civ.id, holyC: holy.c, holyR: holy.r };
     civ.religionId = religionId;
-    civ.faith = Math.max(0, (civ.faith || 0) - RELIGION_FOUND_COST);
+    if (!free) civ.faith = Math.max(0, (civ.faith || 0) - RELIGION_FOUND_COST);
     holy.religion = religionId;
     holy.holyCity = true;
     recomputeIncome(civ.id);
@@ -7435,6 +7697,21 @@
     var belief = { scientific: 'scholarship', economic: 'tithe', peaceful: 'piety' }[civ.personality] || 'fertility';
     foundReligion(civ, pick, belief);
   }
+  // AI adopts a Pantheon as soon as it can afford one (personality-flavoured).
+  function aiPickPantheon(civ) {
+    if (!canFoundPantheon(civ)) return;
+    var pick = { scientific: 'goddess_wisdom', economic: 'god_of_commerce', expansionist: 'fertility_rites', aggressive: 'god_of_forge' }[civ.personality] || 'stone_circles';
+    foundPantheon(civ, pick);
+  }
+  // AI reforms its faith with a complementary second belief once it has reach.
+  function aiReform(civ) {
+    if (!canReform(civ)) return;
+    var rd = religionDef(civ.religionId);
+    var want = { scientific: 'scholarship', economic: 'tithe', peaceful: 'piety', expansionist: 'zeal', aggressive: 'zeal' }[civ.personality] || 'pilgrimage';
+    if (want === rd.belief) want = 'zeal';       // don't duplicate the founding belief
+    if (want === rd.belief) want = 'stewardship';
+    reformReligion(civ, want);
+  }
   // Each turn, founded religions radiate pressure to nearby cities; every city
   // adopts whichever faith presses hardest (holy cities are locked; the current
   // faith gets a small incumbency edge to damp border flip-flop).
@@ -7452,13 +7729,14 @@
       var c = state.civs[cid];
       if (!c || !c.cities) return;
       c.cities.forEach(function (ct) {
-        if (ct.holyCity) return;                 // holy cities never convert
+        if (ct.holyCity || ct.religionLockTurns > 0) return;   // holy / recently-purged cities hold firm
         var pressure = {};
         sources.forEach(function (src) {
           if (src === ct) return;
           var d = hexDist([ct.c, ct.r], [src.c, src.r]);
-          if (d > RELIGION_RANGE) return;
-          var p = (src.holyCity ? 2 : 1) / (1 + d);
+          var sp = religionSpread(src.religion);           // Missionary Zeal: +range / +pressure
+          if (d > RELIGION_RANGE + sp.range) return;
+          var p = ((src.holyCity ? 2 : 1) + sp.pressure) / (1 + d);
           pressure[src.religion] = (pressure[src.religion] || 0) + p;
         });
         if (ct.religion) pressure[ct.religion] = (pressure[ct.religion] || 0) * 1.25 + 0.15;  // incumbency
@@ -7482,30 +7760,93 @@
   function openReligion() {
     var civ = state.civs.player;
     var actions = [];
+    // --- Pantheon (cheap, early, civ-wide) ---
+    if (civ.pantheon) {
+      var pd = PANTHEONS[civ.pantheon];
+      actions.push({ icon: '☘', title: 'Pantheon: ' + (pd ? pd.name : '?'), sub: pd ? pd.desc : '', disabled: true, do: function () {} });
+    } else if (canFoundPantheon(civ)) {
+      actions.push({ icon: '☘', title: 'Adopt a Pantheon', sub: 'Spend ' + PANTHEON_COST + ' faith on a civ-wide blessing', primary: true, do: function () { closeModal(); openPantheonPicker(); } });
+    }
+    // --- Religion ---
     if (civ.religionId) {
       var rd = religionDef(civ.religionId);
       var followers = religionFollowerCount(civ.religionId), total = totalCityCount();
-      actions.push({ header: true, icon: rd ? rd.icon : '☧', title: rd ? rd.name : 'Your Faith', sub: 'Belief: ' + (BELIEFS[rd.belief] ? BELIEFS[rd.belief].name : '?') + ' · ' + followers + '/' + total + ' cities follow' });
+      var bnames = beliefsOf(rd).map(function (b) { return b.name; }).join(' + ') || '?';
+      actions.push({ header: true, icon: rd ? rd.icon : '☧', title: rd ? rd.name : 'Your Faith', sub: bnames + ' · ' + followers + '/' + total + ' cities follow' });
       actions.push({ icon: '✦', title: 'Faith per turn', sub: '+' + faithPerTurn(civ) + ' faith · ' + Math.round((civ.faith || 0)) + ' banked', disabled: true, do: function () {} });
-    } else if (canFoundReligion(civ)) {
-      actions.push({ header: true, icon: '☧', title: 'Found a Religion', sub: 'Pick a faith, then a belief (' + Math.round(civ.faith || 0) + '/' + RELIGION_FOUND_COST + ' faith)' });
+      if (canReform(civ)) {
+        actions.push({ icon: '✷', title: 'Reformation', sub: 'Add a second belief to your faith', primary: true, do: function () { closeModal(); openReformPicker(); } });
+      } else if (rd && !rd.belief2) {
+        actions.push({ icon: '✷', title: 'Reformation', sub: 'Needs ' + REFORMATION_FOLLOWERS + ' following cities (' + followers + ' now)', disabled: true, do: function () {} });
+      }
+    } else if (canFoundReligion(civ) || prophetFoundingUnit) {
+      var byProphet = !!prophetFoundingUnit;
+      actions.push({ header: true, icon: '☧', title: byProphet ? 'Great Prophet: Found a Religion' : 'Found a Religion', sub: byProphet ? 'Pick a faith, then a belief (free)' : 'Pick a faith, then a belief (' + Math.round(civ.faith || 0) + '/' + RELIGION_FOUND_COST + ' faith)' });
       var used = {}; for (var k in state.religions) used[k] = 1;
       RELIGION_POOL.forEach(function (rel) {
         if (used[rel.id]) return;
-        actions.push({ icon: rel.icon, title: rel.name, sub: 'Found this faith', do: function () { openBeliefPicker(rel.id); } });
+        actions.push({ icon: rel.icon, title: rel.name, sub: 'Found this faith', do: function () { closeModal(); openBeliefPicker(rel.id); } });
       });
     } else {
       actions.push({ header: true, icon: '☧', title: 'Faith', sub: foundedReligionCount() >= RELIGION_POOL.length ? 'All religions have been founded' : 'Build Shrines & Temples — ' + Math.round(civ.faith || 0) + '/' + RELIGION_FOUND_COST + ' faith (+' + faithPerTurn(civ) + '/turn)' });
     }
-    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); } });
+    // --- Faith-bought religious units (need a faith of your own to carry) ---
+    if (civMajorityReligion(civ) && civ.cities.length) {
+      actions.push({
+        icon: '☩', title: 'Train Missionary (' + MISSIONARY_FAITH_COST + ' faith)',
+        sub: 'Travels to a city and converts it (' + MISSIONARY_CHARGES + ' spreads)',
+        disabled: (civ.faith || 0) < MISSIONARY_FAITH_COST,
+        do: function () { if (buyFaithUnit(civ, civ.cities[0], 'missionary')) { showToast('Missionary trained', 'success'); updateHud(); save(); } else { showToast('Cannot train now', 'error'); } closeModal(); draw(); }
+      });
+      actions.push({
+        icon: '☨', title: 'Train Inquisitor (' + INQUISITOR_FAITH_COST + ' faith)',
+        sub: 'Purges a rival faith from your city',
+        disabled: (civ.faith || 0) < INQUISITOR_FAITH_COST,
+        do: function () { if (buyFaithUnit(civ, civ.cities[0], 'inquisitor')) { showToast('Inquisitor trained', 'success'); updateHud(); save(); } else { showToast('Cannot train now', 'error'); } closeModal(); draw(); }
+      });
+    }
+    actions.push({ icon: '←', title: 'Back', do: function () { if (prophetFoundingUnit) prophetFoundingUnit = null; closeModal(); } });
     renderDiplomacyActions(actions, 'Religion');
+  }
+  // Pantheon picker — a one-time civ-wide blessing bought with a little faith.
+  function openPantheonPicker() {
+    var civ = state.civs.player;
+    var actions = [];
+    actions.push({ header: true, icon: '☘', title: 'Adopt a Pantheon', sub: 'Spend ' + PANTHEON_COST + ' faith · kept for the whole game' });
+    PANTHEON_ORDER.forEach(function (id) {
+      var p = PANTHEONS[id];
+      actions.push({ icon: '☘', title: p.name, sub: p.desc, do: function () { if (foundPantheon(civ, id)) { showToast('Pantheon: ' + p.name, 'success'); updateHud(); save(); } closeModal(); openReligion(); } });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); openReligion(); } });
+    renderDiplomacyActions(actions, 'Pantheon');
+  }
+  // Reformation picker — add a complementary second belief to a mature faith.
+  function openReformPicker() {
+    var civ = state.civs.player;
+    var rd = religionDef(civ.religionId);
+    var actions = [];
+    actions.push({ header: true, icon: '✷', title: 'Reformation', sub: 'Add a second belief to ' + (rd ? rd.name : 'your faith') });
+    BELIEF_ORDER.forEach(function (b) {
+      if (rd && b === rd.belief) return;   // already carried by the founding belief
+      actions.push({ icon: '✦', title: BELIEFS[b].name, sub: BELIEFS[b].desc, do: function () { if (reformReligion(civ, b)) { showToast('Reformation: ' + BELIEFS[b].name, 'success'); updateHud(); save(); } closeModal(); draw(); } });
+    });
+    actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); openReligion(); } });
+    renderDiplomacyActions(actions, 'Reformation');
   }
   function openBeliefPicker(religionId) {
     var actions = [];
     var rel = null; for (var i = 0; i < RELIGION_POOL.length; i++) if (RELIGION_POOL[i].id === religionId) rel = RELIGION_POOL[i];
-    actions.push({ header: true, icon: rel ? rel.icon : '☧', title: rel ? rel.name : 'Belief', sub: 'Choose this faith’s guiding belief' });
+    var byProphet = !!prophetFoundingUnit;
+    actions.push({ header: true, icon: rel ? rel.icon : '☧', title: rel ? rel.name : 'Belief', sub: 'Choose this faith’s guiding belief' + (byProphet ? ' (founded free by your Prophet)' : '') });
     BELIEF_ORDER.forEach(function (b) {
-      actions.push({ icon: '✦', title: BELIEFS[b].name, sub: BELIEFS[b].desc, do: function () { if (foundReligion(state.civs.player, religionId, b)) { updateHud(); save(); } closeModal(); draw(); } });
+      actions.push({ icon: '✦', title: BELIEFS[b].name, sub: BELIEFS[b].desc, do: function () {
+        if (foundReligion(state.civs.player, religionId, b, { free: byProphet })) {
+          if (byProphet && prophetFoundingUnit) { killUnit(prophetFoundingUnit); }
+          updateHud(); save();
+        }
+        prophetFoundingUnit = null;
+        closeModal(); draw();
+      } });
     });
     actions.push({ icon: '←', title: 'Back', do: function () { closeModal(); openReligion(); } });
     renderDiplomacyActions(actions, 'Belief');
@@ -7781,7 +8122,9 @@
     pl.culPerTurn = plCpt;                              // drives the Civics track + HUD
     accrueEraPoints(pl, true);                          // bank Era Points / fire Golden Age
     progressCivic(pl);                                  // advance the adopted civic
-    pl.faith = (pl.faith || 0) + faithPerTurn(pl);      // bank faith toward founding / spread
+    var plFpt = faithPerTurn(pl);
+    pl.faith = (pl.faith || 0) + plFpt;                 // bank faith toward founding / spread
+    pl.greatPoints.faith = (pl.greatPoints.faith || 0) + plFpt;   // and toward a Great Prophet
     checkGreatPeople('player');
 
     // AI turn — lock input while the AI thinks/moves
@@ -7819,8 +8162,13 @@
         aiPickGovernment(c);
         aiPickEdict(c);
         aiPickIdeology(c);   // and an Ideology once it reaches the Modern age
-        c.faith = (c.faith || 0) + faithPerTurn(c);
+        var cFpt = faithPerTurn(c);
+        c.faith = (c.faith || 0) + cFpt;
+        c.greatPoints.faith = (c.greatPoints.faith || 0) + cFpt;   // toward a Great Prophet
+        aiPickPantheon(c);   // a cheap early pantheon
         aiFoundReligion(c);  // and founds a faith once it can afford one
+        aiReform(c);         // and reforms with a 2nd belief once it has reach
+        aiReligiousSpread(c); // buy/send missionaries + inquisitors with spare faith
       });
 
       // Decay general bonuses + tick down government anarchy for all civs
@@ -7930,37 +8278,66 @@
     }, 300);
   }
 
+  // Full shortest step-path (uniform 1/tile) from a unit to a destination, for
+  // multi-turn Go-To. Routes AROUND impassable terrain, occupied tiles, and enemy
+  // cities — a real BFS, so it never dead-ends at a mountain or coastline the way
+  // a greedy "closest neighbour" step does. Recomputed each turn so transient
+  // blockers resolve. Returns a path INCLUDING the start tile (so walkPath can
+  // consume it), or null if no step gets the unit strictly closer.
+  function findUnitPath(unit, destC, destR) {
+    var startKey = unit.c + ',' + unit.r;
+    var parent = {}; parent[startKey] = null;
+    var q = [[unit.c, unit.r]], head = 0, found = false;
+    while (head < q.length) {
+      var cur = q[head++];
+      if (cur[0] === destC && cur[1] === destR) { found = true; break; }
+      var ns = neighbors(cur[0], cur[1]);
+      for (var i = 0; i < ns.length; i++) {
+        var nc = ns[i][0], nr = ns[i][1], k = nc + ',' + nr;
+        if (k in parent) continue;
+        var t = tileAt(nc, nr);
+        if (!t || !canEnterTile(unit, t)) continue;
+        var isDest = (nc === destC && nr === destR);
+        if (!isDest) {
+          if (t.unit) continue;                                                       // can't pass through anyone
+          if (t.city && t.city.civ !== unit.civ && atWar(unit.civ, t.city.civ)) continue; // or through enemy cities
+        }
+        parent[k] = cur[0] + ',' + cur[1];
+        q.push([nc, nr]);
+      }
+    }
+    var targetKey;
+    if (found) targetKey = destC + ',' + destR;
+    else {
+      // Unreachable exactly — head for the explored tile nearest the goal, but
+      // only if it's strictly closer than where we stand (else we're boxed in).
+      var best = null, bestD = Infinity, nowD = hexDist([unit.c, unit.r], [destC, destR]);
+      for (var vk in parent) {
+        if (vk === startKey) continue;
+        var p = vk.split(','), d = hexDist([+p[0], +p[1]], [destC, destR]);
+        if (d < bestD) { bestD = d; best = vk; }
+      }
+      if (best === null || bestD >= nowD) return null;
+      targetKey = best;
+    }
+    var path = [], ck = targetKey;
+    while (ck) { var pp = ck.split(','); path.unshift([+pp[0], +pp[1]]); ck = parent[ck]; }
+    return path;   // index 0 is the unit's current tile
+  }
+
   function playerAutoMove() {
     state.civs.player.units.forEach(function (u) {
       if (!u.goto || u.moves <= 0) return;
-      // Already arrived
       if (u.c === u.goto.c && u.r === u.goto.r) { u.goto = null; return; }
-      // Stop if enemies adjacent — let player decide
-      var adj = adjacentEnemy(u);
-      if (adj) { u.goto = null; return; }
-      // Step toward destination
-      var startDist = hexDist([u.c, u.r], [u.goto.c, u.goto.r]);
-      while (u.moves > 0) {
-        if (u.c === u.goto.c && u.r === u.goto.r) { u.goto = null; break; }
-        var ns = neighbors(u.c, u.r).filter(function (n) {
-          var t = tileAt(n[0], n[1]);
-          if (!canEnterTile(u, t)) return false;
-          if (t.unit) return false;   // don't walk into anyone
-          return true;
-        });
-        if (ns.length === 0) { u.goto = null; break; }
-        ns.sort(function (a, b) {
-          return hexDist(a, [u.goto.c, u.goto.r]) - hexDist(b, [u.goto.c, u.goto.r]);
-        });
-        var step = ns[0];
-        // If closest neighbor is not actually closer, we're stuck
-        if (hexDist(step, [u.goto.c, u.goto.r]) >= hexDist([u.c, u.r], [u.goto.c, u.goto.r])) {
-          u.goto = null; break;
-        }
-        moveUnit(u, step[0], step[1]);
-        // Check for enemies after each step
-        var adjNow = adjacentEnemy(u);
-        if (adjNow) { u.goto = null; break; }
+      if (adjacentEnemy(u)) { u.goto = null; return; }        // enemy near — let the player decide
+      var path = findUnitPath(u, u.goto.c, u.goto.r);
+      if (!path || path.length < 2) { u.goto = null; return; }
+      for (var i = 1; i < path.length && u.moves > 0; i++) {
+        var t = tileAt(path[i][0], path[i][1]);
+        if (!t || t.unit) break;                              // blocked this turn — keep goto, retry next turn
+        moveUnit(u, path[i][0], path[i][1]);
+        if (u.c === u.goto.c && u.r === u.goto.r) { u.goto = null; break; }   // arrived
+        if (adjacentEnemy(u)) { u.goto = null; break; }       // enemy appeared mid-route — halt
       }
     });
   }
@@ -9142,35 +9519,21 @@
             return;
           }
 
-          // Multi-turn move: destination beyond this turn's reach
+          // Multi-turn move: destination beyond this turn's reach. Plot a full
+          // path (routes around terrain/obstacles) and walk as far as this turn's
+          // moves allow; playerAutoMove continues it automatically each turn.
           var destT = tileAt(state.cursor.c, state.cursor.r);
-          if (destT && destT.explored.player && !destT.unit) {
-            // Check tile is theoretically enterable
-            var canReach = canEnterTile(su, destT);
-            if (canReach) {
+          if (destT && destT.explored.player && !destT.unit && canEnterTile(su, destT)) {
+            var full = findUnitPath(su, state.cursor.c, state.cursor.r);
+            if (full && full.length > 1) {
               su.goto = { c: state.cursor.c, r: state.cursor.r };
-              // Walk as far as possible this turn toward the destination
-              var bestKey = null, bestDist = Infinity;
-              for (var rk in reach) {
-                if (reach[rk].cost === 0) continue;
-                var parts = rk.split(',');
-                var rc = +parts[0], rr = +parts[1];
-                var rt = tileAt(rc, rr);
-                if (rt && rt.unit && rt.unit !== su) continue;
-                var d = hexDist([rc, rr], [state.cursor.c, state.cursor.r]);
-                if (d < bestDist) { bestDist = d; bestKey = rk; }
-              }
-              if (bestKey) {
-                var bParts = bestKey.split(',');
-                var walkPath2 = pathTo(reach, +bParts[0], +bParts[1]);
-                var terrName = TERRAIN[destT.terrain].name;
-                showToast('Moving toward ' + terrName + '...', 'info');
-                walkPath(su, walkPath2);
-              } else {
-                showToast('Moving next turn...', 'info');
-              }
-              return;
+              showToast('Moving toward ' + TERRAIN[destT.terrain].name + '…', 'info');
+              walkPath(su, full);   // stops when this turn's moves run out; goto persists
+            } else {
+              su.goto = null;
+              showToast('No route there', 'error');
             }
+            return;
           }
         }
         // Unreachable target — treat the pinch as a fresh activation
@@ -9298,8 +9661,22 @@
                       u.type === 'great_engineer' ? 'Rush City Production' :
                       u.type === 'great_merchant' ? '+120 Gold · ally adjacent city-state' :
                       u.type === 'great_artist' ? 'Trigger a Golden Age (8 turns)' :
+                      u.type === 'great_prophet' ? (prophetCanFound(civPl) ? 'Found a Religion (free)' : 'Spread your faith to nearby cities') :
                       'Activate';
         actions.push({ icon: '✦', primary: true, title: 'Activate', sub: gpLabel, do: function () { closeModal(); activateGreatPerson(u); draw(); } });
+      }
+      // Missionary — spread your faith to a nearby city (costs a charge)
+      if (u.type === 'missionary') {
+        var relM = civMajorityReligion(civPl);
+        var tgtM = relM ? cityOnOrAdjacent(u, function (ct) { return ct.religion !== relM && !ct.holyCity && !(ct.religionLockTurns > 0); }) : null;
+        actions.push({ icon: '☩', primary: true, title: 'Spread Faith', sub: tgtM ? 'Convert ' + tgtM.name + ' · ' + (u.spreadCharges || 0) + ' left' : 'Move next to a convertible city', disabled: !tgtM, do: function () { if (missionarySpread(u)) { updateHud(); save(); } closeModal(); draw(); } });
+      }
+      // Inquisitor — purge a rival faith from your city (locks it for a while)
+      if (u.type === 'inquisitor') {
+        var relI = civMajorityReligion(civPl);
+        var tgtI = cityOnOrAdjacent(u, function (ct) { return ct.civ === u.civ; });
+        var heretic = tgtI && relI && tgtI.religion !== relI;
+        actions.push({ icon: '☨', primary: true, title: 'Purge Heresy', sub: tgtI ? (heretic ? 'Reconvert ' + tgtI.name : 'Sanctify ' + tgtI.name) : 'Move into your city first', disabled: !tgtI, do: function () { if (inquisitorPurge(u)) { updateHud(); save(); } closeModal(); draw(); } });
       }
       // Unit upgrade
       var upInfo = canUpgrade(u);
@@ -11265,6 +11642,8 @@
     findPendingPromoUnit: findPendingPromoUnit,
     combatRatio: combatRatio,
     moveUnit: moveUnit,
+    findUnitPath: findUnitPath,
+    playerAutoMove: playerAutoMove,
     spawnUnit: spawnUnit,
     establishTradeRoute: establishTradeRoute,
     eligibleTradeCity: eligibleTradeCity,
@@ -11319,7 +11698,39 @@
     openReligion: openReligion,
     RELIGION_FOUND_COST: RELIGION_FOUND_COST,
     RELIGION_POOL: RELIGION_POOL,
-    BELIEFS: BELIEFS
+    BELIEFS: BELIEFS,
+    BELIEF_ORDER: BELIEF_ORDER,
+    beliefsOf: beliefsOf,
+    founderYield: founderYield,
+    religionSpread: religionSpread,
+    PANTHEONS: PANTHEONS,
+    PANTHEON_ORDER: PANTHEON_ORDER,
+    PANTHEON_COST: PANTHEON_COST,
+    pantheonEff: pantheonEff,
+    pantheonDef: pantheonDef,
+    canFoundPantheon: canFoundPantheon,
+    foundPantheon: foundPantheon,
+    aiPickPantheon: aiPickPantheon,
+    REFORMATION_FOLLOWERS: REFORMATION_FOLLOWERS,
+    canReform: canReform,
+    reformReligion: reformReligion,
+    aiReform: aiReform,
+    civMajorityReligion: civMajorityReligion,
+    MISSIONARY_FAITH_COST: MISSIONARY_FAITH_COST,
+    INQUISITOR_FAITH_COST: INQUISITOR_FAITH_COST,
+    MISSIONARY_CHARGES: MISSIONARY_CHARGES,
+    faithUnitCost: faithUnitCost,
+    canBuyFaithUnit: canBuyFaithUnit,
+    buyFaithUnit: buyFaithUnit,
+    cityOnOrAdjacent: cityOnOrAdjacent,
+    missionarySpread: missionarySpread,
+    inquisitorPurge: inquisitorPurge,
+    prophetCanFound: prophetCanFound,
+    prophetSpread: prophetSpread,
+    aiReligiousSpread: aiReligiousSpread,
+    checkGreatPeople: checkGreatPeople,
+    spawnGreatPerson: spawnGreatPerson,
+    activateGreatPerson: activateGreatPerson
   };
 
   if (document.readyState === 'loading') {

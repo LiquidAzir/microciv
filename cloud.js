@@ -80,11 +80,15 @@
         .catch(function () { return null; });
     },
     // Push an envelope object. Returns true if the worker accepted the write.
-    put: function (obj) {
+    // opts.keepalive lets a leave-flush (pagehide / tab-hide) complete after the
+    // page is torn down — without it the browser usually cancels the request.
+    put: function (obj, opts) {
       if (!enabled || !obj) return Promise.resolve(false);
       var body = JSON.stringify(obj);
       if (body === lastSent) return Promise.resolve(true);
-      return fetchTimeout(url(), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: body }, 8000)
+      var init = { method: 'PUT', headers: { 'content-type': 'application/json' }, body: body };
+      if (opts && opts.keepalive) init.keepalive = true;
+      return fetchTimeout(url(), init, 8000)
         .then(function (r) { if (r.ok) lastSent = body; return r.ok; })
         .catch(function () { return false; });
     },

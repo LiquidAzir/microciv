@@ -26,6 +26,20 @@ The neural band emits arrow-key D-pad events plus a pinch = Enter. MicroCiv adds
 
 A pill in the bottom bar always shows the current mode. The hint line beside it reflects what the next press will do.
 
+### Bluetooth / USB controller
+
+Any [Standard-mapping](https://w3c.github.io/gamepad/#remapping) gamepad (Xbox, PlayStation, etc.) works the moment it's paired — no setup. It's translated into the same inputs as the keyboard, so combos and menus behave identically.
+
+| Control | Action |
+|---------|--------|
+| D-pad / left stick | Move the cursor (or pan, in scroll mode); navigate menus. Holding a direction auto-repeats |
+| **A** | Act — same as Enter / pinch |
+| **B** | Cancel / close menu / cycle to next unit (Escape) |
+| **X** | Toggle Cursor ↔ Scroll mode |
+| **Y** | Open the Research menu |
+| **LB / RB** | Cycle zoom |
+| **Start** | End turn |
+
 ## Action menu
 
 Press Enter on a tile and the menu shows everything you can do there:

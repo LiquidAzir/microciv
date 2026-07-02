@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "microciv",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "5182"],
+      "port": 5182
+    }
+  ]
+}
